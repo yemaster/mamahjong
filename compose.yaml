@@ -1,0 +1,30 @@
+name: mamahjong
+
+services:
+  server:
+    image: mamahjong-server:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    environment:
+      MAMAHJONG_BIND_ADDRESS: 0.0.0.0:8080
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "${MAMAHJONG_HOST:-127.0.0.1}:${MAMAHJONG_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
