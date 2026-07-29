@@ -18,6 +18,12 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+## 启动后端
+
+```bash
+cargo run -p mamahjong-server
+curl http://127.0.0.1:8080/health/ready
+```
+
 设计约束见 [架构文档](docs/architecture.md)，开发顺序见
 [路线图](docs/roadmap.md)。
-

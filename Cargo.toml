@@ -11,9 +11,16 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 
+[workspace.dependencies]
+axum = "0.8.9"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = "warn"
-

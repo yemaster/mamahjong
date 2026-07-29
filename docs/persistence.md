@@ -19,7 +19,8 @@
 | 规则快照 | PostgreSQL JSONB | 不可变、带版本 |
 | 对局事件 | PostgreSQL 追加表 | 每桌严格有序 |
 | 对局快照 | PostgreSQL 二进制列 | 压缩并加密 |
-| 结果、段位变更 | PostgreSQL 关系表 | 可审计事务 |
+| 每局与整场结果 | PostgreSQL 关系表 | 永久索引、可审计 |
+| 段位变更 | PostgreSQL 关系表 | 与整场结果关联 |
 | 在线连接、短期票据 | Redis | 可重建 |
 | 匹配队列 | Redis | 带过期时间 |
 
@@ -45,6 +46,39 @@ created_at, finished_at
 
 `match_players` 保存固定座次和开局身份快照。昵称等展示信息使用开局快照，
 避免用户改名破坏历史记录。
+
+### hand_records
+
+```text
+id, match_id, hand_index, engine_hand_label,
+started_event_seq, ended_event_seq, dealer_seat,
+result_type, result_json, score_delta_json,
+started_at, ended_at
+```
+
+每一局都必须有一条记录，包含和牌、荒牌流局、途中流局等结束类型。主键
+`id` 全局唯一，`(match_id, hand_index)` 唯一。`engine_hand_label` 仅供展示，
+推进逻辑仍由规则引擎决定。
+
+局结束事务同时写入：
+
+- 最后一批领域事件；
+- `hand_records` 结果；
+- 该事件序号的强制快照；
+- 对应 outbox 消息。
+
+因此不能出现牌局已经推进但单局战绩缺失的状态。
+
+### match_results
+
+```text
+match_id, format, final_scores_json, placements_json,
+uma_oka_json, result_json, finished_event_seq, created_at
+```
+
+东风战、半庄或其他赛制结束时都保存一条整场结果。完整 `RuleSnapshot`、
+固定玩家信息和起止时间从 `matches`、`match_players` 联合读取。排名和马点
+保存计算后的结果，同时保留原始点数，避免以后规则展示变化。
 
 ### game_events
 
@@ -109,6 +143,15 @@ first_event_seq, last_event_seq, result_json, expires_at
 - 快照校验失败时退回上一个快照；
 - 状态 hash 用于检测损坏，不用于替代加密认证。
 
+## 留存与查询
+
+- `game_events`、`hand_records`、`match_results` 和规则快照默认不自动过期；
+- 热库容量达到阈值后，可以把已结束整场的事件与快照迁移到不可变冷存储；
+- 冷存储迁移必须保留校验 hash 和可查询索引，API 行为不能变成“仅剩总分”；
+- 每局记录可独立查询，也可定位到该局事件范围进行复盘；
+- 整场记录列出所有单局，并支持按原始顺序完整复盘；
+- 测试牌局与正式牌局通过数据分类字段区分，避免污染段位统计，但同样留存。
+
 ## 随机性与复盘
 
 - 生产环境随机源必须为 CSPRNG；
@@ -124,4 +167,3 @@ first_event_seq, last_event_seq, result_json, expires_at
 - 破坏性变更采用“新增读取器 → 后台迁移 → 切换写版本 → 下线旧读取器”；
 - 原始事件只追加不原地改写，迁移结果写入新快照；
 - 账号删除与战绩保留分离，历史玩家可匿名化。
-

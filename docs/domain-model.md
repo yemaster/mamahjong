@@ -13,7 +13,7 @@
 | Lobby | `Room`、`RoomMember` | 房间配置、成员、准备和开局 |
 | Matchmaking | `QueueTicket`、`MatchProposal` | 段位队列和配桌 |
 | Game | `GameMatch`、`Hand`、`RuleSnapshot` | 权威牌局状态与动作 |
-| Ranking | `Rating`、`MatchResult` | 段位及结算 |
+| Ranking | `Rating`、`HandResult`、`MatchResult` | 每局记录、整场结算与段位 |
 
 上下文之间只传标识符和不可变数据，不共享可变实体。
 
@@ -89,6 +89,11 @@ GameMatch
 - 序列化为带版本的内部快照。
 
 这避免公共层假定麻将一定有 34 种牌、四个方位或日麻式牌河。
+
+每个 `Hand` 结束后生成不可变 `HandResult`。它至少关联起止事件序号、规则
+引擎给出的局标识、庄家、结束原因和各玩家点数变化。`GameMatch` 结束后生成
+`MatchResult`，保存整场座次、最终点数、排名与规则快照。东风战、半庄和将来
+其他赛制都使用 `GameMatch`，不以“半庄”作为存储层硬编码类型。
 
 ## 规则对象
 
@@ -174,4 +179,3 @@ Match: Created ──deal──> Running ──rules decide──> Finished
 ```
 
 `Suspended` 只用于无法安全自动恢复的系统故障，不用于普通断线。
-

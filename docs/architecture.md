@@ -63,7 +63,8 @@ HTTP 用于身份、房间和匹配等请求；WebSocket 用于桌局命令、�
 的分支。房间创建后保存完整规则快照和版本，避免预设更新影响进行中的牌局。
 
 具体对象、聚合和不变量见 [对象模型](domain-model.md)。持久化格式见
-[存储设计](persistence.md)，外部通信格式见 [通信协议](protocol.md)。
+[存储设计](persistence.md)，外部通信格式见 [通信协议](protocol.md)，
+进程启动约定见 [后端运行骨架](server-runtime.md)。
 
 ## 状态与并发
 

@@ -47,6 +47,9 @@ DELETE /api/v1/matchmaking-tickets/{ticket_id}
 
 GET    /api/v1/matches/{match_id}
 GET    /api/v1/matches/{match_id}/result
+GET    /api/v1/matches/{match_id}/hands
+GET    /api/v1/matches/{match_id}/hands/{hand_id}
+GET    /api/v1/matches/{match_id}/hands/{hand_id}/replay
 GET    /api/v1/matches/{match_id}/replay
 ```
 
@@ -55,6 +58,10 @@ GET    /api/v1/matches/{match_id}/replay
 
 低频房间写操作使用当前 `version` 做条件更新。冲突返回 `409` 和最新资源
 版本。
+
+整场记录返回当时的完整规则快照和按序单局摘要。单局复盘接口只读取该局
+起止事件范围；整场复盘按 `hand_index` 串联所有单局。未结束牌局的隐藏信息
+按请求者权限裁剪。
 
 ## WebSocket 建连
 
@@ -181,4 +188,3 @@ server.*        暂时故障
 - 心跳包含服务端时间和最新已发送 seq；
 - 服务端声明最低客户端版本与支持的消息 schema；
 - 增加可选字段属于兼容修改；删除、改义或改类型必须提升 payload schema。
-
