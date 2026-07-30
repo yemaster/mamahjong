@@ -1,6 +1,7 @@
 # Mamahjong
 
-可扩展的在线麻将服务。基础框架、日麻牌山、规则配置和权威单局状态机已完成。
+可扩展的在线麻将服务。基础框架、日麻牌山、规则配置、权威单局状态机以及
+和牌与整场结算核心已完成。
 
 ## 工程结构
 
@@ -39,4 +40,6 @@ curl http://127.0.0.1:8080/health/ready
 [路线图](docs/roadmap.md)，完整容器操作见
 [部署与运行](docs/deployment.md)，日麻配置格式见
 [日麻规则配置](docs/riichi-rules.md)，单局推进与恢复约束见
-[日麻单局状态机](docs/riichi-hand-state.md)。
+[日麻单局状态机](docs/riichi-hand-state.md)，计分与逐局留存边界见
+[日麻和牌与计分](docs/riichi-scoring.md)，终端及后续多端规划见
+[客户端与 UI 演进](docs/client-ui.md)。
