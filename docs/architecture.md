@@ -68,7 +68,8 @@ HTTP 用于身份、房间和匹配等请求；WebSocket 用于桌局命令、�
 [部署与运行](deployment.md)，日麻内部基础类型见
 [日麻基础模型](riichi-model.md)，规则配置见
 [日麻规则配置](riichi-rules.md)，单局推进见
-[日麻单局状态机](riichi-hand-state.md)。
+[日麻单局状态机](riichi-hand-state.md)，和牌与结算见
+[日麻和牌与计分](riichi-scoring.md)。
 
 ## 状态与并发
 
