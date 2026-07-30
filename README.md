@@ -7,6 +7,7 @@
 ```text
 apps/server/          后端进程入口
 crates/mahjong-core/  不依赖网络和存储的领域核心
+crates/mahjong-riichi/ 四麻/三麻日麻规则实现
 docs/                 架构与迭代计划
 ```
 
