@@ -1,6 +1,13 @@
+mod analysis;
 mod counts;
+mod evaluate;
+mod fu;
+mod points;
+mod result;
 mod shape;
+mod yaku;
 
+pub use result::{BonusHan, HandShape, Limit, Payment, WaitKind, WinEvaluation, Yaku, YakuValue};
 pub use shape::WaitingTiles;
 
 use crate::{HandJudge, KanQuery, PlayerHand, RiichiQuery};
@@ -13,9 +20,17 @@ impl RiichiScorer {
     pub fn waiting_tiles(self, player: &PlayerHand) -> WaitingTiles {
         shape::waiting_tiles(player.concealed(), player.melds().len())
     }
+
+    pub fn evaluate(self, query: crate::WinQuery<'_>) -> Option<WinEvaluation> {
+        evaluate::evaluate(query)
+    }
 }
 
 impl HandJudge for RiichiScorer {
+    fn can_win(&self, query: crate::WinQuery<'_>) -> bool {
+        self.evaluate(query).is_some()
+    }
+
     fn can_riichi(&self, query: RiichiQuery<'_>) -> bool {
         let concealed: Vec<_> = query
             .player()

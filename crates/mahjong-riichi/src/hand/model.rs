@@ -150,6 +150,7 @@ pub struct PlayerHand {
     pub(super) melds: Vec<Meld>,
     pub(super) discards: Vec<Discard>,
     pub(super) riichi: RiichiStatus,
+    pub(super) double_riichi: bool,
     pub(super) temporary_furiten: bool,
     pub(super) riichi_furiten: bool,
     pub(super) ippatsu_eligible: bool,
@@ -164,6 +165,7 @@ impl PlayerHand {
             melds: Vec::with_capacity(4),
             discards: Vec::with_capacity(24),
             riichi: RiichiStatus::None,
+            double_riichi: false,
             temporary_furiten: false,
             riichi_furiten: false,
             ippatsu_eligible: false,
@@ -201,6 +203,11 @@ impl PlayerHand {
     }
 
     #[must_use]
+    pub const fn is_double_riichi(&self) -> bool {
+        self.double_riichi
+    }
+
+    #[must_use]
     pub const fn is_temporary_furiten(&self) -> bool {
         self.temporary_furiten
     }
@@ -213,6 +220,13 @@ impl PlayerHand {
     #[must_use]
     pub const fn is_ippatsu_eligible(&self) -> bool {
         self.ippatsu_eligible
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scoring_fixture(concealed: Vec<Tile>) -> Self {
+        let mut player = Self::new(25_000);
+        player.concealed = concealed;
+        player
     }
 }
 

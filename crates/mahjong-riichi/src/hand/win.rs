@@ -72,7 +72,10 @@ impl RiichiHand {
             });
         }
 
-        self.discard_internal(actor, tile_id, true)
+        let double_riichi = !self.calls_occurred && player.discards.is_empty();
+        let transition = self.discard_internal(actor, tile_id, true)?;
+        self.players[usize::from(actor.index())].double_riichi = double_riichi;
+        Ok(transition)
     }
 
     pub fn declare_tsumo(
@@ -107,6 +110,8 @@ impl RiichiHand {
             player,
             tile,
             WinSource::Tsumo(draw_source),
+            &self.wall,
+            self.calls_occurred,
         )) {
             return Err(HandError::WinNotAllowed);
         }

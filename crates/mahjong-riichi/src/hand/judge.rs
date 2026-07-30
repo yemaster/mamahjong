@@ -1,4 +1,4 @@
-use crate::{DrawSource, MeldId, PlayerHand, RiichiRules, Seat, TableProgress, Tile, TileId};
+use crate::{DrawSource, MeldId, PlayerHand, RiichiRules, Seat, TableProgress, Tile, TileId, Wall};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WinSource {
@@ -16,16 +16,21 @@ pub struct WinQuery<'a> {
     player: &'a PlayerHand,
     winning_tile: Tile,
     source: WinSource,
+    wall: &'a Wall,
+    calls_occurred: bool,
 }
 
 impl<'a> WinQuery<'a> {
-    pub(super) const fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) const fn new(
         rules: &'a RiichiRules,
         progress: TableProgress,
         seat: Seat,
         player: &'a PlayerHand,
         winning_tile: Tile,
         source: WinSource,
+        wall: &'a Wall,
+        calls_occurred: bool,
     ) -> Self {
         Self {
             rules,
@@ -34,6 +39,8 @@ impl<'a> WinQuery<'a> {
             player,
             winning_tile,
             source,
+            wall,
+            calls_occurred,
         }
     }
 
@@ -65,6 +72,16 @@ impl<'a> WinQuery<'a> {
     #[must_use]
     pub const fn source(self) -> WinSource {
         self.source
+    }
+
+    #[must_use]
+    pub const fn wall(self) -> &'a Wall {
+        self.wall
+    }
+
+    #[must_use]
+    pub const fn calls_occurred(self) -> bool {
+        self.calls_occurred
     }
 }
 

@@ -31,7 +31,10 @@ pub use overrides::{
 };
 pub use preset::RiichiPreset;
 pub use progress::{Honba, ProgressError, RiichiSticks, RoundNumber, Seat, TableProgress, Wind};
-pub use scoring::{RiichiScorer, WaitingTiles};
+pub use scoring::{
+    BonusHan, HandShape, Limit, Payment, RiichiScorer, WaitKind, WaitingTiles, WinEvaluation, Yaku,
+    YakuValue,
+};
 pub use snapshot::RiichiRuleSnapshot;
 pub use tile::{
     Honor, Rank, Suit, Tile, TileError, TileFace, TileId, TileKind, TileKindIndexError,

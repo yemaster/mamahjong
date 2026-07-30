@@ -270,7 +270,9 @@ impl RiichiHand {
                 self.players[usize::from(pending.discarder.index())].riichi,
                 RiichiStatus::Pending
             ) {
-                self.players[usize::from(pending.discarder.index())].riichi = RiichiStatus::None;
+                let player = &mut self.players[usize::from(pending.discarder.index())];
+                player.riichi = RiichiStatus::None;
+                player.double_riichi = false;
             }
             return self.finish_ron(
                 ron_winners,
@@ -401,7 +403,16 @@ impl RiichiHand {
             Phase::KanResponses(pending) => self.pending_kan_win_data(pending),
             _ => return None,
         };
-        let query = WinQuery::new(&self.rules, self.progress, actor, player, tile, source);
+        let query = WinQuery::new(
+            &self.rules,
+            self.progress,
+            actor,
+            player,
+            tile,
+            source,
+            &self.wall,
+            self.calls_occurred,
+        );
         judge.can_win(query).then_some((tile, source))
     }
 

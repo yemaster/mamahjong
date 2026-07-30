@@ -89,6 +89,9 @@ impl RiichiHand {
         let mut counted_kans = 0_u8;
         let mut has_meld = false;
         for player in &self.players {
+            if player.double_riichi && matches!(player.riichi, RiichiStatus::None) {
+                return Err(HandInvariantError::new("riichi.double_without_riichi"));
+            }
             let mut meld_ids = HashSet::with_capacity(player.melds.len());
             for meld in &player.melds {
                 has_meld = true;
