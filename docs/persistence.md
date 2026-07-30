@@ -26,6 +26,25 @@
 
 ## 逻辑表
 
+### users 与 user_profiles
+
+```text
+users:
+id, version, login_name_canonical, status, created_at, updated_at
+
+user_credentials:
+user_id, password_hash, algorithm, parameters_json, updated_at
+
+user_profiles:
+user_id, version, nickname, nickname_normalized,
+equipped_title_id, selected_character_id, updated_at
+```
+
+登录名规范化后唯一，昵称允许重复。称号、角色、段位分别使用
+`title_catalog/user_titles`、`character_catalog/user_characters` 和
+`user_ranks`；档案只保存当前装备引用。比赛玩家表保存开局展示快照，不能
+通过联表读取“当前昵称”替代历史昵称。
+
 ### rooms
 
 ```text

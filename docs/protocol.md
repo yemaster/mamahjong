@@ -26,6 +26,9 @@
 ## HTTP 资源草案
 
 ```text
+POST   /api/v1/registrations
+GET    /api/v1/users/me
+PATCH  /api/v1/users/me/profile
 POST   /api/v1/sessions/guest
 POST   /api/v1/ws-tickets
 
@@ -52,6 +55,11 @@ GET    /api/v1/matches/{match_id}/hands/{hand_id}
 GET    /api/v1/matches/{match_id}/hands/{hand_id}/replay
 GET    /api/v1/matches/{match_id}/replay
 ```
+
+`POST /api/v1/registrations` 接收 `login_name + password + nickname`。成功
+响应返回用户档案和会话；密码及密码哈希永不进入响应、领域事件或日志。
+档案从首版保留 `equipped_title`、`selected_character` 和 `ranks` 容器，
+具体约束见 [用户注册与档案](identity-profile.md)。
 
 创建房间时客户端可以提交 `preset + overrides`；响应始终返回解析后的完整
 `rule_snapshot`。服务端拒绝未知字段，防止拼写错误被静默忽略。
