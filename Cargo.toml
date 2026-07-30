@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/server",
     "crates/mahjong-core",
+    "crates/mahjong-riichi",
 ]
 
 [workspace.package]

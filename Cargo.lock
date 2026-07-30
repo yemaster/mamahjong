@@ -242,6 +242,13 @@ name = "mahjong-core"
 version = "0.1.0"
 
 [[package]]
+name = "mahjong-riichi"
+version = "0.1.0"
+dependencies = [
+ "mahjong-core",
+]
+
+[[package]]
 name = "mamahjong-server"
 version = "0.1.0"
 dependencies = [
