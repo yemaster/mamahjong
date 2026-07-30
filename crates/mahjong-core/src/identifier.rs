@@ -85,6 +85,11 @@ macro_rules! define_entity_id {
         pub struct $name(String);
 
         impl $name {
+            #[must_use]
+            pub fn new() -> Self {
+                Self(format!(concat!($prefix, "{}"), uuid::Uuid::now_v7()))
+            }
+
             pub fn parse(value: impl Into<String>) -> Result<Self, IdParseError> {
                 let value = value.into();
                 validate_prefixed_uuid_v7(&value, $prefix, $kind)?;
@@ -110,6 +115,12 @@ macro_rules! define_entity_id {
                 Self::parse(value)
             }
         }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::new()
+            }
+        }
     };
 }
 
@@ -123,7 +134,7 @@ define_entity_id!(ConnectionId, "connection_", "connection ID");
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandId, RoomId};
+    use super::{CommandId, RoomId, UserId};
 
     const UUID_V7: &str = "018f22e2-7c30-7cc4-98c4-dc0c0c07398f";
 
@@ -134,6 +145,15 @@ mod tests {
 
         assert_eq!(id.as_str(), value);
         assert_eq!(id.to_string(), value);
+    }
+
+    #[test]
+    fn generates_unique_parseable_uuid_v7_ids() {
+        let first = UserId::new();
+        let second = UserId::new();
+
+        assert_ne!(first, second);
+        assert_eq!(UserId::parse(first.as_str()), Ok(first));
     }
 
     #[test]

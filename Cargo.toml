@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "apps/server",
+    "crates/mamahjong-application",
     "crates/mahjong-core",
     "crates/mahjong-riichi",
 ]
@@ -14,6 +15,7 @@ license = "MIT"
 
 [workspace.dependencies]
 axum = "0.8.9"
+argon2 = "0.5.3"
 getrandom = "0.3.4"
 rand_chacha = "0.9.0"
 rand_core = "0.9.3"
@@ -23,6 +25,7 @@ tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "s
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+uuid = { version = "1.18.1", features = ["v7"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -1,0 +1,19 @@
+[package]
+name = "mamahjong-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+argon2.workspace = true
+getrandom.workspace = true
+mahjong-core = { path = "../mahjong-core" }
+mahjong-riichi = { path = "../mahjong-riichi" }
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
