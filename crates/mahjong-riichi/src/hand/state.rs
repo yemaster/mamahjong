@@ -55,6 +55,7 @@ impl PendingKan {
 pub(super) enum Phase {
     TurnAction {
         seat: Seat,
+        draw_source: DrawSource,
     },
     Responses(PendingDiscard),
     KanResponses(PendingKan),
@@ -158,7 +159,10 @@ impl RiichiHand {
                 progress,
                 wall,
                 players: players.into_boxed_slice(),
-                phase: Phase::TurnAction { seat: dealer },
+                phase: Phase::TurnAction {
+                    seat: dealer,
+                    draw_source: DrawSource::LiveWall,
+                },
                 kan_counts: vec![0; expected_players].into_boxed_slice(),
                 calls_occurred: false,
             },
@@ -184,7 +188,7 @@ impl RiichiHand {
     #[must_use]
     pub fn phase(&self) -> HandPhase {
         match self.phase {
-            Phase::TurnAction { seat } => HandPhase::AwaitingTurnAction { seat },
+            Phase::TurnAction { seat, .. } => HandPhase::AwaitingTurnAction { seat },
             Phase::DiscardAfterCall { seat, .. } => HandPhase::AwaitingDiscard { seat },
             Phase::Responses(ref pending) => HandPhase::AwaitingResponses {
                 trigger_seat: pending.discarder,
@@ -202,9 +206,18 @@ impl RiichiHand {
     }
 
     pub fn discard(&mut self, actor: Seat, tile_id: TileId) -> Result<HandTransition, HandError> {
+        self.discard_internal(actor, tile_id, false)
+    }
+
+    pub(super) fn discard_internal(
+        &mut self,
+        actor: Seat,
+        tile_id: TileId,
+        declare_riichi: bool,
+    ) -> Result<HandTransition, HandError> {
         self.validate_seat(actor)?;
         let (active_seat, forbidden_discards) = match &self.phase {
-            Phase::TurnAction { seat } => (*seat, None),
+            Phase::TurnAction { seat, .. } => (*seat, None),
             Phase::DiscardAfterCall {
                 seat,
                 forbidden_discards,
@@ -225,16 +238,27 @@ impl RiichiHand {
             .position(|tile| tile.id() == tile_id)
             .ok_or(HandError::TileNotInHand { tile_id })?;
         let tsumogiri = player.drawn_tile == Some(tile_id);
+        if matches!(player.riichi, crate::RiichiStatus::Established) && !tsumogiri {
+            return Err(HandError::RiichiMustTsumogiri);
+        }
         let tile_kind = player.concealed[tile_index].kind();
         if forbidden_discards.is_some_and(|forbidden| forbidden.contains(&tile_kind)) {
             return Err(HandError::ForbiddenDiscardAfterCall { kind: tile_kind });
         }
 
         let player = &mut self.players[usize::from(actor.index())];
+        let ippatsu_expired =
+            matches!(player.riichi, crate::RiichiStatus::Established) && player.ippatsu_eligible;
         let tile = player.concealed.swap_remove(tile_index);
         player.drawn_tile = None;
+        player.ippatsu_eligible = false;
+        if declare_riichi {
+            player.riichi = crate::RiichiStatus::Pending;
+        }
         let discard_index = player.discards.len();
-        player.discards.push(Discard::new(tile, tsumogiri));
+        player
+            .discards
+            .push(Discard::new(tile, tsumogiri, declare_riichi));
         let mut responses =
             vec![None; usize::from(self.rules.variant.seat_count().value())].into_boxed_slice();
         responses[usize::from(actor.index())] = Some(Reaction::Pass);
@@ -244,12 +268,16 @@ impl RiichiHand {
             responses,
         });
 
-        Ok(HandTransition::new(vec![HandEvent::TileDiscarded {
+        let mut events = vec![HandEvent::TileDiscarded {
             seat: actor,
             tile,
             tsumogiri,
-            riichi_declared: false,
-        }]))
+            riichi_declared: declare_riichi,
+        }];
+        if ippatsu_expired {
+            events.push(HandEvent::IppatsuExpired { seat: actor });
+        }
+        Ok(HandTransition::new(events))
     }
 
     pub(super) fn resolve_unclaimed_discard(&mut self, pending: &PendingDiscard) -> HandTransition {
@@ -273,17 +301,30 @@ impl RiichiHand {
             .draw_live()
             .expect("remaining-live-draw check guarantees a tile");
         let next_player = &mut self.players[usize::from(next_seat.index())];
+        let cleared_temporary_furiten = next_player.temporary_furiten;
         next_player.concealed.push(tile);
         next_player.drawn_tile = Some(tile.id());
         next_player.temporary_furiten = false;
-        self.phase = Phase::TurnAction { seat: next_seat };
+        self.phase = Phase::TurnAction {
+            seat: next_seat,
+            draw_source: DrawSource::LiveWall,
+        };
 
-        HandTransition::new(vec![HandEvent::TileDrawn {
+        let mut events = Vec::with_capacity(2);
+        if cleared_temporary_furiten {
+            events.push(HandEvent::FuritenChanged {
+                seat: next_seat,
+                temporary: false,
+                riichi: next_player.riichi_furiten,
+            });
+        }
+        events.push(HandEvent::TileDrawn {
             seat: next_seat,
             tile,
             source: DrawSource::LiveWall,
             remaining_live_draws: self.wall.remaining_live_draws(),
-        }])
+        });
+        HandTransition::new(events)
     }
 
     pub(super) fn validate_seat(&self, seat: Seat) -> Result<(), HandError> {
@@ -331,6 +372,11 @@ pub enum HandError {
     ForbiddenDiscardAfterCall {
         kind: TileKind,
     },
+    RiichiMustTsumogiri,
+    RiichiNotAllowed {
+        reason: &'static str,
+    },
+    WinNotAllowed,
     DuplicateTileSelection,
     InvalidReaction {
         reason: &'static str,
@@ -394,6 +440,13 @@ impl Display for HandError {
                     "tile kind {kind} is forbidden by call replacement rules"
                 )
             }
+            Self::RiichiMustTsumogiri => {
+                formatter.write_str("an established riichi hand must discard its drawn tile")
+            }
+            Self::RiichiNotAllowed { reason } => formatter.write_str(reason),
+            Self::WinNotAllowed => {
+                formatter.write_str("the hand judge rejected the win declaration")
+            }
             Self::DuplicateTileSelection => {
                 formatter.write_str("the same physical tile was selected more than once")
             }
@@ -444,8 +497,8 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::{
-        EndReason, HandEvent, HandPhase, RiichiHand, RiichiRules, RiichiVariant, Seat,
-        TableProgress, TileId, WallSeed,
+        EndReason, HandEvent, HandPhase, RejectAllHandJudge, RiichiHand, RiichiRules,
+        RiichiVariant, Seat, TableProgress, TileId, WallSeed,
     };
 
     fn start_hand(variant: RiichiVariant, dealer_index: u8) -> RiichiHand {
@@ -467,7 +520,7 @@ mod tests {
         let mut last = None;
         for offset in 1..variant.seat_count().value() {
             let seat = super::seat_at_offset(variant, discarder, offset);
-            last = Some(hand.pass(seat).expect("pass"));
+            last = Some(hand.pass(seat, &RejectAllHandJudge).expect("pass"));
         }
         last.expect("a riichi hand always has opponents")
     }
@@ -585,12 +638,13 @@ mod tests {
         hand.discard(dealer, drawn).expect("discard");
 
         let before_self_pass = hand.clone();
-        assert!(hand.pass(dealer).is_err());
+        assert!(hand.pass(dealer, &RejectAllHandJudge).is_err());
         assert_eq!(hand, before_self_pass);
 
-        hand.pass(responder).expect("first pass");
+        hand.pass(responder, &RejectAllHandJudge)
+            .expect("first pass");
         let after_first_pass = hand.clone();
-        assert!(hand.pass(responder).is_err());
+        assert!(hand.pass(responder, &RejectAllHandJudge).is_err());
         assert_eq!(hand, after_first_pass);
     }
 

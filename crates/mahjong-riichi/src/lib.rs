@@ -18,8 +18,9 @@ pub use config::{
 };
 pub use definition::{RIICHI_ENGINE_VERSION, RiichiDefinitionError, RiichiRuleDefinition};
 pub use hand::{
-    Discard, DrawSource, EndReason, HandError, HandEvent, HandPhase, HandTransition, Meld, MeldId,
-    MeldKind, PlayerHand, Reaction, ReactionKind, RiichiHand, RiichiStatus,
+    Discard, DrawSource, EndReason, HandError, HandEvent, HandJudge, HandPhase, HandTransition,
+    KanQuery, Meld, MeldId, MeldKind, PlayerHand, Reaction, ReactionKind, RejectAllHandJudge,
+    RiichiHand, RiichiQuery, RiichiStatus, WinQuery, WinSource,
 };
 pub use overrides::{
     AbortiveDrawRuleOverrides, BonusRuleOverrides, MatchRuleOverrides, PresetRequest,

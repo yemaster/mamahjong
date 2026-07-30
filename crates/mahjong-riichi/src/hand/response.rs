@@ -1,42 +1,41 @@
 use crate::{
-    DrawSource, HandError, HandEvent, HandTransition, Meld, MeldId, MeldKind, Rank, Reaction,
-    ReactionKind, RiichiHand, RiichiStatus, RiichiVariant, Seat, Tile, TileId, TileKind,
+    DrawSource, HandError, HandEvent, HandJudge, HandTransition, KanQuery, Meld, MeldId, MeldKind,
+    Rank, Reaction, ReactionKind, RiichiHand, RiichiStatus, RiichiVariant, RonResolution, Seat,
+    Tile, TileId, TileKind, WinQuery, WinSource,
 };
 
 use super::state::{PendingDiscard, PendingKan, Phase};
 
 impl RiichiHand {
-    pub fn pass(&mut self, actor: Seat) -> Result<HandTransition, HandError> {
-        self.respond(actor, Reaction::Pass)
+    pub fn pass(
+        &mut self,
+        actor: Seat,
+        judge: &dyn HandJudge,
+    ) -> Result<HandTransition, HandError> {
+        self.respond(actor, Reaction::Pass, judge)
     }
 
     pub fn respond(
         &mut self,
         actor: Seat,
         reaction: Reaction,
+        judge: &dyn HandJudge,
     ) -> Result<HandTransition, HandError> {
         self.validate_seat(actor)?;
         match &self.phase {
             Phase::Responses(pending) => {
-                self.validate_discard_reaction(pending, actor, &reaction)?;
+                self.validate_discard_reaction(pending, actor, &reaction, judge)?;
             }
             Phase::KanResponses(pending) => {
-                if actor == pending.declarer() {
-                    return Err(HandError::DeclarerCannotReact);
-                }
-                if pending.responses()[usize::from(actor.index())].is_some() {
-                    return Err(HandError::AlreadyResponded { seat: actor });
-                }
-                if !matches!(reaction, Reaction::Pass) {
-                    return Err(HandError::InvalidReaction {
-                        reason: "only pass is available until the win judge accepts kan ron",
-                    });
-                }
+                self.validate_kan_reaction(pending, actor, &reaction, judge)?;
             }
             _ => return Err(HandError::WrongPhase),
         }
 
         let reaction_kind = reaction_kind(&reaction);
+        let declined_ron =
+            matches!(reaction, Reaction::Pass) && self.can_ron(actor, judge).is_some();
+        let furiten_event = declined_ron.then(|| self.apply_declined_ron(actor));
         let all_responded = match &mut self.phase {
             Phase::Responses(pending) => {
                 pending.responses[usize::from(actor.index())] = Some(reaction);
@@ -53,6 +52,9 @@ impl RiichiHand {
             seat: actor,
             reaction: reaction_kind,
         }]);
+        if let Some(event) = furiten_event {
+            transition.append(HandTransition::new(vec![event]));
+        }
         if all_responded {
             let resolution = match &self.phase {
                 Phase::Responses(pending) => {
@@ -61,7 +63,7 @@ impl RiichiHand {
                 }
                 Phase::KanResponses(pending) => {
                     let pending = pending.clone();
-                    self.complete_pending_kan(pending)
+                    self.resolve_kan_responses(pending)
                 }
                 _ => unreachable!("phase was validated above"),
             };
@@ -74,6 +76,7 @@ impl RiichiHand {
         &mut self,
         actor: Seat,
         tile_ids: [TileId; 4],
+        judge: &dyn HandJudge,
     ) -> Result<HandTransition, HandError> {
         self.validate_turn_kan(actor)?;
         let tiles = selected_tiles(
@@ -83,6 +86,20 @@ impl RiichiHand {
         if !tiles.iter().all(|tile| tile.kind() == tiles[0].kind()) {
             return Err(HandError::InvalidReaction {
                 reason: "concealed kan requires four identical tile kinds",
+            });
+        }
+        let player = &self.players[usize::from(actor.index())];
+        if matches!(player.riichi, RiichiStatus::Established)
+            && !judge.can_concealed_kan_after_riichi(KanQuery::new(
+                &self.rules,
+                self.progress,
+                actor,
+                player,
+                tile_ids,
+            ))
+        {
+            return Err(HandError::InvalidReaction {
+                reason: "the hand judge rejected this concealed kan after riichi",
             });
         }
 
@@ -148,6 +165,7 @@ impl RiichiHand {
         pending: &PendingDiscard,
         actor: Seat,
         reaction: &Reaction,
+        judge: &dyn HandJudge,
     ) -> Result<(), HandError> {
         if actor == pending.discarder {
             return Err(HandError::DiscarderCannotReact);
@@ -157,6 +175,12 @@ impl RiichiHand {
         }
         if matches!(reaction, Reaction::Pass) {
             return Ok(());
+        }
+        if matches!(reaction, Reaction::Ron) {
+            return self
+                .can_ron(actor, judge)
+                .map(|_| ())
+                .ok_or(HandError::WinNotAllowed);
         }
         if self.wall.remaining_live_draws() == 0 {
             return Err(HandError::CannotCallOnLastDiscard);
@@ -171,7 +195,7 @@ impl RiichiHand {
             .tile();
 
         match reaction {
-            Reaction::Pass => Ok(()),
+            Reaction::Pass | Reaction::Ron => Ok(()),
             Reaction::Pon { hand_tiles } => {
                 validate_matching_call(&player.concealed, hand_tiles, called_tile, 2)
             }
@@ -196,7 +220,68 @@ impl RiichiHand {
         }
     }
 
+    fn validate_kan_reaction(
+        &self,
+        pending: &PendingKan,
+        actor: Seat,
+        reaction: &Reaction,
+        judge: &dyn HandJudge,
+    ) -> Result<(), HandError> {
+        if actor == pending.declarer() {
+            return Err(HandError::DeclarerCannotReact);
+        }
+        if pending.responses()[usize::from(actor.index())].is_some() {
+            return Err(HandError::AlreadyResponded { seat: actor });
+        }
+        match reaction {
+            Reaction::Pass => Ok(()),
+            Reaction::Ron => self
+                .can_ron(actor, judge)
+                .map(|_| ())
+                .ok_or(HandError::WinNotAllowed),
+            _ => Err(HandError::InvalidReaction {
+                reason: "only ron or pass can respond to a kan",
+            }),
+        }
+    }
+
     fn resolve_discard_responses(&mut self, pending: &PendingDiscard) -> HandTransition {
+        let ron_winners = self.selected_ron_winners(
+            pending.discarder,
+            pending
+                .responses
+                .iter()
+                .enumerate()
+                .filter(|(_, response)| matches!(response, Some(Reaction::Ron)))
+                .map(|(index, _)| {
+                    Seat::new(self.rules.variant, u8::try_from(index).expect("seat index"))
+                        .expect("response array only contains valid seats")
+                }),
+        );
+        if !ron_winners.is_empty() {
+            let tile = self.players[usize::from(pending.discarder.index())].discards
+                [pending.discard_index]
+                .tile();
+            if matches!(
+                self.players[usize::from(pending.discarder.index())].riichi,
+                RiichiStatus::Pending
+            ) {
+                self.players[usize::from(pending.discarder.index())].riichi = RiichiStatus::None;
+            }
+            return self.finish_ron(
+                ron_winners,
+                pending.discarder,
+                tile,
+                WinSource::Discard {
+                    from: pending.discarder,
+                },
+            );
+        }
+
+        let mut prefix = HandTransition::default();
+        if let Some(event) = self.establish_pending_riichi(pending.discarder) {
+            prefix.append(HandTransition::new(vec![event]));
+        }
         let selected = (1..self.rules.variant.seat_count().value())
             .map(|offset| {
                 let seat =
@@ -218,9 +303,11 @@ impl RiichiHand {
             });
 
         let Some((caller, reaction)) = selected else {
-            return self.resolve_unclaimed_discard(pending);
+            prefix.append(self.resolve_unclaimed_discard(pending));
+            return prefix;
         };
-        self.apply_discard_call(pending, caller, reaction)
+        prefix.append(self.apply_discard_call(pending, caller, reaction));
+        prefix
     }
 
     fn apply_discard_call(
@@ -236,7 +323,9 @@ impl RiichiHand {
             Reaction::Chi { hand_tiles } => (MeldKind::Chi, hand_tiles.into()),
             Reaction::Pon { hand_tiles } => (MeldKind::Pon, hand_tiles.into()),
             Reaction::OpenKan { hand_tiles } => (MeldKind::OpenKan, hand_tiles.into()),
-            Reaction::Pass => unreachable!("pass cannot be selected as a call"),
+            Reaction::Pass | Reaction::Ron => {
+                unreachable!("pass and ron cannot be selected as a call")
+            }
         };
         let mut tiles = remove_tiles(
             &mut self.players[usize::from(caller.index())].concealed,
@@ -259,12 +348,18 @@ impl RiichiHand {
         self.players[usize::from(pending.discarder.index())].discards[pending.discard_index]
             .mark_claimed(caller);
         self.calls_occurred = true;
-        cancel_ippatsu(&mut self.players);
+        let cancelled_ippatsu = cancel_ippatsu(self.rules.variant, &mut self.players);
 
-        let mut transition = HandTransition::new(vec![HandEvent::MeldDeclared {
+        let mut events = vec![HandEvent::MeldDeclared {
             seat: caller,
             meld: meld.clone(),
-        }]);
+        }];
+        if !cancelled_ippatsu.is_empty() {
+            events.push(HandEvent::IppatsuCancelled {
+                seats: cancelled_ippatsu,
+            });
+        }
+        let mut transition = HandTransition::new(events);
         if matches!(kind, MeldKind::OpenKan) {
             transition.append(self.finish_kan(caller, meld));
         } else {
@@ -278,9 +373,158 @@ impl RiichiHand {
         transition
     }
 
+    fn can_ron(&self, actor: Seat, judge: &dyn HandJudge) -> Option<(Tile, WinSource)> {
+        let player = &self.players[usize::from(actor.index())];
+        if player.temporary_furiten || player.riichi_furiten {
+            return None;
+        }
+        let (tile, source) = match &self.phase {
+            Phase::Responses(pending) => {
+                let tile = self.players[usize::from(pending.discarder.index())].discards
+                    [pending.discard_index]
+                    .tile();
+                (
+                    tile,
+                    WinSource::Discard {
+                        from: pending.discarder,
+                    },
+                )
+            }
+            Phase::KanResponses(pending) => self.pending_kan_win_data(pending),
+            _ => return None,
+        };
+        let query = WinQuery::new(&self.rules, self.progress, actor, player, tile, source);
+        judge.can_win(query).then_some((tile, source))
+    }
+
+    fn pending_kan_win_data(&self, pending: &PendingKan) -> (Tile, WinSource) {
+        match pending {
+            PendingKan::Concealed {
+                declarer, tile_ids, ..
+            } => {
+                let tile = self.players[usize::from(declarer.index())]
+                    .concealed
+                    .iter()
+                    .find(|tile| tile.id() == tile_ids[0])
+                    .copied()
+                    .expect("pending concealed-kan tile remains in hand");
+                (tile, WinSource::ConcealedKan { from: *declarer })
+            }
+            PendingKan::Added {
+                declarer,
+                meld_id,
+                tile_id,
+                ..
+            } => {
+                let tile = self.players[usize::from(declarer.index())]
+                    .concealed
+                    .iter()
+                    .find(|tile| tile.id() == *tile_id)
+                    .copied()
+                    .expect("pending added-kan tile remains in hand");
+                (
+                    tile,
+                    WinSource::AddedKan {
+                        from: *declarer,
+                        meld_id: *meld_id,
+                    },
+                )
+            }
+        }
+    }
+
+    fn apply_declined_ron(&mut self, actor: Seat) -> HandEvent {
+        let player = &mut self.players[usize::from(actor.index())];
+        if matches!(player.riichi, RiichiStatus::Established) {
+            player.riichi_furiten = true;
+        } else {
+            player.temporary_furiten = true;
+        }
+        HandEvent::FuritenChanged {
+            seat: actor,
+            temporary: player.temporary_furiten,
+            riichi: player.riichi_furiten,
+        }
+    }
+
+    fn resolve_kan_responses(&mut self, pending: PendingKan) -> HandTransition {
+        let declarer = pending.declarer();
+        let winners = self.selected_ron_winners(
+            declarer,
+            pending
+                .responses()
+                .iter()
+                .enumerate()
+                .filter(|(_, response)| matches!(response, Some(Reaction::Ron)))
+                .map(|(index, _)| {
+                    Seat::new(self.rules.variant, u8::try_from(index).expect("seat index"))
+                        .expect("response array only contains valid seats")
+                }),
+        );
+        if !winners.is_empty() {
+            let (tile, source) = self.pending_kan_win_data(&pending);
+            return self.finish_ron(winners, declarer, tile, source);
+        }
+        self.complete_pending_kan(pending)
+    }
+
+    fn selected_ron_winners(
+        &self,
+        from: Seat,
+        winners: impl IntoIterator<Item = Seat>,
+    ) -> Vec<Seat> {
+        let seat_count = self.rules.variant.seat_count().value();
+        let mut winners: Vec<_> = winners.into_iter().collect();
+        winners
+            .sort_unstable_by_key(|seat| (seat.index() + seat_count - from.index()) % seat_count);
+        if matches!(
+            self.rules.settlement.ron_resolution,
+            RonResolution::HeadBump
+        ) {
+            winners.truncate(1);
+        }
+        winners
+    }
+
+    fn finish_ron(
+        &mut self,
+        winners: Vec<Seat>,
+        from: Seat,
+        tile: Tile,
+        source: WinSource,
+    ) -> HandTransition {
+        debug_assert!(!winners.is_empty());
+        self.phase = Phase::Ended(crate::EndReason::Ron);
+        HandTransition::new(vec![HandEvent::RonDeclared {
+            winners: winners.into_boxed_slice(),
+            from,
+            tile,
+            source,
+        }])
+    }
+
+    pub(super) fn establish_pending_riichi(&mut self, seat: Seat) -> Option<HandEvent> {
+        let player = &mut self.players[usize::from(seat.index())];
+        if !matches!(player.riichi, RiichiStatus::Pending) {
+            return None;
+        }
+        player.points -= 1_000;
+        player.riichi = RiichiStatus::Established;
+        player.ippatsu_eligible = self.rules.bonuses.ippatsu;
+        let riichi_sticks = self
+            .progress
+            .deposit_riichi_stick()
+            .expect("riichi declaration validated counter capacity");
+        Some(HandEvent::RiichiEstablished {
+            seat,
+            points_after: player.points,
+            riichi_sticks: riichi_sticks.value(),
+        })
+    }
+
     fn validate_turn_kan(&self, actor: Seat) -> Result<(), HandError> {
         self.validate_seat(actor)?;
-        let Phase::TurnAction { seat } = self.phase else {
+        let Phase::TurnAction { seat, .. } = self.phase else {
             return Err(HandError::WrongPhase);
         };
         if actor != seat {
@@ -361,9 +605,14 @@ impl RiichiHand {
     fn finish_kan(&mut self, actor: Seat, meld: Meld) -> HandTransition {
         self.kan_counts[usize::from(actor.index())] += 1;
         self.calls_occurred = true;
-        cancel_ippatsu(&mut self.players);
+        let cancelled_ippatsu = cancel_ippatsu(self.rules.variant, &mut self.players);
 
         let mut events = vec![HandEvent::KanCompleted { seat: actor, meld }];
+        if !cancelled_ippatsu.is_empty() {
+            events.push(HandEvent::IppatsuCancelled {
+                seats: cancelled_ippatsu,
+            });
+        }
         if self.rules.bonuses.kan_dora {
             let indicator = self
                 .wall
@@ -379,10 +628,21 @@ impl RiichiHand {
             .draw_rinshan()
             .expect("validated kan capacity guarantees a rinshan draw");
         let player = &mut self.players[usize::from(actor.index())];
+        let cleared_temporary_furiten = player.temporary_furiten;
         player.concealed.push(tile);
         player.drawn_tile = Some(tile.id());
         player.temporary_furiten = false;
-        self.phase = Phase::TurnAction { seat: actor };
+        self.phase = Phase::TurnAction {
+            seat: actor,
+            draw_source: DrawSource::Rinshan,
+        };
+        if cleared_temporary_furiten {
+            events.push(HandEvent::FuritenChanged {
+                seat: actor,
+                temporary: false,
+                riichi: player.riichi_furiten,
+            });
+        }
         events.push(HandEvent::TileDrawn {
             seat: actor,
             tile,
@@ -396,6 +656,7 @@ impl RiichiHand {
 fn reaction_kind(reaction: &Reaction) -> ReactionKind {
     match reaction {
         Reaction::Pass => ReactionKind::Pass,
+        Reaction::Ron => ReactionKind::Ron,
         Reaction::Chi { .. } => ReactionKind::Chi,
         Reaction::Pon { .. } => ReactionKind::Pon,
         Reaction::OpenKan { .. } => ReactionKind::OpenKan,
@@ -528,20 +789,37 @@ fn forbidden_after_call(kind: MeldKind, called_tile: Tile, meld: &Meld) -> Box<[
     forbidden.into_boxed_slice()
 }
 
-fn cancel_ippatsu(players: &mut [crate::PlayerHand]) {
-    for player in players {
-        player.ippatsu_eligible = false;
+fn cancel_ippatsu(variant: RiichiVariant, players: &mut [crate::PlayerHand]) -> Box<[Seat]> {
+    let mut cancelled = Vec::new();
+    for (index, player) in players.iter_mut().enumerate() {
+        if player.ippatsu_eligible {
+            cancelled.push(
+                Seat::new(variant, u8::try_from(index).expect("seat index"))
+                    .expect("player array only contains valid seats"),
+            );
+            player.ippatsu_eligible = false;
+        }
     }
+    cancelled.into_boxed_slice()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        DrawSource, HandEvent, HandPhase, MeldKind, Reaction, RiichiHand, RiichiRules,
-        RiichiVariant, Seat, TableProgress, TileId, TileKind, WallSeed,
+        DrawSource, EndReason, HandEvent, HandJudge, HandPhase, MeldKind, Reaction,
+        RejectAllHandJudge, RiichiHand, RiichiRules, RiichiStatus, RiichiVariant, RonResolution,
+        Seat, TableProgress, TileId, TileKind, WallSeed, WinQuery, WinSource,
     };
 
     use super::{Phase, forbidden_after_call, validate_chi};
+
+    struct AcceptWins;
+
+    impl HandJudge for AcceptWins {
+        fn can_win(&self, _query: WinQuery<'_>) -> bool {
+            true
+        }
+    }
 
     fn start_yonma(seed_number: u32) -> RiichiHand {
         let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
@@ -678,7 +956,7 @@ mod tests {
         for offset in 1..hand.rules().variant.seat_count().value() {
             let seat = super::super::state::seat_at_offset(hand.rules().variant, trigger, offset);
             if !already_responded.contains(&seat) {
-                last = Some(hand.pass(seat).expect("pass"));
+                last = Some(hand.pass(seat, &RejectAllHandJudge).expect("pass"));
             }
         }
         last.expect("at least one response remains")
@@ -694,6 +972,7 @@ mod tests {
             Reaction::Pon {
                 hand_tiles: [matching[0], matching[1]],
             },
+            &RejectAllHandJudge,
         )
         .expect("pon");
 
@@ -722,6 +1001,7 @@ mod tests {
             Reaction::Chi {
                 hand_tiles: selected,
             },
+            &RejectAllHandJudge,
         )
         .expect("chi");
         pass_remaining(&mut hand, dealer, &[caller]);
@@ -746,6 +1026,7 @@ mod tests {
             Reaction::Chi {
                 hand_tiles: chi_tiles,
             },
+            &RejectAllHandJudge,
         )
         .expect("chi response arrives first");
         hand.respond(
@@ -753,6 +1034,7 @@ mod tests {
             Reaction::Pon {
                 hand_tiles: pon_tiles,
             },
+            &RejectAllHandJudge,
         )
         .expect("pon response arrives second");
         pass_remaining(&mut hand, dealer, &[chi_seat, pon_seat]);
@@ -781,6 +1063,7 @@ mod tests {
             Reaction::OpenKan {
                 hand_tiles: [matching[0], matching[1], matching[2]],
             },
+            &RejectAllHandJudge,
         )
         .expect("kan");
 
@@ -821,10 +1104,17 @@ mod tests {
             .concealed
             .push(fourth);
         concealed_hand.players[usize::from(actor.index())].drawn_tile = Some(fourth.id());
-        concealed_hand.phase = Phase::TurnAction { seat: actor };
+        concealed_hand.phase = Phase::TurnAction {
+            seat: actor,
+            draw_source: DrawSource::LiveWall,
+        };
 
         concealed_hand
-            .declare_concealed_kan(actor, [matching[0], matching[1], matching[2], fourth.id()])
+            .declare_concealed_kan(
+                actor,
+                [matching[0], matching[1], matching[2], fourth.id()],
+                &RejectAllHandJudge,
+            )
             .expect("propose concealed kan");
         assert!(
             concealed_hand
@@ -847,10 +1137,14 @@ mod tests {
                 Reaction::Pon {
                     hand_tiles: [matching[0], matching[1]],
                 },
+                &RejectAllHandJudge,
             )
             .expect("pon");
         pass_remaining(&mut added_hand, dealer, &[caller]);
-        added_hand.phase = Phase::TurnAction { seat: caller };
+        added_hand.phase = Phase::TurnAction {
+            seat: caller,
+            draw_source: DrawSource::LiveWall,
+        };
         added_hand.players[usize::from(caller.index())].drawn_tile = Some(matching[2]);
 
         added_hand
@@ -868,6 +1162,52 @@ mod tests {
     }
 
     #[test]
+    fn ron_on_added_kan_prevents_kan_completion() {
+        let (mut hand, declarer, discard_id, matching) = find_matching_scenario(3);
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        hand.discard(dealer, discard_id).expect("discard");
+        hand.respond(
+            declarer,
+            Reaction::Pon {
+                hand_tiles: [matching[0], matching[1]],
+            },
+            &RejectAllHandJudge,
+        )
+        .expect("pon");
+        pass_remaining(&mut hand, dealer, &[declarer]);
+        hand.phase = Phase::TurnAction {
+            seat: declarer,
+            draw_source: DrawSource::LiveWall,
+        };
+        hand.players[usize::from(declarer.index())].drawn_tile = Some(matching[2]);
+        hand.declare_added_kan(declarer, crate::MeldId::new(0), matching[2])
+            .expect("added kan");
+
+        hand.respond(dealer, Reaction::Ron, &AcceptWins)
+            .expect("chankan");
+        let transition = pass_remaining(&mut hand, declarer, &[dealer]);
+
+        assert_eq!(
+            hand.phase(),
+            HandPhase::Ended {
+                reason: EndReason::Ron
+            }
+        );
+        assert_eq!(
+            hand.player(declarer).expect("declarer").melds()[0].kind(),
+            MeldKind::Pon
+        );
+        assert_eq!(hand.kan_counts[usize::from(declarer.index())], 0);
+        assert!(matches!(
+            transition.events().last(),
+            Some(HandEvent::RonDeclared {
+                source: WinSource::AddedKan { from, .. },
+                ..
+            }) if *from == declarer
+        ));
+    }
+
+    #[test]
     fn invalid_call_is_atomic() {
         let (mut hand, caller, discard_id, _) = find_matching_scenario(2);
         let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
@@ -879,11 +1219,156 @@ mod tests {
                 caller,
                 Reaction::Pon {
                     hand_tiles: [TileId::new(u16::MAX), TileId::new(u16::MAX - 1)]
-                }
+                },
+                &RejectAllHandJudge,
             )
             .is_err()
         );
         assert_eq!(hand, before);
+    }
+
+    #[test]
+    fn ron_priority_is_rule_driven_not_arrival_order() {
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        let seat_one = Seat::new(RiichiVariant::Yonma, 1).expect("seat one");
+        let seat_two = Seat::new(RiichiVariant::Yonma, 2).expect("seat two");
+        let seat_three = Seat::new(RiichiVariant::Yonma, 3).expect("seat three");
+
+        let mut multiple = start_yonma(77);
+        let discard = multiple
+            .player(dealer)
+            .expect("dealer")
+            .drawn_tile_id()
+            .expect("draw");
+        multiple.discard(dealer, discard).expect("discard");
+        multiple
+            .respond(seat_two, Reaction::Ron, &AcceptWins)
+            .expect("second seat ron arrives first");
+        multiple
+            .respond(seat_one, Reaction::Ron, &AcceptWins)
+            .expect("nearest ron arrives second");
+        let transition = multiple
+            .pass(seat_three, &AcceptWins)
+            .expect("last response");
+        assert_eq!(
+            multiple.phase(),
+            HandPhase::Ended {
+                reason: EndReason::Ron
+            }
+        );
+        assert!(matches!(
+            transition.events().last(),
+            Some(HandEvent::RonDeclared { winners, .. })
+                if winners.as_ref() == [seat_one, seat_two]
+        ));
+
+        let mut head_bump = start_yonma(77);
+        head_bump.rules.settlement.ron_resolution = RonResolution::HeadBump;
+        let discard = head_bump
+            .player(dealer)
+            .expect("dealer")
+            .drawn_tile_id()
+            .expect("draw");
+        head_bump.discard(dealer, discard).expect("discard");
+        head_bump
+            .respond(seat_two, Reaction::Ron, &AcceptWins)
+            .expect("ron");
+        head_bump
+            .respond(seat_one, Reaction::Ron, &AcceptWins)
+            .expect("ron");
+        let transition = head_bump
+            .pass(seat_three, &AcceptWins)
+            .expect("last response");
+        assert!(matches!(
+            transition.events().last(),
+            Some(HandEvent::RonDeclared { winners, .. })
+                if winners.as_ref() == [seat_one]
+        ));
+    }
+
+    #[test]
+    fn declining_ron_sets_temporary_furiten_without_affecting_other_responses() {
+        let mut hand = start_yonma(91);
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        let actor = Seat::new(RiichiVariant::Yonma, 2).expect("actor");
+        let discard = hand
+            .player(dealer)
+            .expect("dealer")
+            .drawn_tile_id()
+            .expect("draw");
+        hand.discard(dealer, discard).expect("discard");
+
+        let transition = hand.pass(actor, &AcceptWins).expect("decline ron");
+
+        assert!(hand.player(actor).expect("actor").is_temporary_furiten());
+        assert!(transition.events().iter().any(|event| matches!(
+            event,
+            HandEvent::FuritenChanged {
+                seat,
+                temporary: true,
+                ..
+            } if *seat == actor
+        )));
+        assert_eq!(
+            hand.phase(),
+            HandPhase::AwaitingResponses {
+                trigger_seat: dealer
+            }
+        );
+    }
+
+    #[test]
+    fn declining_ron_after_riichi_sets_persistent_riichi_furiten() {
+        let mut hand = start_yonma(92);
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        let actor = Seat::new(RiichiVariant::Yonma, 2).expect("actor");
+        hand.players[usize::from(actor.index())].riichi = RiichiStatus::Established;
+        let discard = hand
+            .player(dealer)
+            .expect("dealer")
+            .drawn_tile_id()
+            .expect("draw");
+        hand.discard(dealer, discard).expect("discard");
+
+        hand.pass(actor, &AcceptWins).expect("decline ron");
+
+        assert!(!hand.player(actor).expect("actor").is_temporary_furiten());
+        assert!(hand.player(actor).expect("actor").is_riichi_furiten());
+    }
+
+    #[test]
+    fn next_draw_clears_temporary_furiten() {
+        let mut hand = start_yonma(93);
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        let next = Seat::new(RiichiVariant::Yonma, 1).expect("next");
+        let discard = hand
+            .player(dealer)
+            .expect("dealer")
+            .drawn_tile_id()
+            .expect("draw");
+        hand.discard(dealer, discard).expect("discard");
+        hand.pass(next, &AcceptWins).expect("decline ron");
+        hand.pass(
+            Seat::new(RiichiVariant::Yonma, 2).expect("seat"),
+            &RejectAllHandJudge,
+        )
+        .expect("pass");
+        let transition = hand
+            .pass(
+                Seat::new(RiichiVariant::Yonma, 3).expect("seat"),
+                &RejectAllHandJudge,
+            )
+            .expect("last pass");
+
+        assert!(!hand.player(next).expect("next").is_temporary_furiten());
+        assert!(transition.events().iter().any(|event| matches!(
+            event,
+            HandEvent::FuritenChanged {
+                seat,
+                temporary: false,
+                ..
+            } if *seat == next
+        )));
     }
 
     #[test]

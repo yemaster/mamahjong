@@ -90,11 +90,11 @@ pub struct Discard {
 }
 
 impl Discard {
-    pub(super) const fn new(tile: Tile, tsumogiri: bool) -> Self {
+    pub(super) const fn new(tile: Tile, tsumogiri: bool, riichi_declared: bool) -> Self {
         Self {
             tile,
             tsumogiri,
-            riichi_declared: false,
+            riichi_declared,
             claimed_by: None,
         }
     }
@@ -136,6 +136,7 @@ pub enum RiichiStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Reaction {
     Pass,
+    Ron,
     Chi { hand_tiles: [TileId; 2] },
     Pon { hand_tiles: [TileId; 2] },
     OpenKan { hand_tiles: [TileId; 3] },

@@ -220,6 +220,12 @@ impl TableProgress {
             }),
         }
     }
+
+    pub fn deposit_riichi_stick(&mut self) -> Result<RiichiSticks, ProgressError> {
+        let updated = self.riichi_sticks.checked_deposit()?;
+        self.riichi_sticks = updated;
+        Ok(updated)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -362,5 +368,14 @@ mod tests {
         assert_eq!(progress.dealer(), dealer);
         assert_eq!(progress.honba(), Honba::ZERO);
         assert_eq!(progress.riichi_sticks(), RiichiSticks::ZERO);
+    }
+
+    #[test]
+    fn table_progress_deposits_riichi_stick_with_overflow_check() {
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        let mut progress = TableProgress::east_one(RiichiVariant::Yonma, dealer).expect("progress");
+
+        assert_eq!(progress.deposit_riichi_stick().expect("deposit").value(), 1);
+        assert_eq!(progress.riichi_sticks().value(), 1);
     }
 }

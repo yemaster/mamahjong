@@ -9,6 +9,7 @@ pub enum DrawSource {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReactionKind {
     Pass,
+    Ron,
     Chi,
     Pon,
     OpenKan,
@@ -57,6 +58,33 @@ pub enum HandEvent {
     DoraIndicatorRevealed {
         tile: Tile,
         revealed_count: u8,
+    },
+    RiichiEstablished {
+        seat: Seat,
+        points_after: i32,
+        riichi_sticks: u32,
+    },
+    IppatsuExpired {
+        seat: Seat,
+    },
+    IppatsuCancelled {
+        seats: Box<[Seat]>,
+    },
+    FuritenChanged {
+        seat: Seat,
+        temporary: bool,
+        riichi: bool,
+    },
+    TsumoDeclared {
+        winner: Seat,
+        tile: Tile,
+        source: DrawSource,
+    },
+    RonDeclared {
+        winners: Box<[Seat]>,
+        from: Seat,
+        tile: Tile,
+        source: crate::WinSource,
     },
     ExhaustiveDrawDeclared {
         reason: EndReason,
