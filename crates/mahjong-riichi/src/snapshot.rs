@@ -5,11 +5,9 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    ResolvedRiichiRules, RiichiRules, RiichiVariant, RoomRuleRequest, RuleResolutionError,
-    ValidationErrors,
+    RIICHI_ENGINE_VERSION, ResolvedRiichiRules, RiichiRules, RiichiVariant, RoomRuleRequest,
+    RuleResolutionError, ValidationErrors,
 };
-
-pub const RIICHI_ENGINE_VERSION: EngineVersion = EngineVersion::new(0, 1, 0);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiichiRuleSnapshot {
