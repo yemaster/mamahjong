@@ -5,10 +5,11 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use mahjong_core::{MatchId, RoomId, UserId};
 use mahjong_riichi::{RiichiVariant, RoomRuleRequest};
 
+use crate::game::GameRuntime;
 use crate::store::MemoryStore;
 use crate::{
-    AccountStatus, ApplicationError, ErrorCode, GameRuleSnapshot, Nickname, Room, RoomVisibility,
-    Session, User,
+    AccountStatus, ApplicationError, ErrorCode, GameRuleSnapshot, Nickname, ObserverMatch, Room,
+    RoomVisibility, Session, SubmitGameCommand, User,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -258,10 +259,40 @@ impl Application {
         expected_version: u64,
     ) -> Result<(Room, MatchId), ApplicationError> {
         let mut store = self.write_store()?;
-        let room = store.rooms.get_mut(room_id).ok_or_else(room_not_found)?;
-        ensure_version(room, expected_version)?;
+        let mut room = store.rooms.get(room_id).ok_or_else(room_not_found)?.clone();
+        ensure_version(&room, expected_version)?;
         let match_id = room.start(actor)?;
-        Ok((room.clone(), match_id))
+        let game = GameRuntime::start(&room, match_id.clone())?;
+        store.rooms.insert(room_id.clone(), room.clone());
+        store.matches.insert(match_id.clone(), game);
+        Ok((room, match_id))
+    }
+
+    pub fn match_view(
+        &self,
+        actor: &UserId,
+        match_id: &MatchId,
+    ) -> Result<ObserverMatch, ApplicationError> {
+        self.read_store()?
+            .matches
+            .get(match_id)
+            .ok_or_else(match_not_found)?
+            .view(actor)
+    }
+
+    pub fn submit_game_command(
+        &self,
+        actor: &UserId,
+        match_id: &MatchId,
+        command: SubmitGameCommand,
+    ) -> Result<ObserverMatch, ApplicationError> {
+        let mut store = self.write_store()?;
+        let game = store
+            .matches
+            .get_mut(match_id)
+            .ok_or_else(match_not_found)?;
+        game.execute(actor, command)?;
+        game.view(actor)
     }
 
     fn read_store(&self) -> Result<RwLockReadGuard<'_, MemoryStore>, ApplicationError> {
@@ -377,6 +408,10 @@ fn room_not_found() -> ApplicationError {
     ApplicationError::new(ErrorCode::RoomNotFound, "room was not found")
 }
 
+fn match_not_found() -> ApplicationError {
+    ApplicationError::new(ErrorCode::MatchNotFound, "match was not found")
+}
+
 fn internal_error() -> ApplicationError {
     ApplicationError::new(ErrorCode::Internal, "internal application state error")
 }
@@ -388,7 +423,7 @@ mod tests {
     use super::{
         Application, CreateRoom, RegisterUser, RoomRuleSelection, UpdateProfile, UpdateRoom,
     };
-    use crate::{ErrorCode, RoomVisibility};
+    use crate::{ErrorCode, GameCommand, RoomVisibility, SubmitGameCommand};
 
     fn register(application: &Application, suffix: &str) -> (crate::User, crate::Session) {
         application
@@ -638,5 +673,63 @@ mod tests {
                 .code(),
             ErrorCode::RoomPlaying
         );
+
+        let players = [&owner, &guest_one, &guest_two];
+        let mut view = application
+            .match_view(owner.id(), &match_id)
+            .expect("initial match view");
+        for _ in 0..500 {
+            if view.hand_index() > 0 {
+                break;
+            }
+            match view.phase() {
+                mahjong_riichi::HandPhase::AwaitingTurnAction { seat }
+                | mahjong_riichi::HandPhase::AwaitingDiscard { seat } => {
+                    let actor = players[usize::from(seat.index())];
+                    let actor_view = application
+                        .match_view(actor.id(), &match_id)
+                        .expect("actor view");
+                    let tile_id = actor_view.players()[usize::from(seat.index())]
+                        .concealed_tiles()
+                        .expect("own concealed hand")[0]
+                        .id()
+                        .value();
+                    view = application
+                        .submit_game_command(
+                            actor.id(),
+                            &match_id,
+                            SubmitGameCommand {
+                                expected_version: actor_view.version(),
+                                command: GameCommand::Discard { tile_id },
+                            },
+                        )
+                        .expect("discard");
+                }
+                mahjong_riichi::HandPhase::AwaitingResponses { trigger_seat } => {
+                    for (seat_index, actor) in players.iter().enumerate() {
+                        if seat_index == usize::from(trigger_seat.index()) {
+                            continue;
+                        }
+                        view = application
+                            .submit_game_command(
+                                actor.id(),
+                                &match_id,
+                                SubmitGameCommand {
+                                    expected_version: view.version(),
+                                    command: GameCommand::Pass,
+                                },
+                            )
+                            .expect("pass");
+                    }
+                }
+                mahjong_riichi::HandPhase::Ended { .. } => {
+                    panic!("a completed non-terminal hand must start the next hand")
+                }
+            }
+        }
+
+        assert_eq!(view.hand_index(), 1);
+        assert_eq!(view.progress().round_number().value(), 2);
+        assert!(view.event_sequence() > 200);
     }
 }

@@ -21,6 +21,11 @@ pub enum ErrorCode {
     RoomVersionConflict,
     RoomPlaying,
     RoomNotReady,
+    MatchNotFound,
+    NotMatchPlayer,
+    MatchVersionConflict,
+    InvalidGameCommand,
+    MatchFinished,
     Internal,
 }
 
@@ -46,6 +51,11 @@ impl ErrorCode {
             Self::RoomVersionConflict => "room.version_conflict",
             Self::RoomPlaying => "room.playing",
             Self::RoomNotReady => "room.not_ready",
+            Self::MatchNotFound => "game.not_found",
+            Self::NotMatchPlayer => "game.not_player",
+            Self::MatchVersionConflict => "game.stale_version",
+            Self::InvalidGameCommand => "game.invalid_command",
+            Self::MatchFinished => "game.finished",
             Self::Internal => "server.internal",
         }
     }
