@@ -140,6 +140,16 @@ impl Wall {
     }
 
     #[must_use]
+    pub(crate) const fn live_draw_count(&self) -> usize {
+        self.live_draw_index
+    }
+
+    #[must_use]
+    pub(crate) fn tile_by_id(&self, tile_id: crate::TileId) -> Option<Tile> {
+        self.tiles.iter().copied().find(|tile| tile.id() == tile_id)
+    }
+
+    #[must_use]
     pub fn current_dora_indicators(&self) -> impl ExactSizeIterator<Item = Tile> + '_ {
         DORA_OFFSETS[..usize::from(self.revealed_dora_count)]
             .iter()
