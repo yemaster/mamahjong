@@ -2,6 +2,7 @@
 
 mod config;
 mod definition;
+mod hand;
 mod overrides;
 mod preset;
 mod progress;
@@ -16,6 +17,10 @@ pub use config::{
     RiichiRules, RonResolution, ScoringRules, SettlementRules, YakumanValue,
 };
 pub use definition::{RIICHI_ENGINE_VERSION, RiichiDefinitionError, RiichiRuleDefinition};
+pub use hand::{
+    Discard, DrawSource, EndReason, HandError, HandEvent, HandPhase, HandTransition, Meld, MeldId,
+    MeldKind, PlayerHand, ReactionKind, RiichiHand, RiichiStatus,
+};
 pub use overrides::{
     AbortiveDrawRuleOverrides, BonusRuleOverrides, MatchRuleOverrides, PresetRequest,
     RedFiveOverrides, ResolvedRiichiRules, RiichiRuleOverrides, RoomRuleRequest,
