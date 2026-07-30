@@ -186,6 +186,11 @@ impl RiichiHand {
     }
 
     #[must_use]
+    pub fn current_dora_indicators(&self) -> impl ExactSizeIterator<Item = crate::Tile> + '_ {
+        self.wall.current_dora_indicators()
+    }
+
+    #[must_use]
     pub fn phase(&self) -> HandPhase {
         match self.phase {
             Phase::TurnAction { seat, .. } => HandPhase::AwaitingTurnAction { seat },

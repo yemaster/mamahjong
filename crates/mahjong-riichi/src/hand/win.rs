@@ -1,11 +1,46 @@
 use crate::{
     EndReason, HandError, HandEvent, HandJudge, HandTransition, MeldKind, RiichiHand, RiichiQuery,
-    RiichiStatus, Seat, TileId, WinQuery, WinSource,
+    RiichiScorer, RiichiStatus, Seat, TileId, WinEvaluation, WinQuery, WinSource,
 };
 
 use super::state::Phase;
 
 impl RiichiHand {
+    pub fn evaluate_tsumo(&self, actor: Seat) -> Result<WinEvaluation, HandError> {
+        self.validate_seat(actor)?;
+        let Phase::TurnAction { seat, draw_source } = self.phase else {
+            return Err(HandError::WrongPhase);
+        };
+        if actor != seat {
+            return Err(HandError::NotActiveSeat {
+                expected: seat,
+                actual: actor,
+            });
+        }
+        let player = &self.players[usize::from(actor.index())];
+        let drawn_tile_id = player
+            .drawn_tile
+            .expect("turn-action phase always contains a drawn tile");
+        let tile = player
+            .concealed
+            .iter()
+            .find(|tile| tile.id() == drawn_tile_id)
+            .copied()
+            .expect("drawn tile remains in concealed hand");
+        RiichiScorer
+            .evaluate(WinQuery::new(
+                &self.rules,
+                self.progress,
+                actor,
+                player,
+                tile,
+                WinSource::Tsumo(draw_source),
+                &self.wall,
+                self.calls_occurred,
+            ))
+            .ok_or(HandError::WinNotAllowed)
+    }
+
     pub fn declare_riichi_and_discard(
         &mut self,
         actor: Seat,

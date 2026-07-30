@@ -188,6 +188,40 @@ impl RiichiMatch {
         Ok(self.result.as_ref())
     }
 
+    pub fn record_riichi_established(
+        &mut self,
+        seat: Seat,
+        points_after: i32,
+        riichi_sticks: u32,
+    ) -> Result<(), MatchError> {
+        if self.result.is_some() {
+            return Err(MatchError::AlreadyFinished);
+        }
+        let index = usize::from(seat.index());
+        let Some(points_before) = self.points.get(index).copied() else {
+            return Err(MatchError::InvalidSeat);
+        };
+        let expected_points = points_before
+            .checked_sub(1_000)
+            .ok_or(MatchError::ScoreOverflow)?;
+        let expected_sticks = self
+            .progress
+            .riichi_sticks()
+            .value()
+            .checked_add(1)
+            .ok_or(MatchError::ScoreOverflow)?;
+        if points_after != expected_points || riichi_sticks != expected_sticks {
+            return Err(MatchError::RiichiStateMismatch);
+        }
+        let mut progress = self.progress;
+        progress
+            .deposit_riichi_stick()
+            .map_err(|_| MatchError::ScoreOverflow)?;
+        self.points[index] = points_after;
+        self.progress = progress;
+        Ok(())
+    }
+
     fn end_reason_after(&self, hand: &HandResult) -> Option<MatchEndReason> {
         if self.rules.match_rules.tobi && hand.points_after().iter().any(|points| *points < 0) {
             return Some(MatchEndReason::Tobi);
@@ -342,6 +376,8 @@ pub enum MatchError {
     AlreadyFinished,
     ProgressMismatch,
     PointsMismatch,
+    InvalidSeat,
+    RiichiStateMismatch,
     HandCountOverflow,
     ScoreOverflow,
     InvalidJpmlAState,
@@ -357,6 +393,10 @@ impl Display for MatchError {
                 formatter.write_str("hand progress does not match active match")
             }
             Self::PointsMismatch => formatter.write_str("hand points do not match active match"),
+            Self::InvalidSeat => formatter.write_str("seat is invalid for this match"),
+            Self::RiichiStateMismatch => {
+                formatter.write_str("riichi points or stick count do not match active match")
+            }
             Self::HandCountOverflow => formatter.write_str("hand count overflow"),
             Self::ScoreOverflow => formatter.write_str("match score calculation overflow"),
             Self::InvalidJpmlAState => formatter.write_str("invalid JPML A floating-score state"),
@@ -652,5 +692,21 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn established_riichi_is_synchronized_before_hand_settlement() {
+        let rules = RiichiRules::default();
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        let mut game = RiichiMatch::start(rules, dealer).expect("match");
+
+        game.record_riichi_established(dealer, 24_000, 1)
+            .expect("sync riichi");
+
+        assert_eq!(game.points(), [24_000, 25_000, 25_000, 25_000]);
+        assert_eq!(game.progress().riichi_sticks().value(), 1);
+        let before = game.clone();
+        assert!(game.record_riichi_established(dealer, 23_500, 2).is_err());
+        assert_eq!(game, before);
     }
 }

@@ -1,12 +1,32 @@
 use crate::{
     DrawSource, EndReason, HandError, HandEvent, HandJudge, HandTransition, KanQuery, Meld, MeldId,
-    MeldKind, Rank, Reaction, ReactionKind, RiichiHand, RiichiStatus, RiichiVariant, RonResolution,
-    Seat, Tile, TileId, TileKind, WinQuery, WinSource,
+    MeldKind, Rank, Reaction, ReactionKind, RiichiHand, RiichiScorer, RiichiStatus, RiichiVariant,
+    RonResolution, Seat, Tile, TileId, TileKind, WinEvaluation, WinQuery, WinSource,
 };
 
 use super::state::{PendingDiscard, PendingKan, Phase};
 
 impl RiichiHand {
+    pub fn evaluate_pending_ron(&self, actor: Seat) -> Result<WinEvaluation, HandError> {
+        self.validate_seat(actor)?;
+        let (tile, source) = self
+            .can_ron(actor, &RiichiScorer)
+            .ok_or(HandError::WinNotAllowed)?;
+        let player = &self.players[usize::from(actor.index())];
+        RiichiScorer
+            .evaluate(WinQuery::new(
+                &self.rules,
+                self.progress,
+                actor,
+                player,
+                tile,
+                source,
+                &self.wall,
+                self.calls_occurred,
+            ))
+            .ok_or(HandError::WinNotAllowed)
+    }
+
     pub fn pass(
         &mut self,
         actor: Seat,
