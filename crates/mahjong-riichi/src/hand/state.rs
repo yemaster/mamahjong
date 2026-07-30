@@ -2,9 +2,9 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    Discard, DrawSource, EndReason, HandEvent, HandPhase, HandTransition, PlayerHand, Reaction,
-    RiichiRules, RiichiVariant, Seat, TableProgress, TileId, TileKind, TileSet, TileSetError,
-    ValidationErrors, Wall, WallSeed,
+    Discard, DrawSource, EndReason, HandEvent, HandJudge, HandPhase, HandTransition, PlayerHand,
+    Reaction, RiichiRules, RiichiVariant, Seat, TableProgress, TileId, TileKind, TileSet,
+    TileSetError, ValidationErrors, Wall, WallSeed,
 };
 
 const INITIAL_CONCEALED_TILES: usize = 13;
@@ -280,7 +280,11 @@ impl RiichiHand {
         Ok(HandTransition::new(events))
     }
 
-    pub(super) fn resolve_unclaimed_discard(&mut self, pending: &PendingDiscard) -> HandTransition {
+    pub(super) fn resolve_unclaimed_discard(
+        &mut self,
+        pending: &PendingDiscard,
+        judge: &dyn HandJudge,
+    ) -> HandTransition {
         debug_assert!(
             self.players[usize::from(pending.discarder.index())]
                 .discards
@@ -289,9 +293,19 @@ impl RiichiHand {
         );
 
         if self.wall.remaining_live_draws() == 0 {
+            let tenpai = (0..self.rules.variant.seat_count().value())
+                .filter_map(|index| {
+                    let seat = Seat::new(self.rules.variant, index).expect("valid seat index");
+                    judge
+                        .is_tenpai(&self.rules, &self.players[usize::from(seat.index())], seat)
+                        .then_some(seat)
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
             self.phase = Phase::Ended(EndReason::ExhaustiveDraw);
             return HandTransition::new(vec![HandEvent::ExhaustiveDrawDeclared {
                 reason: EndReason::ExhaustiveDraw,
+                tenpai,
             }]);
         }
 
@@ -377,6 +391,9 @@ pub enum HandError {
         reason: &'static str,
     },
     WinNotAllowed,
+    AbortiveDrawNotAllowed {
+        reason: &'static str,
+    },
     DuplicateTileSelection,
     InvalidReaction {
         reason: &'static str,
@@ -447,6 +464,7 @@ impl Display for HandError {
             Self::WinNotAllowed => {
                 formatter.write_str("the hand judge rejected the win declaration")
             }
+            Self::AbortiveDrawNotAllowed { reason } => formatter.write_str(reason),
             Self::DuplicateTileSelection => {
                 formatter.write_str("the same physical tile was selected more than once")
             }
@@ -497,8 +515,8 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::{
-        EndReason, HandEvent, HandPhase, RejectAllHandJudge, RiichiHand, RiichiRules,
-        RiichiVariant, Seat, TableProgress, TileId, WallSeed,
+        EndReason, HandEvent, HandJudge, HandPhase, PlayerHand, RejectAllHandJudge, RiichiHand,
+        RiichiRules, RiichiVariant, Seat, TableProgress, TileId, WallSeed,
     };
 
     fn start_hand(variant: RiichiVariant, dealer_index: u8) -> RiichiHand {
@@ -516,13 +534,29 @@ mod tests {
     }
 
     fn pass_all(hand: &mut RiichiHand, discarder: Seat) -> crate::HandTransition {
+        pass_all_with(hand, discarder, &RejectAllHandJudge)
+    }
+
+    fn pass_all_with(
+        hand: &mut RiichiHand,
+        discarder: Seat,
+        judge: &dyn HandJudge,
+    ) -> crate::HandTransition {
         let variant = hand.rules().variant;
         let mut last = None;
         for offset in 1..variant.seat_count().value() {
             let seat = super::seat_at_offset(variant, discarder, offset);
-            last = Some(hand.pass(seat, &RejectAllHandJudge).expect("pass"));
+            last = Some(hand.pass(seat, judge).expect("pass"));
         }
         last.expect("a riichi hand always has opponents")
+    }
+
+    struct SeatOneTenpai;
+
+    impl HandJudge for SeatOneTenpai {
+        fn is_tenpai(&self, _rules: &RiichiRules, _player: &PlayerHand, seat: Seat) -> bool {
+            seat.index() == 1
+        }
     }
 
     #[test]
@@ -687,7 +721,8 @@ mod tests {
             if matches!(
                 transition.events().last(),
                 Some(HandEvent::ExhaustiveDrawDeclared {
-                    reason: EndReason::ExhaustiveDraw
+                    reason: EndReason::ExhaustiveDraw,
+                    ..
                 })
             ) {
                 break;
@@ -701,5 +736,36 @@ mod tests {
             }
         );
         assert_eq!(hand.remaining_live_draws(), 0);
+    }
+
+    #[test]
+    fn exhaustive_draw_records_judge_tenpai_seats() {
+        let mut hand = start_hand(RiichiVariant::Sanma, 0);
+        let final_transition = loop {
+            let HandPhase::AwaitingTurnAction { seat } = hand.phase() else {
+                panic!("expected turn");
+            };
+            let drawn = hand
+                .player(seat)
+                .expect("player")
+                .drawn_tile_id()
+                .expect("draw");
+            hand.discard(seat, drawn).expect("discard");
+            let transition = pass_all_with(&mut hand, seat, &SeatOneTenpai);
+            if matches!(
+                transition.events().last(),
+                Some(HandEvent::ExhaustiveDrawDeclared { .. })
+            ) {
+                break transition;
+            }
+        };
+
+        assert!(matches!(
+            final_transition.events().last(),
+            Some(HandEvent::ExhaustiveDrawDeclared {
+                reason: EndReason::ExhaustiveDraw,
+                tenpai,
+            }) if tenpai.as_ref() == [Seat::new(RiichiVariant::Sanma, 1).expect("seat")]
+        ));
     }
 }

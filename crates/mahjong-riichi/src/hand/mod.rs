@@ -1,3 +1,4 @@
+mod draw;
 mod event;
 mod judge;
 mod model;

@@ -86,8 +86,13 @@ pub enum HandEvent {
         tile: Tile,
         source: crate::WinSource,
     },
+    AbortiveDrawDeclared {
+        reason: EndReason,
+        declarer: Option<Seat>,
+    },
     ExhaustiveDrawDeclared {
         reason: EndReason,
+        tenpai: Box<[Seat]>,
     },
 }
 

@@ -1,7 +1,7 @@
 use crate::{
-    DrawSource, HandError, HandEvent, HandJudge, HandTransition, KanQuery, Meld, MeldId, MeldKind,
-    Rank, Reaction, ReactionKind, RiichiHand, RiichiStatus, RiichiVariant, RonResolution, Seat,
-    Tile, TileId, TileKind, WinQuery, WinSource,
+    DrawSource, EndReason, HandError, HandEvent, HandJudge, HandTransition, KanQuery, Meld, MeldId,
+    MeldKind, Rank, Reaction, ReactionKind, RiichiHand, RiichiStatus, RiichiVariant, RonResolution,
+    Seat, Tile, TileId, TileKind, WinQuery, WinSource,
 };
 
 use super::state::{PendingDiscard, PendingKan, Phase};
@@ -59,7 +59,7 @@ impl RiichiHand {
             let resolution = match &self.phase {
                 Phase::Responses(pending) => {
                     let pending = pending.clone();
-                    self.resolve_discard_responses(&pending)
+                    self.resolve_discard_responses(&pending, judge)
                 }
                 Phase::KanResponses(pending) => {
                     let pending = pending.clone();
@@ -245,7 +245,11 @@ impl RiichiHand {
         }
     }
 
-    fn resolve_discard_responses(&mut self, pending: &PendingDiscard) -> HandTransition {
+    fn resolve_discard_responses(
+        &mut self,
+        pending: &PendingDiscard,
+        judge: &dyn HandJudge,
+    ) -> HandTransition {
         let ron_winners = self.selected_ron_winners(
             pending.discarder,
             pending
@@ -303,7 +307,11 @@ impl RiichiHand {
             });
 
         let Some((caller, reaction)) = selected else {
-            prefix.append(self.resolve_unclaimed_discard(pending));
+            if let Some(abortive_draw) = self.abortive_draw_after_unclaimed_discard(pending) {
+                prefix.append(abortive_draw);
+                return prefix;
+            }
+            prefix.append(self.resolve_unclaimed_discard(pending, judge));
             return prefix;
         };
         prefix.append(self.apply_discard_call(pending, caller, reaction));
@@ -612,6 +620,11 @@ impl RiichiHand {
             events.push(HandEvent::IppatsuCancelled {
                 seats: cancelled_ippatsu,
             });
+        }
+        if self.should_abort_for_four_kans() {
+            let mut transition = HandTransition::new(events);
+            transition.append(self.finish_abortive_draw(EndReason::FourKans, None));
+            return transition;
         }
         if self.rules.bonuses.kan_dora {
             let indicator = self
