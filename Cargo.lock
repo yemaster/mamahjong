@@ -261,6 +261,7 @@ dependencies = [
  "mahjong-core",
  "rand_chacha",
  "rand_core",
+ "serde",
 ]
 
 [[package]]

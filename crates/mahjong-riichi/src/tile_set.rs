@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use mahjong_core::SeatCount;
+use serde::{Deserialize, Serialize};
 
 use crate::{Rank, Suit, Tile, TileId, TileKind};
 
@@ -9,7 +10,8 @@ const COPIES_PER_KIND: u8 = 4;
 const YONMA_TILE_COUNT: usize = 136;
 const SANMA_TILE_COUNT: usize = 108;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RiichiVariant {
     Yonma,
     Sanma,
@@ -59,9 +61,12 @@ impl RiichiVariant {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RedFives {
-    by_suit: [u8; 3],
+    man: u8,
+    pin: u8,
+    sou: u8,
 }
 
 impl RedFives {
@@ -88,19 +93,21 @@ impl RedFives {
     }
 
     const fn new_unchecked(man: u8, pin: u8, sou: u8) -> Self {
-        Self {
-            by_suit: [man, pin, sou],
-        }
+        Self { man, pin, sou }
     }
 
     #[must_use]
     pub const fn for_suit(self, suit: Suit) -> u8 {
-        self.by_suit[suit.index()]
+        match suit {
+            Suit::Man => self.man,
+            Suit::Pin => self.pin,
+            Suit::Sou => self.sou,
+        }
     }
 
     #[must_use]
     pub const fn total(self) -> u8 {
-        self.by_suit[0] + self.by_suit[1] + self.by_suit[2]
+        self.man + self.pin + self.sou
     }
 }
 

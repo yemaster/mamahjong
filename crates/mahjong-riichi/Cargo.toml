@@ -10,6 +10,7 @@ getrandom.workspace = true
 mahjong-core = { path = "../mahjong-core" }
 rand_chacha.workspace = true
 rand_core.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true
