@@ -2,12 +2,14 @@ mod analysis;
 mod counts;
 mod evaluate;
 mod fu;
+mod match_result;
 mod points;
 mod result;
 mod settlement;
 mod shape;
 mod yaku;
 
+pub use match_result::{MatchEndReason, MatchError, MatchPlacement, MatchResult, RiichiMatch};
 pub use result::{BonusHan, HandShape, Limit, Payment, WaitKind, WinEvaluation, Yaku, YakuValue};
 pub use settlement::{HandOutcome, HandResult, HandSettlement, ScoredWinner, SettlementError};
 pub use shape::WaitingTiles;

@@ -50,6 +50,7 @@ pub enum HandOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HandResult {
     reason: EndReason,
+    progress: TableProgress,
     points_before: Box<[i32]>,
     point_deltas: Box<[i32]>,
     points_after: Box<[i32]>,
@@ -66,6 +67,11 @@ impl HandResult {
     #[must_use]
     pub const fn reason(&self) -> EndReason {
         self.reason
+    }
+
+    #[must_use]
+    pub const fn progress(&self) -> TableProgress {
+        self.progress
     }
 
     #[must_use]
@@ -141,7 +147,7 @@ impl HandSettlement {
                 actual: points_before.len(),
             });
         }
-        validate_outcome(rules.variant, &outcome)?;
+        validate_outcome(rules, &outcome)?;
 
         let mut deltas = vec![0_i32; seat_count];
         let resolved = resolve_outcome(rules, progress, &mut deltas, outcome)?;
@@ -168,6 +174,7 @@ impl HandSettlement {
 
         Ok(HandResult {
             reason: resolved.reason,
+            progress,
             points_before: points_before.into_boxed_slice(),
             point_deltas: deltas.into_boxed_slice(),
             points_after: points_after.into_boxed_slice(),
@@ -273,7 +280,8 @@ fn resolve_outcome(
     }
 }
 
-fn validate_outcome(variant: RiichiVariant, outcome: &HandOutcome) -> Result<(), SettlementError> {
+fn validate_outcome(rules: &RiichiRules, outcome: &HandOutcome) -> Result<(), SettlementError> {
+    let variant = rules.variant;
     let valid_seat = |seat: Seat| seat.index() < variant.seat_count().value();
     match outcome {
         HandOutcome::Tsumo { winner } => {
@@ -309,6 +317,9 @@ fn validate_outcome(variant: RiichiVariant, outcome: &HandOutcome) -> Result<(),
             validate_unique_seats(variant, nagashi_winners)?;
             if !nagashi_winners.is_empty() && !tenpai.is_empty() {
                 return Err(SettlementError::IncompatibleDrawResults);
+            }
+            if !nagashi_winners.is_empty() && !rules.scoring.nagashi_mangan {
+                return Err(SettlementError::NagashiManganDisabled);
             }
         }
         HandOutcome::AbortiveDraw { reason } => {
@@ -584,6 +595,7 @@ pub enum SettlementError {
     InvalidWinnerSet,
     PaymentKindMismatch,
     IncompatibleDrawResults,
+    NagashiManganDisabled,
     InvalidAbortiveReason,
     IndivisibleNotenPayment,
     PointOverflow,
@@ -606,6 +618,9 @@ impl Display for SettlementError {
             }
             Self::IncompatibleDrawResults => {
                 formatter.write_str("nagashi mangan and noten settlement cannot be combined")
+            }
+            Self::NagashiManganDisabled => {
+                formatter.write_str("nagashi mangan is disabled by active rules")
             }
             Self::InvalidAbortiveReason => {
                 formatter.write_str("abortive outcome requires an abortive end reason")
@@ -763,6 +778,27 @@ mod tests {
         assert!(!advanced.dealer_continues());
         assert_eq!(advanced.next_progress().round_number().value(), 2);
         assert_eq!(advanced.next_progress().honba().value(), 1);
+    }
+
+    #[test]
+    fn disabled_nagashi_mangan_is_rejected_by_settlement_boundary() {
+        let mut rules = RiichiRules::default();
+        rules.scoring.nagashi_mangan = false;
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+
+        let error = HandSettlement
+            .settle(
+                &rules,
+                progress(RiichiVariant::Yonma, dealer, 0, 0),
+                [25_000; 4],
+                HandOutcome::ExhaustiveDraw {
+                    tenpai: Box::new([]),
+                    nagashi_winners: vec![dealer].into_boxed_slice(),
+                },
+            )
+            .expect_err("disabled nagashi");
+
+        assert_eq!(error, crate::SettlementError::NagashiManganDisabled);
     }
 
     #[test]
