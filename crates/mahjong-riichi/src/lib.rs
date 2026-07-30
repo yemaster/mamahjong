@@ -4,6 +4,7 @@ mod config;
 mod overrides;
 mod preset;
 mod progress;
+mod snapshot;
 mod tile;
 mod tile_set;
 mod validation;
@@ -20,6 +21,7 @@ pub use overrides::{
 };
 pub use preset::RiichiPreset;
 pub use progress::{Honba, ProgressError, RiichiSticks, RoundNumber, Seat, TableProgress, Wind};
+pub use snapshot::{RIICHI_ENGINE_VERSION, RiichiRuleSnapshot};
 pub use tile::{
     Honor, Rank, Suit, Tile, TileError, TileFace, TileId, TileKind, TileKindIndexError,
 };

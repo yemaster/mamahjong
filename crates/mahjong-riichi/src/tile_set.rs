@@ -41,6 +41,14 @@ impl RiichiVariant {
     }
 
     #[must_use]
+    pub const fn rule_set_id(self) -> &'static str {
+        match self {
+            Self::Yonma => "riichi/yonma",
+            Self::Sanma => "riichi/sanma",
+        }
+    }
+
+    #[must_use]
     pub const fn default_red_fives(self) -> RedFives {
         match self {
             Self::Yonma => RedFives::new_unchecked(1, 1, 1),

@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "rule_set_id": "riichi/yonma",
+  "engine_version": "0.1.0",
+  "preset": {
+    "id": "m-league",
+    "revision": 1
+  },
+  "config": {
+    "variant": "yonma",
+    "match_rules": {
+      "length": "hanchan",
+      "initial_points": 25000,
+      "return_points": 30000,
+      "tobi": false,
+      "dealer_continuation": "win_or_tenpai",
+      "agari_yame": false
+    },
+    "scoring": {
+      "kiriage_mangan": true,
+      "old_yaku": false,
+      "yakuman_value": "stacked_only",
+      "nagashi_mangan": false,
+      "kazoe_yakuman": false
+    },
+    "bonuses": {
+      "red_fives": {
+        "man": 1,
+        "pin": 1,
+        "sou": 1
+      },
+      "ippatsu": true,
+      "ura_dora": true,
+      "kan_dora": true
+    },
+    "abortive_draws": {
+      "four_winds": false,
+      "four_kans": false,
+      "nine_terminals": false,
+      "four_riichi": false
+    },
+    "settlement": {
+      "uma": {
+        "type": "fixed",
+        "values": [
+          30,
+          10,
+          -10,
+          -30
+        ]
+      },
+      "noten_payment": 3000,
+      "ron_resolution": "head_bump"
+    }
+  }
+}
