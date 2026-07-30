@@ -133,6 +133,7 @@ impl ObserverPlayer {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObserverMatch {
     id: MatchId,
+    observer_seat: Seat,
     version: u64,
     event_sequence: u64,
     hand_index: u32,
@@ -148,6 +149,11 @@ impl ObserverMatch {
     #[must_use]
     pub const fn id(&self) -> &MatchId {
         &self.id
+    }
+
+    #[must_use]
+    pub const fn observer_seat(&self) -> Seat {
+        self.observer_seat
     }
 
     #[must_use]
@@ -284,6 +290,7 @@ impl GameRuntime {
             .into_boxed_slice();
         Ok(ObserverMatch {
             id: self.id.clone(),
+            observer_seat: actor_seat,
             version: self.version,
             event_sequence: self.event_sequence,
             hand_index: self.hand_index,

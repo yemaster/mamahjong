@@ -2,6 +2,7 @@ mod auth;
 mod dto;
 mod error;
 mod identity;
+mod matches;
 mod rooms;
 
 use axum::Router;
@@ -11,6 +12,7 @@ use crate::AppState;
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .nest("/api/v1", identity::routes())
+        .nest("/api/v1", matches::routes())
         .nest("/api/v1", rooms::routes())
 }
 
@@ -19,6 +21,8 @@ mod tests {
     use axum::Router;
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode};
+    use mahjong_riichi::{RiichiVariant, RoomRuleRequest};
+    use mamahjong_application::{CreateRoom, RegisterUser, RoomRuleSelection, RoomVisibility};
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
@@ -151,5 +155,96 @@ mod tests {
         assert_eq!(error["kind"], "error");
         assert_eq!(error["schema"], "error.v1");
         assert_eq!(error["code"], "request.invalid_json");
+    }
+
+    #[tokio::test]
+    async fn match_view_hides_opponents_and_accepts_versioned_commands() {
+        let state = AppState::new();
+        let mut users = Vec::new();
+        let mut sessions = Vec::new();
+        for index in 0..3 {
+            let (user, session) = state
+                .application()
+                .register(RegisterUser {
+                    login_name: format!("transport_player_{index}"),
+                    password: "correct horse battery staple".to_owned(),
+                    nickname: format!("玩家{index}"),
+                })
+                .expect("register");
+            users.push(user);
+            sessions.push(session);
+        }
+        let room = state
+            .application()
+            .create_room(
+                users[0].id(),
+                CreateRoom {
+                    name: "传输测试三麻".to_owned(),
+                    visibility: RoomVisibility::Private,
+                    rules: RoomRuleSelection::Riichi {
+                        variant: RiichiVariant::Sanma,
+                        request: RoomRuleRequest::default(),
+                    },
+                },
+            )
+            .expect("room");
+        let room = state
+            .application()
+            .join_room(users[1].id(), room.id(), room.version())
+            .expect("join");
+        let room = state
+            .application()
+            .join_room(users[2].id(), room.id(), room.version())
+            .expect("join");
+        let mut room = state
+            .application()
+            .set_ready(users[0].id(), room.id(), room.version(), true)
+            .expect("ready");
+        for user in &users[1..] {
+            room = state
+                .application()
+                .set_ready(user.id(), room.id(), room.version(), true)
+                .expect("ready");
+        }
+        let (_, match_id) = state
+            .application()
+            .start_room(users[0].id(), room.id(), room.version())
+            .expect("start");
+        let router = build_router(state);
+        let token = sessions[0].token();
+
+        let (status, view) = request_json(
+            router.clone(),
+            Method::GET,
+            &format!("/api/v1/matches/{match_id}"),
+            Some(token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(view["observer_seat"], 0);
+        assert!(view["players"][0]["concealed_tiles"].is_array());
+        assert!(view["players"][1]["concealed_tiles"].is_null());
+        let tile_id = view["players"][0]["concealed_tiles"][0]["id"]
+            .as_u64()
+            .expect("tile ID");
+
+        let (status, discarded) = request_json(
+            router,
+            Method::POST,
+            &format!("/api/v1/matches/{match_id}/commands"),
+            Some(token),
+            Some(json!({
+                "expected_version": view["version"],
+                "command": {
+                    "name": "riichi.discard",
+                    "payload": {"tile_id": tile_id}
+                }
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(discarded["version"], 2);
+        assert_eq!(discarded["phase"]["kind"], "awaiting_responses");
     }
 }

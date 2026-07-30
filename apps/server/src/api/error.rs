@@ -70,8 +70,10 @@ impl From<ApplicationError> for ApiError {
             | ErrorCode::InvalidRoomName
             | ErrorCode::InvalidRuleConfiguration => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::InvalidCredentials | ErrorCode::InvalidSession => StatusCode::UNAUTHORIZED,
-            ErrorCode::UserUnavailable | ErrorCode::NotRoomOwner => StatusCode::FORBIDDEN,
-            ErrorCode::RoomNotFound => StatusCode::NOT_FOUND,
+            ErrorCode::UserUnavailable | ErrorCode::NotRoomOwner | ErrorCode::NotMatchPlayer => {
+                StatusCode::FORBIDDEN
+            }
+            ErrorCode::RoomNotFound | ErrorCode::MatchNotFound => StatusCode::NOT_FOUND,
             ErrorCode::LoginNameTaken
             | ErrorCode::RoomClosed
             | ErrorCode::RoomFull
@@ -79,14 +81,22 @@ impl From<ApplicationError> for ApiError {
             | ErrorCode::NotRoomMember
             | ErrorCode::RoomVersionConflict
             | ErrorCode::RoomPlaying
-            | ErrorCode::RoomNotReady => StatusCode::CONFLICT,
+            | ErrorCode::RoomNotReady
+            | ErrorCode::MatchVersionConflict
+            | ErrorCode::MatchFinished => StatusCode::CONFLICT,
+            ErrorCode::InvalidGameCommand => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         };
         Self {
             status,
             code: code.as_str(),
             message: error.to_string(),
-            retryable: matches!(code, ErrorCode::RoomVersionConflict | ErrorCode::Internal),
+            retryable: matches!(
+                code,
+                ErrorCode::RoomVersionConflict
+                    | ErrorCode::MatchVersionConflict
+                    | ErrorCode::Internal
+            ),
         }
     }
 }
