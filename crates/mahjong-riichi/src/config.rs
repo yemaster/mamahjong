@@ -31,7 +31,7 @@ pub enum RonResolution {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
 pub enum PlacementUma {
     Fixed { values: Vec<i16> },
     JpmlA,
