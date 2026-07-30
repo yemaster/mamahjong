@@ -390,7 +390,10 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "mahjong-core",
+ "mahjong-riichi",
+ "mamahjong-application",
  "serde",
+ "serde_json",
  "tokio",
  "tower",
  "tracing",

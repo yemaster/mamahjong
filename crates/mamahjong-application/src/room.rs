@@ -1,4 +1,4 @@
-use mahjong_core::{RoomId, UserId};
+use mahjong_core::{MatchId, RoomId, UserId};
 use mahjong_riichi::{RiichiRuleSnapshot, RiichiVariant};
 
 use crate::{ApplicationError, ErrorCode};
@@ -86,6 +86,7 @@ pub struct Room {
     rule_snapshot: GameRuleSnapshot,
     members: Vec<RoomMember>,
     next_join_order: u64,
+    active_match_id: Option<MatchId>,
 }
 
 impl Room {
@@ -113,6 +114,7 @@ impl Room {
             rule_snapshot,
             members: vec![owner],
             next_join_order: 1,
+            active_match_id: None,
         }
     }
 
@@ -154,6 +156,11 @@ impl Room {
     #[must_use]
     pub fn members(&self) -> &[RoomMember] {
         &self.members
+    }
+
+    #[must_use]
+    pub const fn active_match_id(&self) -> Option<&MatchId> {
+        self.active_match_id.as_ref()
     }
 
     pub(crate) fn join(
@@ -251,18 +258,38 @@ impl Room {
                 "user is not a room member",
             ));
         };
-        if self.owner_user_id == *user_id && self.members.len() > 1 {
-            return Err(ApplicationError::new(
-                ErrorCode::OwnerCannotLeaveOccupiedRoom,
-                "owner cannot leave while other members remain",
-            ));
-        }
+        let owner_left = self.owner_user_id == *user_id;
         self.members.remove(index);
         if self.members.is_empty() {
             self.lifecycle = RoomLifecycle::Closed;
+        } else if owner_left {
+            let successor = self
+                .members
+                .iter()
+                .min_by_key(|member| member.join_order)
+                .expect("non-empty members have a successor");
+            self.owner_user_id = successor.user_id.clone();
         }
         self.version += 1;
         Ok(())
+    }
+
+    pub(crate) fn start(&mut self, actor: &UserId) -> Result<MatchId, ApplicationError> {
+        self.ensure_owner(actor)?;
+        self.ensure_waiting()?;
+        if self.members.len() != usize::from(self.rule_snapshot.seat_count())
+            || self.members.iter().any(|member| !member.ready)
+        {
+            return Err(ApplicationError::new(
+                ErrorCode::RoomNotReady,
+                "all seats must be occupied and ready",
+            ));
+        }
+        let match_id = MatchId::new();
+        self.lifecycle = RoomLifecycle::Playing;
+        self.active_match_id = Some(match_id.clone());
+        self.version += 1;
+        Ok(match_id)
     }
 
     fn ensure_waiting(&self) -> Result<(), ApplicationError> {

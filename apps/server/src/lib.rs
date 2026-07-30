@@ -1,14 +1,17 @@
+mod api;
 mod config;
 mod health;
 
 use axum::{Router, routing::get};
+use mamahjong_application::Application;
 
 pub use config::{ConfigError, ServerConfig};
 pub use health::Readiness;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AppState {
     readiness: Readiness,
+    application: Application,
 }
 
 impl AppState {
@@ -16,12 +19,18 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             readiness: Readiness::new(),
+            application: Application::new(),
         }
     }
 
     #[must_use]
     pub const fn readiness(&self) -> &Readiness {
         &self.readiness
+    }
+
+    #[must_use]
+    pub const fn application(&self) -> &Application {
+        &self.application
     }
 }
 
@@ -35,6 +44,7 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready))
+        .merge(api::routes())
         .with_state(state)
 }
 

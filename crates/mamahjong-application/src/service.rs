@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use mahjong_core::{RoomId, UserId};
+use mahjong_core::{MatchId, RoomId, UserId};
 use mahjong_riichi::{RiichiVariant, RoomRuleRequest};
 
 use crate::store::MemoryStore;
@@ -88,22 +88,26 @@ impl Application {
         password: &str,
     ) -> Result<(User, Session), ApplicationError> {
         let login_name = canonical_login_name(login_name)?;
-        let mut store = self.write_store()?;
-        let user_id = store
-            .login_index
-            .get(&login_name)
-            .ok_or_else(invalid_credentials)?
-            .clone();
-        let password_hash = store
-            .password_hashes
-            .get(&user_id)
-            .ok_or_else(internal_error)?;
-        verify_password(password, password_hash)?;
-        let user = store
-            .users
-            .get(&user_id)
-            .ok_or_else(internal_error)?
-            .clone();
+        let (user_id, password_hash, user) = {
+            let store = self.read_store()?;
+            let user_id = store
+                .login_index
+                .get(&login_name)
+                .ok_or_else(invalid_credentials)?
+                .clone();
+            let password_hash = store
+                .password_hashes
+                .get(&user_id)
+                .ok_or_else(internal_error)?
+                .clone();
+            let user = store
+                .users
+                .get(&user_id)
+                .ok_or_else(internal_error)?
+                .clone();
+            (user_id, password_hash, user)
+        };
+        verify_password(password, &password_hash)?;
         if user.status() != AccountStatus::Active {
             return Err(ApplicationError::new(
                 ErrorCode::UserUnavailable,
@@ -111,7 +115,7 @@ impl Application {
             ));
         }
         let session = new_session(user_id)?;
-        store
+        self.write_store()?
             .sessions
             .insert(session.token().to_owned(), session.clone());
         Ok((user, session))
@@ -184,7 +188,12 @@ impl Application {
             .ok_or_else(room_not_found)
     }
 
-    pub fn join_room(&self, actor: &UserId, room_id: &RoomId) -> Result<Room, ApplicationError> {
+    pub fn join_room(
+        &self,
+        actor: &UserId,
+        room_id: &RoomId,
+        expected_version: u64,
+    ) -> Result<Room, ApplicationError> {
         let mut store = self.write_store()?;
         let nickname = store
             .users
@@ -195,6 +204,7 @@ impl Application {
             .as_str()
             .to_owned();
         let room = store.rooms.get_mut(room_id).ok_or_else(room_not_found)?;
+        ensure_version(room, expected_version)?;
         room.join(actor.clone(), nickname)?;
         Ok(room.clone())
     }
@@ -239,6 +249,19 @@ impl Application {
         ensure_version(room, expected_version)?;
         room.leave(actor)?;
         Ok(room.clone())
+    }
+
+    pub fn start_room(
+        &self,
+        actor: &UserId,
+        room_id: &RoomId,
+        expected_version: u64,
+    ) -> Result<(Room, MatchId), ApplicationError> {
+        let mut store = self.write_store()?;
+        let room = store.rooms.get_mut(room_id).ok_or_else(room_not_found)?;
+        ensure_version(room, expected_version)?;
+        let match_id = room.start(actor)?;
+        Ok((room.clone(), match_id))
     }
 
     fn read_store(&self) -> Result<RwLockReadGuard<'_, MemoryStore>, ApplicationError> {
@@ -463,7 +486,9 @@ mod tests {
             )
             .expect("room");
 
-        let room = application.join_room(guest.id(), room.id()).expect("join");
+        let room = application
+            .join_room(guest.id(), room.id(), room.version())
+            .expect("join");
         let stale = application
             .set_ready(guest.id(), room.id(), room.version() - 1, true)
             .expect_err("stale version");
@@ -501,7 +526,9 @@ mod tests {
                 },
             )
             .expect("room");
-        let room = application.join_room(guest.id(), room.id()).expect("join");
+        let room = application
+            .join_room(guest.id(), room.id(), room.version())
+            .expect("join");
         let room = application
             .set_ready(guest.id(), room.id(), room.version(), true)
             .expect("ready");
@@ -523,5 +550,93 @@ mod tests {
 
         assert!(room.members().iter().all(|member| !member.ready()));
         assert_eq!(room.rule_snapshot().seat_count(), 3);
+    }
+
+    #[test]
+    fn owner_leaving_transfers_ownership_by_join_order() {
+        let application = Application::new();
+        let (owner, _) = register(&application, "first_host");
+        let (first_guest, _) = register(&application, "first_guest");
+        let (second_guest, _) = register(&application, "second_guest");
+        let room = application
+            .create_room(
+                owner.id(),
+                CreateRoom {
+                    name: "房主转移".to_owned(),
+                    visibility: RoomVisibility::Public,
+                    rules: RoomRuleSelection::Riichi {
+                        variant: mahjong_riichi::RiichiVariant::Yonma,
+                        request: mahjong_riichi::RoomRuleRequest::default(),
+                    },
+                },
+            )
+            .expect("room");
+        let room = application
+            .join_room(first_guest.id(), room.id(), room.version())
+            .expect("first join");
+        let room = application
+            .join_room(second_guest.id(), room.id(), room.version())
+            .expect("second join");
+        let room = application
+            .leave_room(owner.id(), room.id(), room.version())
+            .expect("owner leave");
+
+        assert_eq!(room.owner_user_id(), first_guest.id());
+    }
+
+    #[test]
+    fn start_requires_full_ready_room_and_creates_match_once() {
+        let application = Application::new();
+        let (owner, _) = register(&application, "match_host");
+        let (guest_one, _) = register(&application, "match_guest_one");
+        let (guest_two, _) = register(&application, "match_guest_two");
+        let room = application
+            .create_room(
+                owner.id(),
+                CreateRoom {
+                    name: "三麻开局".to_owned(),
+                    visibility: RoomVisibility::Private,
+                    rules: RoomRuleSelection::Riichi {
+                        variant: mahjong_riichi::RiichiVariant::Sanma,
+                        request: mahjong_riichi::RoomRuleRequest::default(),
+                    },
+                },
+            )
+            .expect("room");
+        assert_eq!(
+            application
+                .start_room(owner.id(), room.id(), room.version())
+                .expect_err("not full")
+                .code(),
+            ErrorCode::RoomNotReady
+        );
+        let room = application
+            .join_room(guest_one.id(), room.id(), room.version())
+            .expect("first join");
+        let room = application
+            .join_room(guest_two.id(), room.id(), room.version())
+            .expect("second join");
+        let room = application
+            .set_ready(owner.id(), room.id(), room.version(), true)
+            .expect("owner ready");
+        let room = application
+            .set_ready(guest_one.id(), room.id(), room.version(), true)
+            .expect("first ready");
+        let room = application
+            .set_ready(guest_two.id(), room.id(), room.version(), true)
+            .expect("second ready");
+        let (started, match_id) = application
+            .start_room(owner.id(), room.id(), room.version())
+            .expect("start");
+
+        assert_eq!(started.active_match_id(), Some(&match_id));
+        assert_eq!(started.lifecycle(), crate::RoomLifecycle::Playing);
+        assert_eq!(
+            application
+                .start_room(owner.id(), room.id(), started.version())
+                .expect_err("already playing")
+                .code(),
+            ErrorCode::RoomPlaying
+        );
     }
 }

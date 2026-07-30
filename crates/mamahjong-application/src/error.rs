@@ -20,7 +20,7 @@ pub enum ErrorCode {
     NotRoomOwner,
     RoomVersionConflict,
     RoomPlaying,
-    OwnerCannotLeaveOccupiedRoom,
+    RoomNotReady,
     Internal,
 }
 
@@ -45,7 +45,7 @@ impl ErrorCode {
             Self::NotRoomOwner => "room.not_owner",
             Self::RoomVersionConflict => "room.version_conflict",
             Self::RoomPlaying => "room.playing",
-            Self::OwnerCannotLeaveOccupiedRoom => "room.owner_cannot_leave",
+            Self::RoomNotReady => "room.not_ready",
             Self::Internal => "server.internal",
         }
     }

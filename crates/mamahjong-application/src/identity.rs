@@ -97,6 +97,52 @@ impl UserProfile {
     }
 }
 
+impl TitleSummary {
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl CharacterSummary {
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl RankSummary {
+    #[must_use]
+    pub fn rule_set_id(&self) -> &str {
+        &self.rule_set_id
+    }
+
+    #[must_use]
+    pub fn queue_id(&self) -> &str {
+        &self.queue_id
+    }
+
+    #[must_use]
+    pub fn rank(&self) -> &str {
+        &self.rank
+    }
+
+    #[must_use]
+    pub const fn points(&self) -> i32 {
+        self.points
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct User {
     id: UserId,
