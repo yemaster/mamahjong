@@ -56,6 +56,22 @@ GET    /api/v1/matches/{match_id}/replay
 创建房间时客户端可以提交 `preset + overrides`；响应始终返回解析后的完整
 `rule_snapshot`。服务端拒绝未知字段，防止拼写错误被静默忽略。
 
+规则输入的首个稳定结构：
+
+```json
+{
+  "preset": {"id": "m-league", "revision": 1},
+  "overrides": {
+    "match_rules": {"tobi": true},
+    "scoring": {"old_yaku": false},
+    "bonuses": {"red_fives": {"man": 1, "pin": 1, "sou": 1}}
+  }
+}
+```
+
+未提供 `preset` 时使用目标规则集的普通默认值。预设和覆盖项先解析为完整
+规则并整体校验，成功后才生成不可变快照。
+
 低频房间写操作使用当前 `version` 做条件更新。冲突返回 `409` 和最新资源
 版本。
 

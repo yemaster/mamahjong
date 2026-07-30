@@ -1,6 +1,6 @@
 # 日麻规则配置
 
-状态：M2 设计基线
+状态：M2 已实现
 最后更新：2026-07-30
 
 ## 原则
@@ -178,6 +178,25 @@ RiichiRules
 
 - https://m-league.jp/about/
 
+## 房间输入
+
+房间只提交预设和白名单覆盖项，四麻或三麻由目标规则集决定，不允许在覆盖项
+中修改：
+
+```json
+{
+  "preset": {"id": "m-league", "revision": 1},
+  "overrides": {
+    "match_rules": {"tobi": true},
+    "bonuses": {"red_fives": {"pin": 0}}
+  }
+}
+```
+
+`preset` 可省略，此时从对应人数的普通默认配置开始。`revision` 可省略并解析
+为目录当前版本；一旦创建房间，响应和存储均使用明确修订号与完整配置。
+覆盖项每个字段均可独立省略，未知字段直接拒绝。
+
 ## 校验错误
 
 校验一次返回全部问题，错误包含稳定机器码、字段路径和简短说明。首批错误：
@@ -191,21 +210,23 @@ rules.sanma.four_winds
 rules.sanma.four_riichi
 rules.uma.player_count
 rules.uma.not_zero_sum
+rules.uma.unsupported_variant
+rules.noten_payment.out_of_range
+rules.preset.invalid_id
+rules.preset.unknown
+rules.preset.unsupported_revision
+rules.preset.variant_mismatch
 ```
 
 房间 API 将这些错误映射为 `request.invalid_rule_config`，并保留字段级 details。
 
 ## 快照 JSON
 
-```json
-{
-  "schema_version": 1,
-  "rule_set_id": "riichi/yonma",
-  "engine_version": "0.1.0",
-  "preset": {"id":"m-league","revision":1},
-  "config": {}
-}
-```
-
 快照写入解析后的完整 `config`。读取时先严格反序列化，再重新校验；不能因
 来自数据库而跳过不变量检查。
+
+M League 完整固定样例见
+[`m-league-v1.json`](../crates/mahjong-riichi/fixtures/rule-snapshots/m-league-v1.json)。
+读取器校验 `schema_version`、规则集与人数一致性、引擎版本格式、非零预设
+修订号以及全部配置不变量。历史预设即使已退出当前目录，只要完整快照合法
+仍可读取。
