@@ -1,4 +1,4 @@
-use crate::{EndReason, Seat, TableProgress, Tile};
+use crate::{EndReason, Meld, MeldKind, Seat, TableProgress, Tile, TileKind};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DrawSource {
@@ -9,6 +9,9 @@ pub enum DrawSource {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReactionKind {
     Pass,
+    Chi,
+    Pon,
+    OpenKan,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,6 +40,23 @@ pub enum HandEvent {
     ReactionSubmitted {
         seat: Seat,
         reaction: ReactionKind,
+    },
+    MeldDeclared {
+        seat: Seat,
+        meld: Meld,
+    },
+    KanProposed {
+        seat: Seat,
+        kind: MeldKind,
+        tile_kind: TileKind,
+    },
+    KanCompleted {
+        seat: Seat,
+        meld: Meld,
+    },
+    DoraIndicatorRevealed {
+        tile: Tile,
+        revealed_count: u8,
     },
     ExhaustiveDrawDeclared {
         reason: EndReason,

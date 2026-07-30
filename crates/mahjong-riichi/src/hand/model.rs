@@ -1,4 +1,4 @@
-use crate::{Seat, Tile, TileId};
+use crate::{Seat, Tile, TileId, TileKind};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct MeldId(u8);
@@ -26,14 +26,30 @@ pub enum MeldKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Meld {
-    id: MeldId,
-    kind: MeldKind,
-    tiles: Box<[Tile]>,
-    called_from: Option<Seat>,
-    called_tile: Option<TileId>,
+    pub(super) id: MeldId,
+    pub(super) kind: MeldKind,
+    pub(super) tiles: Box<[Tile]>,
+    pub(super) called_from: Option<Seat>,
+    pub(super) called_tile: Option<TileId>,
 }
 
 impl Meld {
+    pub(super) fn new(
+        id: MeldId,
+        kind: MeldKind,
+        tiles: impl Into<Box<[Tile]>>,
+        called_from: Option<Seat>,
+        called_tile: Option<TileId>,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            tiles: tiles.into(),
+            called_from,
+            called_tile,
+        }
+    }
+
     #[must_use]
     pub const fn id(&self) -> MeldId {
         self.id
@@ -57,6 +73,11 @@ impl Meld {
     #[must_use]
     pub const fn called_tile(&self) -> Option<TileId> {
         self.called_tile
+    }
+
+    #[must_use]
+    pub fn tile_kind(&self) -> TileKind {
+        self.tiles[0].kind()
     }
 }
 
@@ -97,6 +118,11 @@ impl Discard {
     pub const fn claimed_by(&self) -> Option<Seat> {
         self.claimed_by
     }
+
+    pub(super) fn mark_claimed(&mut self, seat: Seat) {
+        debug_assert!(self.claimed_by.is_none());
+        self.claimed_by = Some(seat);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -105,6 +131,14 @@ pub enum RiichiStatus {
     None,
     Pending,
     Established,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Reaction {
+    Pass,
+    Chi { hand_tiles: [TileId; 2] },
+    Pon { hand_tiles: [TileId; 2] },
+    OpenKan { hand_tiles: [TileId; 3] },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

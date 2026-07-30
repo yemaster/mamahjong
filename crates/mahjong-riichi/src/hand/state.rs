@@ -2,34 +2,78 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    Discard, DrawSource, EndReason, HandEvent, HandPhase, HandTransition, PlayerHand, ReactionKind,
-    RiichiRules, RiichiVariant, Seat, TableProgress, TileId, TileSet, TileSetError,
+    Discard, DrawSource, EndReason, HandEvent, HandPhase, HandTransition, PlayerHand, Reaction,
+    RiichiRules, RiichiVariant, Seat, TableProgress, TileId, TileKind, TileSet, TileSetError,
     ValidationErrors, Wall, WallSeed,
 };
 
 const INITIAL_CONCEALED_TILES: usize = 13;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PendingDiscard {
-    discarder: Seat,
-    discard_index: usize,
-    passed: Box<[bool]>,
+pub(super) struct PendingDiscard {
+    pub(super) discarder: Seat,
+    pub(super) discard_index: usize,
+    pub(super) responses: Box<[Option<Reaction>]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum Phase {
-    TurnAction { seat: Seat },
+pub(super) enum PendingKan {
+    Concealed {
+        declarer: Seat,
+        tile_ids: [TileId; 4],
+        responses: Box<[Option<Reaction>]>,
+    },
+    Added {
+        declarer: Seat,
+        meld_id: crate::MeldId,
+        tile_id: TileId,
+        responses: Box<[Option<Reaction>]>,
+    },
+}
+
+impl PendingKan {
+    pub(super) const fn declarer(&self) -> Seat {
+        match self {
+            Self::Concealed { declarer, .. } | Self::Added { declarer, .. } => *declarer,
+        }
+    }
+
+    pub(super) fn responses(&self) -> &[Option<Reaction>] {
+        match self {
+            Self::Concealed { responses, .. } | Self::Added { responses, .. } => responses,
+        }
+    }
+
+    pub(super) fn responses_mut(&mut self) -> &mut [Option<Reaction>] {
+        match self {
+            Self::Concealed { responses, .. } | Self::Added { responses, .. } => responses,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum Phase {
+    TurnAction {
+        seat: Seat,
+    },
     Responses(PendingDiscard),
+    KanResponses(PendingKan),
+    DiscardAfterCall {
+        seat: Seat,
+        forbidden_discards: Box<[TileKind]>,
+    },
     Ended(EndReason),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiichiHand {
-    rules: RiichiRules,
-    progress: TableProgress,
-    wall: Wall,
-    players: Box<[PlayerHand]>,
-    phase: Phase,
+    pub(super) rules: RiichiRules,
+    pub(super) progress: TableProgress,
+    pub(super) wall: Wall,
+    pub(super) players: Box<[PlayerHand]>,
+    pub(super) phase: Phase,
+    pub(super) kan_counts: Box<[u8]>,
+    pub(super) calls_occurred: bool,
 }
 
 impl RiichiHand {
@@ -115,6 +159,8 @@ impl RiichiHand {
                 wall,
                 players: players.into_boxed_slice(),
                 phase: Phase::TurnAction { seat: dealer },
+                kan_counts: vec![0; expected_players].into_boxed_slice(),
+                calls_occurred: false,
             },
             HandTransition::new(events),
         ))
@@ -139,8 +185,12 @@ impl RiichiHand {
     pub fn phase(&self) -> HandPhase {
         match self.phase {
             Phase::TurnAction { seat } => HandPhase::AwaitingTurnAction { seat },
+            Phase::DiscardAfterCall { seat, .. } => HandPhase::AwaitingDiscard { seat },
             Phase::Responses(ref pending) => HandPhase::AwaitingResponses {
                 trigger_seat: pending.discarder,
+            },
+            Phase::KanResponses(ref pending) => HandPhase::AwaitingResponses {
+                trigger_seat: pending.declarer(),
             },
             Phase::Ended(reason) => HandPhase::Ended { reason },
         }
@@ -153,8 +203,12 @@ impl RiichiHand {
 
     pub fn discard(&mut self, actor: Seat, tile_id: TileId) -> Result<HandTransition, HandError> {
         self.validate_seat(actor)?;
-        let active_seat = match self.phase {
-            Phase::TurnAction { seat } => seat,
+        let (active_seat, forbidden_discards) = match &self.phase {
+            Phase::TurnAction { seat } => (*seat, None),
+            Phase::DiscardAfterCall {
+                seat,
+                forbidden_discards,
+            } => (*seat, Some(forbidden_discards.as_ref())),
             _ => return Err(HandError::WrongPhase),
         };
         if actor != active_seat {
@@ -171,19 +225,23 @@ impl RiichiHand {
             .position(|tile| tile.id() == tile_id)
             .ok_or(HandError::TileNotInHand { tile_id })?;
         let tsumogiri = player.drawn_tile == Some(tile_id);
+        let tile_kind = player.concealed[tile_index].kind();
+        if forbidden_discards.is_some_and(|forbidden| forbidden.contains(&tile_kind)) {
+            return Err(HandError::ForbiddenDiscardAfterCall { kind: tile_kind });
+        }
 
         let player = &mut self.players[usize::from(actor.index())];
         let tile = player.concealed.swap_remove(tile_index);
         player.drawn_tile = None;
         let discard_index = player.discards.len();
         player.discards.push(Discard::new(tile, tsumogiri));
-        let mut passed =
-            vec![false; usize::from(self.rules.variant.seat_count().value())].into_boxed_slice();
-        passed[usize::from(actor.index())] = true;
+        let mut responses =
+            vec![None; usize::from(self.rules.variant.seat_count().value())].into_boxed_slice();
+        responses[usize::from(actor.index())] = Some(Reaction::Pass);
         self.phase = Phase::Responses(PendingDiscard {
             discarder: actor,
             discard_index,
-            passed,
+            responses,
         });
 
         Ok(HandTransition::new(vec![HandEvent::TileDiscarded {
@@ -194,38 +252,7 @@ impl RiichiHand {
         }]))
     }
 
-    pub fn pass(&mut self, actor: Seat) -> Result<HandTransition, HandError> {
-        self.validate_seat(actor)?;
-        let all_passed = {
-            let Phase::Responses(pending) = &mut self.phase else {
-                return Err(HandError::WrongPhase);
-            };
-            if actor == pending.discarder {
-                return Err(HandError::DiscarderCannotReact);
-            }
-            let actor_passed = &mut pending.passed[usize::from(actor.index())];
-            if *actor_passed {
-                return Err(HandError::AlreadyResponded { seat: actor });
-            }
-            *actor_passed = true;
-            pending.passed.iter().all(|passed| *passed)
-        };
-
-        let mut transition = HandTransition::new(vec![HandEvent::ReactionSubmitted {
-            seat: actor,
-            reaction: ReactionKind::Pass,
-        }]);
-        if all_passed {
-            transition.append(self.resolve_unclaimed_discard()?);
-        }
-        Ok(transition)
-    }
-
-    fn resolve_unclaimed_discard(&mut self) -> Result<HandTransition, HandError> {
-        let pending = match &self.phase {
-            Phase::Responses(pending) => pending.clone(),
-            _ => return Err(HandError::WrongPhase),
-        };
+    pub(super) fn resolve_unclaimed_discard(&mut self, pending: &PendingDiscard) -> HandTransition {
         debug_assert!(
             self.players[usize::from(pending.discarder.index())]
                 .discards
@@ -235,11 +262,9 @@ impl RiichiHand {
 
         if self.wall.remaining_live_draws() == 0 {
             self.phase = Phase::Ended(EndReason::ExhaustiveDraw);
-            return Ok(HandTransition::new(vec![
-                HandEvent::ExhaustiveDrawDeclared {
-                    reason: EndReason::ExhaustiveDraw,
-                },
-            ]));
+            return HandTransition::new(vec![HandEvent::ExhaustiveDrawDeclared {
+                reason: EndReason::ExhaustiveDraw,
+            }]);
         }
 
         let next_seat = seat_at_offset(self.rules.variant, pending.discarder, 1);
@@ -253,15 +278,15 @@ impl RiichiHand {
         next_player.temporary_furiten = false;
         self.phase = Phase::TurnAction { seat: next_seat };
 
-        Ok(HandTransition::new(vec![HandEvent::TileDrawn {
+        HandTransition::new(vec![HandEvent::TileDrawn {
             seat: next_seat,
             tile,
             source: DrawSource::LiveWall,
             remaining_live_draws: self.wall.remaining_live_draws(),
-        }]))
+        }])
     }
 
-    fn validate_seat(&self, seat: Seat) -> Result<(), HandError> {
+    pub(super) fn validate_seat(&self, seat: Seat) -> Result<(), HandError> {
         let seat_count = self.rules.variant.seat_count().value();
         if seat.index() < seat_count {
             Ok(())
@@ -274,7 +299,7 @@ impl RiichiHand {
     }
 }
 
-fn seat_at_offset(variant: RiichiVariant, seat: Seat, offset: u8) -> Seat {
+pub(super) fn seat_at_offset(variant: RiichiVariant, seat: Seat, offset: u8) -> Seat {
     let index = (seat.index() + offset) % variant.seat_count().value();
     Seat::new(variant, index).expect("modulo seat count always produces a valid seat")
 }
@@ -303,7 +328,25 @@ pub enum HandError {
     TileNotInHand {
         tile_id: TileId,
     },
+    ForbiddenDiscardAfterCall {
+        kind: TileKind,
+    },
+    DuplicateTileSelection,
+    InvalidReaction {
+        reason: &'static str,
+    },
+    CannotCallOnLastDiscard,
+    CannotCallWhileRiichi,
+    KanNotAllowedOnLastDraw,
+    KanLimitReached,
+    MeldNotFound {
+        meld_id: crate::MeldId,
+    },
+    MeldCannotBeAddedKan {
+        meld_id: crate::MeldId,
+    },
     DiscarderCannotReact,
+    DeclarerCannotReact,
     AlreadyResponded {
         seat: Seat,
     },
@@ -345,8 +388,39 @@ impl Display for HandError {
                     tile_id.value()
                 )
             }
+            Self::ForbiddenDiscardAfterCall { kind } => {
+                write!(
+                    formatter,
+                    "tile kind {kind} is forbidden by call replacement rules"
+                )
+            }
+            Self::DuplicateTileSelection => {
+                formatter.write_str("the same physical tile was selected more than once")
+            }
+            Self::InvalidReaction { reason } => formatter.write_str(reason),
+            Self::CannotCallOnLastDiscard => {
+                formatter.write_str("chi, pon, and kan are unavailable on the last discard")
+            }
+            Self::CannotCallWhileRiichi => {
+                formatter.write_str("an established riichi hand cannot call another player's tile")
+            }
+            Self::KanNotAllowedOnLastDraw => {
+                formatter.write_str("kan is unavailable when the live wall cannot supply a draw")
+            }
+            Self::KanLimitReached => {
+                formatter.write_str("a hand cannot contain more than four kans")
+            }
+            Self::MeldNotFound { meld_id } => {
+                write!(formatter, "meld {} does not exist", meld_id.value())
+            }
+            Self::MeldCannotBeAddedKan { meld_id } => {
+                write!(formatter, "meld {} is not an open pon", meld_id.value())
+            }
             Self::DiscarderCannotReact => {
                 formatter.write_str("the discarder cannot react to their own tile")
+            }
+            Self::DeclarerCannotReact => {
+                formatter.write_str("the kan declarer cannot react to their own kan")
             }
             Self::AlreadyResponded { seat } => {
                 write!(formatter, "seat {} already responded", seat.index())
