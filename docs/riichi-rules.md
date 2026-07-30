@@ -159,7 +159,7 @@ RiichiRules
 来源：
 
 - https://saikouisen.com/about/rules/
-- https://saikouisen.com/pdf/saikouisen_regulation_250825.pdf.pdf
+- https://drive.google.com/file/d/1KfRZQQYkmtBRytaYlBePPmf5TRv4k-96/view
 
 ### `m-league@1`
 
@@ -209,4 +209,3 @@ rules.uma.not_zero_sum
 
 快照写入解析后的完整 `config`。读取时先严格反序列化，再重新校验；不能因
 来自数据库而跳过不变量检查。
-
