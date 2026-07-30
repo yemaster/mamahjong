@@ -92,7 +92,7 @@ impl RedFives {
         Ok(Self::new_unchecked(man, pin, sou))
     }
 
-    const fn new_unchecked(man: u8, pin: u8, sou: u8) -> Self {
+    pub(crate) const fn new_unchecked(man: u8, pin: u8, sou: u8) -> Self {
         Self { man, pin, sou }
     }
 
