@@ -96,7 +96,7 @@ impl RiichiRules {
             "match_rules.return_points",
             &mut violations,
         );
-        validate_noten_payment(self.settlement.noten_payment, &mut violations);
+        validate_noten_payment(self.settlement.noten_payment, self.variant, &mut violations);
         validate_red_fives(self, &mut violations);
         validate_variant_options(self, &mut violations);
         validate_uma(self, &mut violations);
@@ -132,7 +132,11 @@ fn validate_configured_points(
     }
 }
 
-fn validate_noten_payment(points: u32, violations: &mut Vec<RuleViolation>) {
+fn validate_noten_payment(
+    points: u32,
+    variant: RiichiVariant,
+    violations: &mut Vec<RuleViolation>,
+) {
     const FIELD: &str = "settlement.noten_payment";
 
     if points > MAX_NOTEN_PAYMENT {
@@ -149,11 +153,28 @@ fn validate_noten_payment(points: u32, violations: &mut Vec<RuleViolation>) {
             format!("must be a multiple of {POINT_UNIT}, got {points}"),
         ));
     }
+    let seat_count = u32::from(variant.seat_count().value());
+    if points > 0
+        && (1..seat_count).any(|count| {
+            !is_evenly_divisible(points, count) || !is_evenly_divisible(points, seat_count - count)
+        })
+    {
+        violations.push(RuleViolation::new(
+            "rules.noten_payment.indivisible",
+            FIELD,
+            "must divide evenly for every possible tenpai/noten split",
+        ));
+    }
 }
 
 #[allow(clippy::manual_is_multiple_of)]
 const fn is_thousand_aligned(points: u32) -> bool {
     points % POINT_UNIT == 0
+}
+
+#[allow(clippy::manual_is_multiple_of)]
+const fn is_evenly_divisible(points: u32, divisor: u32) -> bool {
+    points % divisor == 0
 }
 
 fn validate_red_fives(rules: &RiichiRules, violations: &mut Vec<RuleViolation>) {
@@ -248,6 +269,25 @@ mod tests {
         RiichiRules::standard(RiichiVariant::Sanma)
             .validate()
             .expect("sanma defaults");
+    }
+
+    #[test]
+    fn noten_payment_must_split_without_seat_order_remainders() {
+        let mut yonma = RiichiRules::default();
+        yonma.settlement.noten_payment = 1_000;
+        let errors = yonma.validate().expect_err("indivisible for one tenpai");
+        assert!(
+            errors
+                .violations()
+                .iter()
+                .any(|violation| violation.code() == "rules.noten_payment.indivisible")
+        );
+
+        let mut sanma = RiichiRules::standard(RiichiVariant::Sanma);
+        sanma.settlement.noten_payment = 1_000;
+        sanma
+            .validate()
+            .expect("sanma only divides between one and two");
     }
 
     #[test]

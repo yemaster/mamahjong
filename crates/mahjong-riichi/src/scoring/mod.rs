@@ -4,10 +4,12 @@ mod evaluate;
 mod fu;
 mod points;
 mod result;
+mod settlement;
 mod shape;
 mod yaku;
 
 pub use result::{BonusHan, HandShape, Limit, Payment, WaitKind, WinEvaluation, Yaku, YakuValue};
+pub use settlement::{HandOutcome, HandResult, HandSettlement, ScoredWinner, SettlementError};
 pub use shape::WaitingTiles;
 
 use crate::{HandJudge, KanQuery, PlayerHand, RiichiQuery};
@@ -23,6 +25,14 @@ impl RiichiScorer {
 
     pub fn evaluate(self, query: crate::WinQuery<'_>) -> Option<WinEvaluation> {
         evaluate::evaluate(query)
+    }
+
+    #[must_use]
+    pub fn is_nagashi_mangan(self, player: &PlayerHand) -> bool {
+        !player.discards().is_empty()
+            && player.discards().iter().all(|discard| {
+                discard.tile().kind().is_terminal_or_honor() && discard.claimed_by().is_none()
+            })
     }
 }
 
