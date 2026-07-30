@@ -66,7 +66,8 @@ HTTP 用于身份、房间和匹配等请求；WebSocket 用于桌局命令、�
 [存储设计](persistence.md)，外部通信格式见 [通信协议](protocol.md)，
 进程启动约定见 [后端运行骨架](server-runtime.md)，容器部署见
 [部署与运行](deployment.md)，日麻内部基础类型见
-[日麻基础模型](riichi-model.md)。
+[日麻基础模型](riichi-model.md)，规则配置见
+[日麻规则配置](riichi-rules.md)。
 
 ## 状态与并发
 
