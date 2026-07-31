@@ -129,9 +129,9 @@ impl App {
         }
     }
 
-    pub async fn poll_if_due(&mut self) {
+    pub async fn poll_if_due(&mut self) -> bool {
         if self.last_poll.elapsed() < POLL_INTERVAL {
-            return;
+            return false;
         }
         self.last_poll = Instant::now();
         let action = match self.screen {
@@ -141,6 +141,9 @@ impl App {
         };
         if let Some(action) = action {
             self.perform(action).await;
+            true
+        } else {
+            false
         }
     }
 

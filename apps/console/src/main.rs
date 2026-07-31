@@ -22,17 +22,27 @@ async fn main() -> Result<(), AnyError> {
     let server_url = server_url();
     let mut app = app::App::new(server_url)?;
     let mut terminal = TerminalSession::start()?;
+    let mut redraw = true;
 
     while !app.quit {
-        terminal.terminal.draw(|frame| ui::render(frame, &app))?;
+        if redraw {
+            terminal.terminal.draw(|frame| ui::render(frame, &app))?;
+            redraw = false;
+        }
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key).await,
-                Event::Resize(_, _) => terminal.terminal.autoresize()?,
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    app.handle_key(key).await;
+                    redraw = true;
+                }
+                Event::Resize(_, _) => {
+                    terminal.terminal.autoresize()?;
+                    redraw = true;
+                }
                 _ => {}
             }
         }
-        app.poll_if_due().await;
+        redraw |= app.poll_if_due().await;
     }
 
     Ok(())
