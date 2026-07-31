@@ -119,6 +119,7 @@ pub struct TileView {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct MeldView {
+    pub id: u8,
     pub kind: String,
     pub tiles: Vec<TileView>,
 }

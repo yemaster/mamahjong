@@ -44,6 +44,7 @@ pub struct CreateRoomForm {
 pub struct GameScreen {
     pub view: MatchView,
     pub selected_tile: usize,
+    pub marked_tile_ids: Vec<u16>,
     pub responded_in_window: bool,
 }
 
@@ -262,6 +263,7 @@ impl App {
             self.screen = Screen::Game(GameScreen {
                 view,
                 selected_tile: 0,
+                marked_tile_ids: Vec::new(),
                 responded_in_window: false,
             });
         } else {
@@ -302,6 +304,7 @@ impl App {
         self.screen = Screen::Game(GameScreen {
             view,
             selected_tile: 0,
+            marked_tile_ids: Vec::new(),
             responded_in_window: false,
         });
         Ok(())
@@ -336,9 +339,11 @@ impl App {
             );
         let responded = game.responded_in_window && same_response_window;
         let selected = clamp_selection(game.selected_tile, &view);
+        let marked_tile_ids = retained_marks(&game.marked_tile_ids, &view, old_hand);
         self.screen = Screen::Game(GameScreen {
             view,
             selected_tile: selected,
+            marked_tile_ids,
             responded_in_window: responded,
         });
         Ok(())
@@ -383,6 +388,7 @@ impl App {
         self.screen = Screen::Game(GameScreen {
             view,
             selected_tile: selected,
+            marked_tile_ids: Vec::new(),
             responded_in_window: responded,
         });
         Ok(())
@@ -513,6 +519,7 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
             let count = own_tiles(&game.view).map_or(0, Vec::len);
             game.selected_tile = (game.selected_tile + 1).min(count.saturating_sub(1));
         }
+        KeyCode::Char(' ') => toggle_selected_tile_mark(game),
         KeyCode::Char('d') | KeyCode::Enter => {
             return selected_tile_command(game, "riichi.discard");
         }
@@ -538,6 +545,22 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
                 response: true,
             });
         }
+        KeyCode::Char('c') if !game.responded_in_window => {
+            return marked_tiles_command(game, "riichi.chi", 2, true);
+        }
+        KeyCode::Char('o') if !game.responded_in_window => {
+            return marked_tiles_command(game, "riichi.pon", 2, true);
+        }
+        KeyCode::Char('k') => {
+            let response = matches!(game.view.phase, MatchPhase::AwaitingResponses { .. });
+            let (name, count) = if response {
+                ("riichi.open_kan", 3)
+            } else {
+                ("riichi.concealed_kan", 4)
+            };
+            return marked_tiles_command(game, name, count, response);
+        }
+        KeyCode::Char('a') => return added_kan_command(game),
         KeyCode::Char('9') => {
             return Some(Action::GameCommand {
                 name: "riichi.nine_terminals",
@@ -560,6 +583,71 @@ fn selected_tile_command(game: &GameScreen, name: &'static str) -> Option<Action
     })
 }
 
+fn toggle_selected_tile_mark(game: &mut GameScreen) {
+    let Some(tile) = own_tiles(&game.view).and_then(|tiles| tiles.get(game.selected_tile)) else {
+        return;
+    };
+    if let Some(position) = game
+        .marked_tile_ids
+        .iter()
+        .position(|tile_id| *tile_id == tile.id)
+    {
+        game.marked_tile_ids.remove(position);
+    } else {
+        game.marked_tile_ids.push(tile.id);
+    }
+}
+
+fn marked_tiles_command(
+    game: &GameScreen,
+    name: &'static str,
+    expected_count: usize,
+    response: bool,
+) -> Option<Action> {
+    if game.marked_tile_ids.len() != expected_count {
+        return None;
+    }
+    Some(Action::GameCommand {
+        name,
+        payload: Some(json!({"tile_ids": game.marked_tile_ids})),
+        response,
+    })
+}
+
+fn added_kan_command(game: &GameScreen) -> Option<Action> {
+    let tile = own_tiles(&game.view)?.get(game.selected_tile)?;
+    let own = game
+        .view
+        .players
+        .iter()
+        .find(|player| player.seat == game.view.observer_seat)?;
+    let meld = own.melds.iter().find(|meld| {
+        meld.kind == "pon"
+            && meld
+                .tiles
+                .first()
+                .is_some_and(|meld_tile| same_tile_kind(&meld_tile.code, &tile.code))
+    })?;
+    Some(Action::GameCommand {
+        name: "riichi.added_kan",
+        payload: Some(json!({"meld_id": meld.id, "tile_id": tile.id})),
+        response: false,
+    })
+}
+
+fn same_tile_kind(left: &str, right: &str) -> bool {
+    normalize_red_five(left) == normalize_red_five(right)
+}
+
+fn normalize_red_five(code: &str) -> &str {
+    match code {
+        "0m" => "5m",
+        "0p" => "5p",
+        "0s" => "5s",
+        _ => code,
+    }
+}
+
 fn own_tiles(view: &MatchView) -> Option<&Vec<crate::model::TileView>> {
     view.players
         .iter()
@@ -572,9 +660,36 @@ fn clamp_selection(selected: usize, view: &MatchView) -> usize {
     selected.min(own_tiles(view).map_or(0, Vec::len).saturating_sub(1))
 }
 
+fn retained_marks(marked: &[u16], view: &MatchView, old_hand: u32) -> Vec<u16> {
+    if old_hand != view.hand_index {
+        return Vec::new();
+    }
+    let Some(tiles) = own_tiles(view) else {
+        return Vec::new();
+    };
+    marked
+        .iter()
+        .copied()
+        .filter(|marked_id| tiles.iter().any(|tile| tile.id == *marked_id))
+        .collect()
+}
+
 fn parse_number(value: &str, label: &str) -> Result<u32, crate::model::ApiFailure> {
     value.parse().map_err(|_| crate::model::ApiFailure {
         code: "client.invalid_input".to_owned(),
         message: format!("{label}必须是非负整数"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_red_five, same_tile_kind};
+
+    #[test]
+    fn red_fives_match_their_normal_tile_kind() {
+        assert!(same_tile_kind("0m", "5m"));
+        assert!(same_tile_kind("5p", "0p"));
+        assert!(!same_tile_kind("0s", "5p"));
+        assert_eq!(normalize_red_five("7z"), "7z");
+    }
 }

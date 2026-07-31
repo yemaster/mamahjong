@@ -257,7 +257,7 @@ fn render_game(frame: &mut Frame<'_>, area: Rect, game: &GameScreen) {
         .split(area);
     let relative = relative_seats(view);
     if let Some(top) = player(view, relative[2]) {
-        render_player(frame, rows[0], top, false, 0, view.progress.dealer);
+        render_player(frame, rows[0], top, false, 0, &[], view.progress.dealer);
     }
     let middle = Layout::default()
         .direction(Direction::Horizontal)
@@ -268,11 +268,11 @@ fn render_game(frame: &mut Frame<'_>, area: Rect, game: &GameScreen) {
         ])
         .split(rows[1]);
     if let Some(left) = player(view, relative[3]) {
-        render_player(frame, middle[0], left, false, 0, view.progress.dealer);
+        render_player(frame, middle[0], left, false, 0, &[], view.progress.dealer);
     }
     render_center(frame, middle[1], view);
     if let Some(right) = player(view, relative[1]) {
-        render_player(frame, middle[2], right, false, 0, view.progress.dealer);
+        render_player(frame, middle[2], right, false, 0, &[], view.progress.dealer);
     }
     if let Some(bottom) = player(view, relative[0]) {
         render_player(
@@ -281,6 +281,7 @@ fn render_game(frame: &mut Frame<'_>, area: Rect, game: &GameScreen) {
             bottom,
             true,
             game.selected_tile,
+            &game.marked_tile_ids,
             view.progress.dealer,
         );
     }
@@ -295,6 +296,7 @@ fn render_player(
     player: &MatchPlayerView,
     own: bool,
     selected: usize,
+    marked: &[u16],
     dealer: u8,
 ) {
     let title = format!(
@@ -351,7 +353,7 @@ fn render_player(
         let hand = player
             .concealed_tiles
             .as_ref()
-            .map(|tiles| tile_line(tiles, selected, player.drawn_tile_id))
+            .map(|tiles| tile_line(tiles, selected, marked, player.drawn_tile_id))
             .unwrap_or_default();
         lines.push(Line::from(""));
         lines.push(hand);
@@ -409,8 +411,8 @@ fn render_center(frame: &mut Frame<'_>, area: Rect, view: &MatchView) {
         Line::from(""),
         Line::from(phase),
         Line::from(""),
-        Line::from("←→ 选牌 · d 打牌 · r 立直 · t 自摸"),
-        Line::from("响应：p 过 · h 荣和 · 9 九种九牌 · q 退出"),
+        Line::from("←→ 选牌 · Space 标记 · d 打牌 · r 立直 · t 自摸"),
+        Line::from("p 过 · h 荣和 · c 吃 · o 碰 · k 杠 · a 加杠 · 9 九种九牌"),
     ];
     frame.render_widget(
         Paragraph::new(lines)
@@ -448,7 +450,12 @@ fn render_result(frame: &mut Frame<'_>, area: Rect, result: &MatchResultView) {
     );
 }
 
-fn tile_line(tiles: &[TileView], selected: usize, drawn: Option<u16>) -> Line<'static> {
+fn tile_line(
+    tiles: &[TileView],
+    selected: usize,
+    marked: &[u16],
+    drawn: Option<u16>,
+) -> Line<'static> {
     let mut spans = Vec::new();
     for (index, tile) in tiles.iter().enumerate() {
         let mut style = Style::default().fg(Color::Black).bg(IVORY);
@@ -457,6 +464,11 @@ fn tile_line(tiles: &[TileView], selected: usize, drawn: Option<u16>) -> Line<'s
         }
         if index == selected {
             style = style.bg(GOLD).add_modifier(Modifier::BOLD);
+        } else if marked.contains(&tile.id) {
+            style = style
+                .fg(Color::White)
+                .bg(Color::Blue)
+                .add_modifier(Modifier::BOLD);
         }
         let marker = if Some(tile.id) == drawn { "˙" } else { " " };
         spans.push(Span::styled(format!(" {}{marker} ", tile.code), style));
