@@ -154,7 +154,37 @@ pub struct ApiFailure {
 
 impl std::fmt::Display for ApiFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}: {}", self.code, self.message)
+        let message = match self.code.as_str() {
+            "client.transport" => "无法连接服务器",
+            "client.invalid_response" => "服务器响应异常",
+            "request.invalid_login_name" => "登录名格式不正确",
+            "request.invalid_password" => "密码需为 10 至 128 个字符",
+            "request.invalid_nickname" => "昵称格式不正确",
+            "request.invalid_room_name" => "房间名格式不正确",
+            "request.invalid_rule_config" => "规则设置有误",
+            "request.invalid_json" => "请求格式有误",
+            "auth.login_name_taken" => "登录名已被使用",
+            "auth.invalid_credentials" => "登录名或密码错误",
+            "auth.invalid_session" | "auth.missing_bearer" => "登录已失效",
+            "auth.user_unavailable" => "账号当前不可用",
+            "room.not_found" | "room.closed" => "房间已关闭",
+            "room.full" => "房间已满",
+            "room.already_member" => "你已在该房间",
+            "room.not_member" => "你不在该房间",
+            "room.not_owner" => "仅房主可操作",
+            "room.version_conflict" => "房间状态已更新，请重试",
+            "room.playing" => "对局已经开始",
+            "room.not_ready" => "人数未满或有人未准备",
+            "game.not_found" => "对局不存在",
+            "game.not_player" => "你不是本局玩家",
+            "game.stale_version" => "牌局状态已更新，请重试",
+            "game.invalid_command" => "当前不能执行此操作",
+            "game.finished" => "对局已经结束",
+            "server.internal" | "server.unknown" => "服务器暂时不可用",
+            "client.invalid_input" => self.message.as_str(),
+            _ => "操作失败",
+        };
+        formatter.write_str(message)
     }
 }
 

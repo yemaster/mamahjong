@@ -108,7 +108,7 @@ fn render_rooms(frame: &mut Frame<'_>, area: Rect, browser: &RoomBrowser) {
                     room.members.len(),
                     seat_count(room),
                     variant_label(room),
-                    room.lifecycle
+                    lifecycle_label(&room.lifecycle)
                 ))
                 .style(if index == browser.selected {
                     Style::default().fg(Color::Black).bg(GOLD)
@@ -338,7 +338,7 @@ fn render_player(
                 .iter()
                 .map(|meld| format!(
                     "{}[{}]",
-                    meld.kind,
+                    meld_label(&meld.kind),
                     meld.tiles
                         .iter()
                         .map(|tile| tile.code.as_str())
@@ -394,7 +394,9 @@ fn render_center(frame: &mut Frame<'_>, area: Rect, view: &MatchView) {
         crate::model::MatchPhase::AwaitingResponses { trigger_seat } => {
             format!("等待响应 · {}家打牌", wind_for_seat(trigger_seat))
         }
-        crate::model::MatchPhase::Ended { reason } => format!("本局结束 · {reason:?}"),
+        crate::model::MatchPhase::Ended { reason } => {
+            format!("本局结束 · {}", end_reason_label(reason))
+        }
     };
     let lines = vec![
         Line::from(format!(
@@ -427,7 +429,10 @@ fn render_center(frame: &mut Frame<'_>, area: Rect, view: &MatchView) {
 fn render_result(frame: &mut Frame<'_>, area: Rect, result: &MatchResultView) {
     let dialog = centered(area, area.width.min(56), 10);
     frame.render_widget(Clear, dialog);
-    let mut lines = vec![Line::from(format!("结束原因：{}", result.end_reason))];
+    let mut lines = vec![Line::from(format!(
+        "结束原因：{}",
+        match_end_reason_label(&result.end_reason)
+    ))];
     for placement in &result.placements {
         lines.push(Line::from(format!(
             "{}位  {}家  {}点  成绩 {:+.1}",
@@ -521,6 +526,47 @@ fn variant_label(room: &RoomView) -> &'static str {
         "三麻"
     } else {
         "四麻"
+    }
+}
+
+fn lifecycle_label(lifecycle: &str) -> &'static str {
+    match lifecycle {
+        "waiting" => "等待中",
+        "playing" => "进行中",
+        "closed" => "已关闭",
+        _ => "未知",
+    }
+}
+
+fn meld_label(kind: &str) -> &'static str {
+    match kind {
+        "chi" => "吃",
+        "pon" => "碰",
+        "open_kan" => "明杠",
+        "concealed_kan" => "暗杠",
+        "added_kan" => "加杠",
+        _ => "副露",
+    }
+}
+
+const fn end_reason_label(reason: crate::model::EndReason) -> &'static str {
+    match reason {
+        crate::model::EndReason::ExhaustiveDraw => "荒牌流局",
+        crate::model::EndReason::NineTerminals => "九种九牌",
+        crate::model::EndReason::FourWinds => "四风连打",
+        crate::model::EndReason::FourKans => "四杠散了",
+        crate::model::EndReason::FourRiichi => "四家立直",
+        crate::model::EndReason::Tsumo => "自摸",
+        crate::model::EndReason::Ron => "荣和",
+    }
+}
+
+fn match_end_reason_label(reason: &str) -> &'static str {
+    match reason {
+        "scheduled_end" => "规定局数结束",
+        "tobi" => "击飞",
+        "agari_yame" => "和牌止",
+        _ => "对局结束",
     }
 }
 

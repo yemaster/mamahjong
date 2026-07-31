@@ -67,6 +67,7 @@ pub struct App {
 }
 
 enum Action {
+    ShowStatus(&'static str),
     Authenticate {
         mode: AuthMode,
         login_name: String,
@@ -159,6 +160,10 @@ impl App {
 
     async fn perform(&mut self, action: Action) {
         let result = match action {
+            Action::ShowStatus(message) => {
+                self.status = message.to_owned();
+                Ok(())
+            }
             Action::Authenticate {
                 mode,
                 login_name,
@@ -384,7 +389,7 @@ impl App {
         if view.result.is_some() {
             self.status = "整场结束".to_owned();
         } else {
-            self.status = format!("命令已执行：{name}");
+            self.status = command_status(name).to_owned();
         }
         // Keep the latest observer projection only.
         view.players.shrink_to_fit();
@@ -549,10 +554,22 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
             });
         }
         KeyCode::Char('c') if !game.responded_in_window => {
-            return marked_tiles_command(game, "riichi.chi", 2, true);
+            return Some(marked_tiles_command(
+                game,
+                "riichi.chi",
+                2,
+                true,
+                "吃牌需标记 2 张手牌",
+            ));
         }
         KeyCode::Char('o') if !game.responded_in_window => {
-            return marked_tiles_command(game, "riichi.pon", 2, true);
+            return Some(marked_tiles_command(
+                game,
+                "riichi.pon",
+                2,
+                true,
+                "碰牌需标记 2 张手牌",
+            ));
         }
         KeyCode::Char('k') => {
             let response = matches!(game.view.phase, MatchPhase::AwaitingResponses { .. });
@@ -561,9 +578,19 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
             } else {
                 ("riichi.concealed_kan", 4)
             };
-            return marked_tiles_command(game, name, count, response);
+            return Some(marked_tiles_command(
+                game,
+                name,
+                count,
+                response,
+                if response {
+                    "明杠需标记 3 张手牌"
+                } else {
+                    "暗杠需标记 4 张手牌"
+                },
+            ));
         }
-        KeyCode::Char('a') => return added_kan_command(game),
+        KeyCode::Char('a') => return Some(added_kan_command(game)),
         KeyCode::Char('9') => {
             return Some(Action::GameCommand {
                 name: "riichi.nine_terminals",
@@ -606,36 +633,44 @@ fn marked_tiles_command(
     name: &'static str,
     expected_count: usize,
     response: bool,
-) -> Option<Action> {
+    invalid_selection: &'static str,
+) -> Action {
     if game.marked_tile_ids.len() != expected_count {
-        return None;
+        return Action::ShowStatus(invalid_selection);
     }
-    Some(Action::GameCommand {
+    Action::GameCommand {
         name,
         payload: Some(json!({"tile_ids": game.marked_tile_ids})),
         response,
-    })
+    }
 }
 
-fn added_kan_command(game: &GameScreen) -> Option<Action> {
-    let tile = own_tiles(&game.view)?.get(game.selected_tile)?;
-    let own = game
+fn added_kan_command(game: &GameScreen) -> Action {
+    let Some(tile) = own_tiles(&game.view).and_then(|tiles| tiles.get(game.selected_tile)) else {
+        return Action::ShowStatus("请先选择要加杠的牌");
+    };
+    let Some(own) = game
         .view
         .players
         .iter()
-        .find(|player| player.seat == game.view.observer_seat)?;
-    let meld = own.melds.iter().find(|meld| {
+        .find(|player| player.seat == game.view.observer_seat)
+    else {
+        return Action::ShowStatus("手牌状态异常");
+    };
+    let Some(meld) = own.melds.iter().find(|meld| {
         meld.kind == "pon"
             && meld
                 .tiles
                 .first()
                 .is_some_and(|meld_tile| same_tile_kind(&meld_tile.code, &tile.code))
-    })?;
-    Some(Action::GameCommand {
+    }) else {
+        return Action::ShowStatus("所选牌没有对应的碰");
+    };
+    Action::GameCommand {
         name: "riichi.added_kan",
         payload: Some(json!({"meld_id": meld.id, "tile_id": tile.id})),
         response: false,
-    })
+    }
 }
 
 fn same_tile_kind(left: &str, right: &str) -> bool {
@@ -684,9 +719,24 @@ fn parse_number(value: &str, label: &str) -> Result<u32, crate::model::ApiFailur
     })
 }
 
+fn command_status(name: &str) -> &'static str {
+    match name {
+        "riichi.discard" => "已打牌",
+        "riichi.riichi_discard" => "立直",
+        "riichi.tsumo" => "自摸",
+        "riichi.pass" => "已过",
+        "riichi.ron" => "荣和",
+        "riichi.chi" => "已吃牌",
+        "riichi.pon" => "已碰牌",
+        "riichi.open_kan" | "riichi.concealed_kan" | "riichi.added_kan" => "已杠牌",
+        "riichi.nine_terminals" => "九种九牌",
+        _ => "操作成功",
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{normalize_red_five, same_tile_kind};
+    use super::{command_status, normalize_red_five, same_tile_kind};
 
     #[test]
     fn red_fives_match_their_normal_tile_kind() {
@@ -694,5 +744,11 @@ mod tests {
         assert!(same_tile_kind("5p", "0p"));
         assert!(!same_tile_kind("0s", "5p"));
         assert_eq!(normalize_red_five("7z"), "7z");
+    }
+
+    #[test]
+    fn protocol_command_names_do_not_leak_into_game_copy() {
+        assert_eq!(command_status("riichi.discard"), "已打牌");
+        assert_eq!(command_status("riichi.concealed_kan"), "已杠牌");
     }
 }
