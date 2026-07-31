@@ -247,4 +247,180 @@ mod tests {
         assert_eq!(discarded["version"], 2);
         assert_eq!(discarded["phase"]["kind"], "awaiting_responses");
     }
+
+    #[tokio::test]
+    async fn complete_sanma_match_can_finish_through_public_http_api() {
+        let router = build_router(AppState::new());
+        let mut tokens = Vec::new();
+        for index in 0..3 {
+            let registration = register(router.clone(), &format!("full_match_{index}")).await;
+            tokens.push(
+                registration["session"]["token"]
+                    .as_str()
+                    .expect("session token")
+                    .to_owned(),
+            );
+        }
+
+        let (status, mut room) = request_json(
+            router.clone(),
+            Method::POST,
+            "/api/v1/rooms",
+            Some(&tokens[0]),
+            Some(json!({
+                "name": "完整三麻东风战",
+                "visibility": "private",
+                "rules": {
+                    "rule_set_id": "riichi/sanma",
+                    "config": {
+                        "overrides": {
+                            "match_rules": {
+                                "length": "east_only",
+                                "tobi": false,
+                                "dealer_continuation": "win_only",
+                                "agari_yame": false
+                            },
+                            "scoring": {"nagashi_mangan": false},
+                            "abortive_draws": {
+                                "four_winds": false,
+                                "four_kans": false,
+                                "nine_terminals": false,
+                                "four_riichi": false
+                            }
+                        }
+                    }
+                }
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let room_id = room["id"].as_str().expect("room ID").to_owned();
+
+        for token in &tokens[1..] {
+            let (status, joined) = request_json(
+                router.clone(),
+                Method::POST,
+                &format!("/api/v1/rooms/{room_id}/members"),
+                Some(token),
+                Some(json!({"expected_version": room["version"]})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            room = joined;
+        }
+        for token in &tokens {
+            let (status, ready) = request_json(
+                router.clone(),
+                Method::PUT,
+                &format!("/api/v1/rooms/{room_id}/members/me/readiness"),
+                Some(token),
+                Some(json!({
+                    "expected_version": room["version"],
+                    "ready": true
+                })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            room = ready;
+        }
+
+        let (status, started) = request_json(
+            router.clone(),
+            Method::POST,
+            &format!("/api/v1/rooms/{room_id}/matches"),
+            Some(&tokens[0]),
+            Some(json!({"expected_version": room["version"]})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let match_id = started["match_id"].as_str().expect("match ID").to_owned();
+        let (status, mut view) = request_json(
+            router.clone(),
+            Method::GET,
+            &format!("/api/v1/matches/{match_id}"),
+            Some(&tokens[0]),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        for _ in 0..5_000 {
+            if !view["result"].is_null() {
+                break;
+            }
+            let phase = &view["phase"];
+            match phase["kind"].as_str().expect("phase kind") {
+                "awaiting_turn_action" | "awaiting_discard" => {
+                    let seat = phase["seat"].as_u64().expect("acting seat") as usize;
+                    let (status, actor_view) = request_json(
+                        router.clone(),
+                        Method::GET,
+                        &format!("/api/v1/matches/{match_id}"),
+                        Some(&tokens[seat]),
+                        None,
+                    )
+                    .await;
+                    assert_eq!(status, StatusCode::OK);
+                    let tile_id = actor_view["players"][seat]["concealed_tiles"][0]["id"]
+                        .as_u64()
+                        .expect("own tile ID");
+                    let (status, next_view) = request_json(
+                        router.clone(),
+                        Method::POST,
+                        &format!("/api/v1/matches/{match_id}/commands"),
+                        Some(&tokens[seat]),
+                        Some(json!({
+                            "expected_version": actor_view["version"],
+                            "command": {
+                                "name": "riichi.discard",
+                                "payload": {"tile_id": tile_id}
+                            }
+                        })),
+                    )
+                    .await;
+                    assert_eq!(status, StatusCode::OK);
+                    view = next_view;
+                }
+                "awaiting_responses" => {
+                    let trigger = phase["trigger_seat"].as_u64().expect("trigger seat") as usize;
+                    for (seat, token) in tokens.iter().enumerate() {
+                        if seat == trigger {
+                            continue;
+                        }
+                        let (status, next_view) = request_json(
+                            router.clone(),
+                            Method::POST,
+                            &format!("/api/v1/matches/{match_id}/commands"),
+                            Some(token),
+                            Some(json!({
+                                "expected_version": view["version"],
+                                "command": {"name": "riichi.pass"}
+                            })),
+                        )
+                        .await;
+                        assert_eq!(status, StatusCode::OK);
+                        view = next_view;
+                    }
+                }
+                phase => panic!("unexpected non-terminal phase: {phase}"),
+            }
+        }
+
+        let result = &view["result"];
+        assert!(!result.is_null(), "match must finish within command bound");
+        assert_eq!(view["hand_index"], 3);
+        assert_eq!(
+            result["placements"].as_array().expect("placements").len(),
+            3
+        );
+        assert_eq!(
+            result["placements"]
+                .as_array()
+                .expect("placements")
+                .iter()
+                .map(|placement| placement["points"].as_i64().expect("points"))
+                .sum::<i64>(),
+            75_000
+        );
+    }
 }
