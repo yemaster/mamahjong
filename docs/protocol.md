@@ -1,7 +1,7 @@
 # 通信 API 设计
 
-状态：M0 设计基线  
-最后更新：2026-07-29
+状态：HTTP 可玩版已实现
+最后更新：2026-07-31
 
 ## 边界
 
@@ -21,40 +21,51 @@
 - 可选字段缺失表示“未提供”，不使用 `null` 表示默认值。
 - 未知的非关键响应字段应忽略。
 - 错误使用稳定机器码，文字只用于展示。
-- 写请求通过 `Idempotency-Key` 或消息 `command_id` 幂等。
+- 目标协议中的写请求通过 `Idempotency-Key` 或消息 `command_id` 幂等；
+  当前 HTTP 可玩版先使用资源版本防止重复状态推进。
 
-## HTTP 资源草案
+## 已实现的 HTTP 资源
 
 ```text
 POST   /api/v1/registrations
+POST   /api/v1/sessions
 GET    /api/v1/users/me
 PATCH  /api/v1/users/me/profile
-POST   /api/v1/sessions/guest
-POST   /api/v1/ws-tickets
-
-GET    /api/v1/rule-sets
-GET    /api/v1/rule-sets/{rule_set_id}
-POST   /api/v1/rule-sets/{rule_set_id}/validate
 
 POST   /api/v1/rooms
+GET    /api/v1/rooms
 GET    /api/v1/rooms/{room_id}
 PATCH  /api/v1/rooms/{room_id}
 POST   /api/v1/rooms/{room_id}/members
-DELETE /api/v1/rooms/{room_id}/members/me
+DELETE /api/v1/rooms/{room_id}/members
 PUT    /api/v1/rooms/{room_id}/members/me/readiness
 POST   /api/v1/rooms/{room_id}/matches
 
+GET    /api/v1/matches/{match_id}
+POST   /api/v1/matches/{match_id}/commands
+GET    /api/v1/matches/{match_id}/record
+```
+
+终端客户端使用 HTTP 命令并轮询观察者视图。
+
+## 规划资源
+
+```text
+POST   /api/v1/ws-tickets
+GET    /api/v1/rule-sets
+GET    /api/v1/rule-sets/{rule_set_id}
+POST   /api/v1/rule-sets/{rule_set_id}/validate
 POST   /api/v1/matchmaking-tickets
 GET    /api/v1/matchmaking-tickets/{ticket_id}
 DELETE /api/v1/matchmaking-tickets/{ticket_id}
-
-GET    /api/v1/matches/{match_id}
 GET    /api/v1/matches/{match_id}/result
 GET    /api/v1/matches/{match_id}/hands
 GET    /api/v1/matches/{match_id}/hands/{hand_id}
 GET    /api/v1/matches/{match_id}/hands/{hand_id}/replay
 GET    /api/v1/matches/{match_id}/replay
 ```
+
+WebSocket ticket、事件续传和历史复盘子资源尚未实现。
 
 `POST /api/v1/registrations` 接收 `login_name + password + nickname`。成功
 响应返回用户档案和会话；密码及密码哈希永不进入响应、领域事件或日志。
@@ -86,6 +97,36 @@ GET    /api/v1/matches/{match_id}/replay
 整场记录返回当时的完整规则快照和按序单局摘要。单局复盘接口只读取该局
 起止事件范围；整场复盘按 `hand_index` 串联所有单局。未结束牌局的隐藏信息
 按请求者权限裁剪。
+
+`GET /api/v1/matches/{match_id}/record` 当前仅允许本场玩家读取，返回
+`match_record.v1`。服务端在开局、每局结算和整场结束时把同一结构写入持久
+归档。
+
+## 当前 HTTP 牌局命令
+
+```json
+{
+  "expected_version": 12,
+  "command": {
+    "name": "riichi.discard",
+    "payload": {"tile_id": 37}
+  }
+}
+```
+
+无参数命令省略 `payload`。当前命令名：
+
+```text
+riichi.discard             riichi.riichi_discard
+riichi.tsumo               riichi.ron
+riichi.pass                riichi.nine_terminals
+riichi.chi                 riichi.pon
+riichi.open_kan            riichi.concealed_kan
+riichi.added_kan
+```
+
+吃、碰和杠使用当前观察者手牌中的牌张 ID；加杠同时提交副露 ID。服务端根据
+会话确定玩家身份，并验证版本、阶段、座位和动作。
 
 ## WebSocket 建连
 

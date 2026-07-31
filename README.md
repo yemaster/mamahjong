@@ -1,39 +1,52 @@
 # Mamahjong
 
-可扩展的在线麻将服务。基础框架、日麻牌山、规则配置、权威单局状态机以及
-和牌与整场结算核心已完成。
+可扩展的在线麻将服务。当前版本可通过终端客户端完成四麻或三麻对局。
 
 ## 工程结构
 
 ```text
 apps/server/          后端进程入口
+apps/console/         独立 HTTP 终端客户端
+crates/mamahjong-application/ 用例、身份、房间和桌局编排
 crates/mahjong-core/  不依赖网络和存储的领域核心
 crates/mahjong-riichi/ 四麻/三麻日麻规则实现
 docs/                 架构与迭代计划
 ```
 
-## 本地检查
-
-```bash
-cargo fmt --all --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-```
-
-## 启动后端
-
-Docker 一键启动：
+## 开始游戏
 
 ```bash
 docker compose up --detach --build
-curl http://127.0.0.1:8080/health/ready
+cargo run -p mamahjong-console
 ```
 
-本地 Rust 工具链启动：
+三麻需要打开三个终端客户端，四麻需要四个。每个客户端注册不同账号；一人
+建房，其余玩家加入，所有人按 `Space` 准备，房主按 `s` 开始。建房界面按
+`F3` 切换四麻/三麻。
+
+常用按键：
+
+- 登录/注册：`F2`、`Tab`、`Enter`
+- 大厅：`n` 建房、方向键选房、`Enter` 加入
+- 房间：`Space` 准备、`s` 开始
+- 对局：方向键选牌，`d` 打牌，`r` 立直，`t` 自摸，`p` 过，`h` 荣和
+- 副露：`Space` 标记手牌，`c` 吃，`o` 碰，`k` 杠，`a` 加杠
+
+服务端地址不是默认值时：
+
+```bash
+cargo run -p mamahjong-console -- --server http://服务器地址:端口
+```
+
+## 本地启动与检查
 
 ```bash
 cargo run -p mamahjong-server
-curl http://127.0.0.1:8080/health/ready
+cargo run -p mamahjong-console
+
+cargo fmt --all --check
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 设计约束见 [架构文档](docs/architecture.md)，开发顺序见

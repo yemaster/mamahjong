@@ -1,14 +1,15 @@
 # 部署与运行
 
-状态：M0 已实现  
-最后更新：2026-07-29
+状态：可玩版已验证
+最后更新：2026-07-31
 
 ## 环境要求
 
 - Docker Engine
 - Docker Compose v2 或更高版本
+- 运行源码版终端客户端需要 Rust 1.85 或更高版本
 
-不需要在宿主机安装 Rust。
+仅部署服务端时不需要在宿主机安装 Rust。
 
 ## 一键启动
 
@@ -48,6 +49,8 @@ cp .env.example .env
 | `RUST_LOG` | `info` | 日志过滤规则 |
 
 容器内部固定监听 `0.0.0.0:8080`。`.env` 不会进入镜像，也不应提交到 Git。
+单局和整场记录保存在 Compose 命名卷 `mamahjong_match-records`，执行普通
+`docker compose down` 不会删除该卷。
 
 如需让反向代理从其他主机访问，可以把 `MAMAHJONG_HOST` 改为内网地址。
 不要在没有 TLS、鉴权和防火墙的情况下直接暴露公网。
@@ -98,11 +101,37 @@ docker run --detach \
   --name mamahjong-server \
   --publish 127.0.0.1:8080:8080 \
   --read-only \
+  --mount type=volume,source=mamahjong-match-records,target=/var/lib/mamahjong \
+  --env MAMAHJONG_DATA_DIR=/var/lib/mamahjong \
   --tmpfs /tmp:size=16m \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   mamahjong-server:local
 ```
+
+本地直接启动服务端时，归档默认写入项目根目录的 `data/`。可以修改：
+
+```bash
+MAMAHJONG_DATA_DIR=/path/to/records cargo run -p mamahjong-server
+```
+
+## 启动客户端
+
+客户端与服务端是独立进程，只通过 HTTP JSON 通信：
+
+```bash
+cargo run -p mamahjong-console
+```
+
+连接远程或非默认端口：
+
+```bash
+MAMAHJONG_SERVER_URL=http://127.0.0.1:18080 \
+  cargo run -p mamahjong-console
+```
+
+三麻启动三个客户端，四麻启动四个客户端。具体按键见项目根目录
+`README.md`。
 
 ## 生产部署基线
 
@@ -115,8 +144,9 @@ docker run --detach \
 - 升级时先等待新实例 ready，再停止旧实例；
 - 数据库和 Redis 上线后使用外部服务或持久卷并配置备份。
 
-当前 M0 服务尚未接入数据库，没有需要挂载的业务数据目录。后续每局、整场
-记录及事件将写入 PostgreSQL/归档存储，不能保存在容器临时文件系统。
+当前账号、会话、房间和进行中的牌局仍在内存中；服务重启后不能恢复进行中
+的牌局。已写入卷的 `match_record.v1` 单局与整场记录不会随容器重建丢失。
+PostgreSQL 阶段会增加在线历史查询、完整事件复盘和运行中牌局恢复。
 
 运行镜像使用无 shell 的 Distroless 基础镜像和 UID/GID `65532:65532`。
 容器健康检查由镜像内的 `mamahjong-healthcheck` 执行，不依赖 curl 或 shell。
