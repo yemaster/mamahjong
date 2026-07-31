@@ -112,6 +112,7 @@ fn competition_base() -> RiichiRules {
             yakuman_value: YakumanValue::StackedOnly,
             nagashi_mangan: false,
             kazoe_yakuman: false,
+            kokushi_ankan_chankan: false,
         },
         bonuses: BonusRules {
             red_fives: RedFives::new(0, 0, 0).expect("zero red fives are valid"),
@@ -216,6 +217,7 @@ mod tests {
             assert_eq!(value["scoring"]["yakuman_value"], json!("stacked_only"));
             assert_eq!(value["scoring"]["nagashi_mangan"], json!(false));
             assert_eq!(value["scoring"]["kazoe_yakuman"], json!(false));
+            assert_eq!(value["scoring"]["kokushi_ankan_chankan"], json!(false));
             assert_eq!(
                 value["abortive_draws"],
                 json!({

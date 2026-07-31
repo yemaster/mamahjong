@@ -3,6 +3,7 @@ mod dto;
 mod error;
 mod identity;
 mod matches;
+mod matchmaking;
 mod rooms;
 
 use axum::Router;
@@ -12,6 +13,7 @@ use crate::AppState;
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .nest("/api/v1", identity::routes())
+        .nest("/api/v1", matchmaking::routes())
         .nest("/api/v1", matches::routes())
         .nest("/api/v1", rooms::routes())
 }
@@ -162,6 +164,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sanma_matchmaking_creates_a_playable_match() {
+        let router = build_router(AppState::new());
+        let mut tokens = Vec::new();
+        let mut ticket_ids = Vec::new();
+        for index in 0..3 {
+            let registration = register(router.clone(), &format!("queue_{index}")).await;
+            let token = registration["session"]["token"]
+                .as_str()
+                .expect("token")
+                .to_owned();
+            let (status, ticket) = request_json(
+                router.clone(),
+                Method::POST,
+                "/api/v1/matchmaking-tickets",
+                Some(&token),
+                Some(json!({"rule_set_id": "riichi/sanma"})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED);
+            tokens.push(token);
+            ticket_ids.push(ticket["id"].as_str().expect("ticket ID").to_owned());
+        }
+
+        for (token, ticket_id) in tokens.iter().zip(&ticket_ids) {
+            let (status, ticket) = request_json(
+                router.clone(),
+                Method::GET,
+                &format!("/api/v1/matchmaking-tickets/{ticket_id}"),
+                Some(token),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(ticket["status"], "matched");
+            let match_id = ticket["match_id"].as_str().expect("match ID");
+            let (status, view) = request_json(
+                router.clone(),
+                Method::GET,
+                &format!("/api/v1/matches/{match_id}"),
+                Some(token),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(view["players"].as_array().map(Vec::len), Some(3));
+        }
+    }
+
+    #[tokio::test]
     async fn match_view_hides_opponents_and_accepts_versioned_commands() {
         let state = AppState::new();
         let mut users = Vec::new();
@@ -229,6 +280,11 @@ mod tests {
         assert_eq!(view["observer_seat"], 0);
         assert!(view["players"][0]["concealed_tiles"].is_array());
         assert!(view["players"][1]["concealed_tiles"].is_null());
+        assert!(view["turn_actions"]["can_tsumo"].is_boolean());
+        assert!(view["turn_actions"]["riichi_discard_tile_ids"].is_array());
+        assert!(view["turn_actions"]["concealed_kan_tile_ids"].is_array());
+        assert!(view["turn_actions"]["added_kan_options"].is_array());
+        assert!(view["turn_actions"]["can_nine_terminals"].is_boolean());
         let tile_id = view["players"][0]["concealed_tiles"][0]["id"]
             .as_u64()
             .expect("tile ID");
@@ -446,6 +502,25 @@ mod tests {
             75_000
         );
 
+        let (status, finished_room) = request_json(
+            router.clone(),
+            Method::GET,
+            &format!("/api/v1/rooms/{room_id}"),
+            Some(&tokens[0]),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(finished_room["lifecycle"], "waiting");
+        assert!(finished_room["active_match_id"].is_null());
+        assert!(
+            finished_room["members"]
+                .as_array()
+                .expect("room members")
+                .iter()
+                .all(|member| member["ready"] == false)
+        );
+
         let (status, record) = request_json(
             router,
             Method::GET,
@@ -457,6 +532,11 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(record["schema"], "match_record.v1");
         assert_eq!(record["hands"].as_array().expect("hands").len(), 3);
+        assert!(
+            record["hands"][0]["events"]
+                .as_array()
+                .is_some_and(|events| !events.is_empty())
+        );
         assert!(!record["result"].is_null());
 
         let archived = std::fs::read_to_string(archive_directory.join(format!("{match_id}.json")))

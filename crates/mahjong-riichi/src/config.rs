@@ -56,6 +56,7 @@ pub struct ScoringRules {
     pub yakuman_value: YakumanValue,
     pub nagashi_mangan: bool,
     pub kazoe_yakuman: bool,
+    pub kokushi_ankan_chankan: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -139,6 +140,7 @@ impl RiichiRules {
                 yakuman_value: YakumanValue::DoubleVariantsAndStacked,
                 nagashi_mangan: true,
                 kazoe_yakuman: true,
+                kokushi_ankan_chankan: true,
             },
             bonuses: BonusRules {
                 red_fives: variant.default_red_fives(),

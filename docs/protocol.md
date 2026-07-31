@@ -44,6 +44,10 @@ POST   /api/v1/rooms/{room_id}/matches
 GET    /api/v1/matches/{match_id}
 POST   /api/v1/matches/{match_id}/commands
 GET    /api/v1/matches/{match_id}/record
+
+POST   /api/v1/matchmaking-tickets
+GET    /api/v1/matchmaking-tickets/{ticket_id}
+DELETE /api/v1/matchmaking-tickets/{ticket_id}
 ```
 
 终端客户端使用 HTTP 命令并轮询观察者视图。
@@ -65,6 +69,21 @@ GET    /api/v1/matches/{match_id}/record
 提交 `riichi.pass`。存在候选动作的玩家才可提交对应响应或
 `riichi.pass`。
 
+`turn_actions` 只在当前观察者的摸牌阶段给出合法特殊动作。普通打牌在该
+阶段始终成立，不重复列出。立直、暗杠和加杠同时返回可提交的牌张 ID：
+
+```json
+{
+  "turn_actions": {
+    "can_tsumo": false,
+    "riichi_discard_tile_ids": [17, 23],
+    "concealed_kan_tile_ids": [],
+    "added_kan_options": [],
+    "can_nine_terminals": false
+  }
+}
+```
+
 ## 规划资源
 
 ```text
@@ -72,9 +91,6 @@ POST   /api/v1/ws-tickets
 GET    /api/v1/rule-sets
 GET    /api/v1/rule-sets/{rule_set_id}
 POST   /api/v1/rule-sets/{rule_set_id}/validate
-POST   /api/v1/matchmaking-tickets
-GET    /api/v1/matchmaking-tickets/{ticket_id}
-DELETE /api/v1/matchmaking-tickets/{ticket_id}
 GET    /api/v1/matches/{match_id}/result
 GET    /api/v1/matches/{match_id}/hands
 GET    /api/v1/matches/{match_id}/hands/{hand_id}
@@ -83,6 +99,11 @@ GET    /api/v1/matches/{match_id}/replay
 ```
 
 WebSocket ticket、事件续传和历史复盘子资源尚未实现。
+
+段位匹配首版按 `rule_set_id` 分成四麻、三麻两条 FIFO 队列。同一用户同时
+只能持有一张等待中的票；人数满足时，服务端原子建立私有房间、固定座次并
+开始对局。票状态为 `waiting / matched / cancelled`。段位区间、等待扩圈和
+赛季积分只改变配对选择，不改变票和对局协议。
 
 `POST /api/v1/registrations` 接收 `login_name + password + nickname`。成功
 响应返回用户档案和会话；密码及密码哈希永不进入响应、领域事件或日志。
@@ -111,9 +132,9 @@ WebSocket ticket、事件续传和历史复盘子资源尚未实现。
 低频房间写操作使用当前 `version` 做条件更新。冲突返回 `409` 和最新资源
 版本。
 
-整场记录返回当时的完整规则快照和按序单局摘要。单局复盘接口只读取该局
-起止事件范围；整场复盘按 `hand_index` 串联所有单局。未结束牌局的隐藏信息
-按请求者权限裁剪。
+整场记录返回当时的完整规则快照、按序单局摘要和已结算小局的完整事件。
+单局复盘接口只读取该局起止事件范围；整场复盘按 `hand_index` 串联所有
+单局。当前正在进行的小局不进入记录响应，避免泄露隐藏信息。
 
 `GET /api/v1/matches/{match_id}/record` 当前仅允许本场玩家读取，返回
 `match_record.v1`。服务端在开局、每局结算和整场结束时把同一结构写入持久

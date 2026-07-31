@@ -220,6 +220,7 @@ pub(super) struct StartRoomResponse {
 pub(super) struct MatchViewResponse {
     schema: &'static str,
     id: String,
+    room_id: String,
     version: u64,
     event_sequence: u64,
     hand_index: u32,
@@ -230,6 +231,7 @@ pub(super) struct MatchViewResponse {
     dora_indicators: Vec<TileResponse>,
     players: Vec<MatchPlayerResponse>,
     available_reactions: Vec<ReactionResponse>,
+    turn_actions: TurnActionsResponse,
     result: Option<MatchResultResponse>,
 }
 
@@ -239,6 +241,7 @@ impl From<&ObserverMatch> for MatchViewResponse {
         Self {
             schema: "match_view.v1",
             id: value.id().as_str().to_owned(),
+            room_id: value.room_id().as_str().to_owned(),
             version: value.version(),
             event_sequence: value.event_sequence(),
             hand_index: value.hand_index(),
@@ -268,9 +271,39 @@ impl From<&ObserverMatch> for MatchViewResponse {
                 .iter()
                 .map(ReactionResponse::from)
                 .collect(),
+            turn_actions: TurnActionsResponse {
+                can_tsumo: value.turn_actions().can_tsumo(),
+                riichi_discard_tile_ids: value.turn_actions().riichi_discard_tile_ids().to_vec(),
+                concealed_kan_tile_ids: value.turn_actions().concealed_kan_tile_ids().to_vec(),
+                added_kan_options: value
+                    .turn_actions()
+                    .added_kan_options()
+                    .iter()
+                    .map(|option| AddedKanOptionResponse {
+                        meld_id: option.meld_id(),
+                        tile_id: option.tile_id(),
+                    })
+                    .collect(),
+                can_nine_terminals: value.turn_actions().can_nine_terminals(),
+            },
             result: value.result().map(MatchResultResponse::from),
         }
     }
+}
+
+#[derive(Serialize)]
+struct TurnActionsResponse {
+    can_tsumo: bool,
+    riichi_discard_tile_ids: Vec<u16>,
+    concealed_kan_tile_ids: Vec<[u16; 4]>,
+    added_kan_options: Vec<AddedKanOptionResponse>,
+    can_nine_terminals: bool,
+}
+
+#[derive(Serialize)]
+struct AddedKanOptionResponse {
+    meld_id: u8,
+    tile_id: u16,
 }
 
 #[derive(Serialize)]

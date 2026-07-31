@@ -11,9 +11,9 @@ getrandom.workspace = true
 mahjong-core = { path = "../mahjong-core" }
 mahjong-riichi = { path = "../mahjong-riichi" }
 serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 
 [lints]
 workspace = true

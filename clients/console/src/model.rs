@@ -54,10 +54,18 @@ pub struct StartMatchResponse {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+pub struct MatchmakingTicketView {
+    pub id: String,
+    pub rule_set_id: String,
+    pub status: String,
+    pub match_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct MatchView {
     pub id: String,
+    pub room_id: String,
     pub version: u64,
-    pub event_sequence: u64,
     pub hand_index: u32,
     pub observer_seat: u8,
     pub progress: ProgressView,
@@ -66,6 +74,7 @@ pub struct MatchView {
     pub dora_indicators: Vec<TileView>,
     pub players: Vec<MatchPlayerView>,
     pub available_reactions: Vec<ReactionOptionView>,
+    pub turn_actions: TurnActionsView,
     pub result: Option<MatchResultView>,
 }
 
@@ -76,6 +85,21 @@ pub enum ReactionOptionView {
     Chi { tile_ids: [u16; 2] },
     Pon { tile_ids: [u16; 2] },
     OpenKan { tile_ids: [u16; 3] },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct TurnActionsView {
+    pub can_tsumo: bool,
+    pub riichi_discard_tile_ids: Vec<u16>,
+    pub concealed_kan_tile_ids: Vec<[u16; 4]>,
+    pub added_kan_options: Vec<AddedKanOptionView>,
+    pub can_nine_terminals: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+pub struct AddedKanOptionView {
+    pub meld_id: u8,
+    pub tile_id: u16,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -129,7 +153,6 @@ pub struct TileView {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct MeldView {
-    pub id: u8,
     pub kind: String,
     pub tiles: Vec<TileView>,
 }
@@ -190,6 +213,11 @@ impl std::fmt::Display for ApiFailure {
             "game.stale_version" => "牌局状态已更新，请重试",
             "game.invalid_command" => "当前不能执行此操作",
             "game.finished" => "对局已经结束",
+            "request.invalid_rule_set" => "该匹配玩法不可用",
+            "matchmaking.already_queued" => "你已经在匹配队列中",
+            "matchmaking.ticket_not_found" => "匹配票不存在",
+            "matchmaking.ticket_not_waiting" => "匹配已经结束，不能取消",
+            "lobby.user_busy" => "你已在其他房间或匹配队列中",
             "server.internal" | "server.unknown" => "服务器暂时不可用",
             "client.invalid_input" => self.message.as_str(),
             _ => "操作失败",

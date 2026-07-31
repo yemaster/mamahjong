@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use mahjong_core::{MatchId, RoomId, UserId};
+use mahjong_core::{MatchId, RoomId, TicketId, UserId};
 
 use crate::game::GameRuntime;
-use crate::{Room, Session, User};
+use crate::{MatchmakingTicket, Room, Session, User};
 
 #[derive(Default)]
 pub(crate) struct MemoryStore {
@@ -13,4 +13,6 @@ pub(crate) struct MemoryStore {
     pub(crate) sessions: HashMap<String, Session>,
     pub(crate) rooms: HashMap<RoomId, Room>,
     pub(crate) matches: HashMap<MatchId, GameRuntime>,
+    pub(crate) matchmaking_tickets: HashMap<TicketId, MatchmakingTicket>,
+    pub(crate) next_matchmaking_order: u64,
 }

@@ -71,7 +71,7 @@ fn comparison_key(
 #[cfg(test)]
 mod tests {
     use crate::{
-        HandShape, Payment, PlayerHand, RiichiRules, RiichiScorer, RiichiVariant, Seat,
+        HandJudge, HandShape, Payment, PlayerHand, RiichiRules, RiichiScorer, RiichiVariant, Seat,
         TableProgress, Tile, TileId, TileKind, TileSet, WaitKind, Wall, WallSeed, WinQuery,
         WinSource, Yaku, YakumanValue,
     };
@@ -114,15 +114,19 @@ mod tests {
         }
 
         fn query(&self) -> WinQuery<'_> {
+            self.query_with_source(WinSource::Discard {
+                from: Seat::new(RiichiVariant::Yonma, 1).expect("discarder"),
+            })
+        }
+
+        fn query_with_source(&self, source: WinSource) -> WinQuery<'_> {
             WinQuery::new(
                 &self.rules,
                 self.progress,
                 self.winner,
                 &self.player,
                 self.winning_tile,
-                WinSource::Discard {
-                    from: Seat::new(RiichiVariant::Yonma, 1).expect("discarder"),
-                },
+                source,
                 &self.wall,
                 self.calls_occurred,
             )
@@ -182,6 +186,35 @@ mod tests {
                 .iter()
                 .any(|value| value.yaku() == Yaku::SevenPairs)
         );
+    }
+
+    #[test]
+    fn own_discard_on_any_current_wait_prevents_ron() {
+        let mut fixture = Fixture::ron("1m 2m 3m 1p 2p 3p 1s 2s 3s 4s 5s 7p 7p", "6s");
+        let discarded_wait =
+            Tile::new(TileId::new(201), "3s".parse().expect("tile kind"), false).expect("tile");
+        fixture.player.add_scoring_fixture_discard(discarded_wait);
+
+        assert!(RiichiScorer.evaluate(fixture.query()).is_some());
+        assert!(!RiichiScorer.can_win(fixture.query()));
+    }
+
+    #[test]
+    fn only_thirteen_orphans_can_rob_a_concealed_kan() {
+        let from = Seat::new(RiichiVariant::Yonma, 1).expect("kan declarer");
+        let ordinary = Fixture::ron("1m 2m 3m 1p 2p 3p 1s 2s 3s 4s 5s 7p 7p", "6s");
+        let ordinary_query = ordinary.query_with_source(WinSource::ConcealedKan { from });
+        assert!(RiichiScorer.evaluate(ordinary_query).is_some());
+        assert!(!RiichiScorer.can_win(ordinary_query));
+
+        let orphans = Fixture::ron("1m 9m 1p 9p 1s 9s 1z 2z 3z 4z 5z 6z 7z", "1m");
+        let orphans_query = orphans.query_with_source(WinSource::ConcealedKan { from });
+        assert!(RiichiScorer.can_win(orphans_query));
+
+        let mut disabled = Fixture::ron("1m 9m 1p 9p 1s 9s 1z 2z 3z 4z 5z 6z 7z", "1m");
+        disabled.rules.scoring.kokushi_ankan_chankan = false;
+        let disabled_query = disabled.query_with_source(WinSource::ConcealedKan { from });
+        assert!(!RiichiScorer.can_win(disabled_query));
     }
 
     #[test]

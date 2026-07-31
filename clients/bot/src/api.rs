@@ -4,6 +4,7 @@ use std::fmt::{self, Display, Formatter};
 use reqwest::{Client, Method, Response, StatusCode};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use std::time::Duration;
 
 use crate::model::{AuthResponse, MatchView, RoomView, StartMatchResponse};
 use crate::runner::Variant;
@@ -17,7 +18,11 @@ pub struct ApiClient {
 
 impl ApiClient {
     pub fn new(base_url: &str) -> Result<Self, ApiError> {
-        let client = Client::builder().build().map_err(ApiError::transport)?;
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(ApiError::transport)?;
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_owned(),
             client,

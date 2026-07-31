@@ -4,7 +4,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::{Value, json};
 
 use crate::api::ApiClient;
-use crate::model::{MatchPhase, MatchView, ReactionOptionView, RoomView, UserView};
+use crate::model::{
+    MatchPhase, MatchView, MatchmakingTicketView, ReactionOptionView, RoomView, UserView,
+};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -52,6 +54,7 @@ pub enum Screen {
     Auth(AuthForm),
     Rooms(RoomBrowser),
     CreateRoom(CreateRoomForm),
+    Matchmaking(MatchmakingTicketView),
     Room(RoomView),
     Game(GameScreen),
 }
@@ -75,6 +78,11 @@ enum Action {
     },
     RefreshRooms,
     OpenCreateRoom,
+    EnterMatchmaking {
+        variant: &'static str,
+    },
+    RefreshMatchmaking,
+    CancelMatchmaking,
     BackToRooms,
     CreateRoom {
         name: String,
@@ -92,6 +100,7 @@ enum Action {
     Ready,
     StartRoom,
     LeaveRoom,
+    ReturnToRoom,
     RefreshGame,
     GameCommand {
         name: &'static str,
@@ -110,7 +119,7 @@ impl App {
                 nickname: String::new(),
             }),
             user: None,
-            status: "F2 切换登录/注册，Tab 切换输入框".to_owned(),
+            status: "未登录".to_owned(),
             quit: false,
             api: ApiClient::new(base_url)?,
             last_poll: Instant::now(),
@@ -135,6 +144,7 @@ impl App {
         self.last_poll = Instant::now();
         let action = match self.screen {
             Screen::Room(_) => Some(Action::RefreshRoom),
+            Screen::Matchmaking(_) => Some(Action::RefreshMatchmaking),
             Screen::Game(_) => Some(Action::RefreshGame),
             _ => None,
         };
@@ -151,6 +161,7 @@ impl App {
             Screen::Auth(form) => auth_key(form, key, &mut self.quit),
             Screen::Rooms(browser) => rooms_key(browser, key, &mut self.quit),
             Screen::CreateRoom(form) => create_room_key(form, key),
+            Screen::Matchmaking(ticket) => matchmaking_key(ticket, key),
             Screen::Room(room) => room_key(room, key),
             Screen::Game(game) => game_key(game, key, &mut self.quit),
         }
@@ -197,6 +208,24 @@ impl App {
                 });
                 Ok(())
             }
+            Action::EnterMatchmaking { variant } => match self.api.enter_matchmaking(variant).await
+            {
+                Ok(ticket) => self.open_matchmaking(ticket).await,
+                Err(error) => Err(error),
+            },
+            Action::RefreshMatchmaking => self.refresh_matchmaking().await,
+            Action::CancelMatchmaking => {
+                let Screen::Matchmaking(ticket) = &self.screen else {
+                    return;
+                };
+                match self.api.cancel_matchmaking(&ticket.id).await {
+                    Ok(_) => {
+                        self.status = "已取消匹配".to_owned();
+                        self.load_rooms().await
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             Action::BackToRooms => self.load_rooms().await,
             Action::CreateRoom {
                 name,
@@ -238,6 +267,19 @@ impl App {
             Action::Ready => self.toggle_ready().await,
             Action::StartRoom => self.start_room().await,
             Action::LeaveRoom => self.leave_room().await,
+            Action::ReturnToRoom => {
+                let Screen::Game(game) = &self.screen else {
+                    return;
+                };
+                match self.api.room(&game.view.room_id).await {
+                    Ok(room) => {
+                        self.status = "已返回房间".to_owned();
+                        self.screen = Screen::Room(room);
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             Action::RefreshGame => self.refresh_game().await,
             Action::GameCommand { name, payload } => self.submit_game_command(name, payload).await,
         };
@@ -269,6 +311,33 @@ impl App {
             });
         } else {
             self.screen = Screen::Room(room);
+        }
+        Ok(())
+    }
+
+    async fn refresh_matchmaking(&mut self) -> Result<(), crate::model::ApiFailure> {
+        let Screen::Matchmaking(current) = &self.screen else {
+            return Ok(());
+        };
+        let ticket = self.api.matchmaking_ticket(&current.id).await?;
+        self.open_matchmaking(ticket).await
+    }
+
+    async fn open_matchmaking(
+        &mut self,
+        ticket: MatchmakingTicketView,
+    ) -> Result<(), crate::model::ApiFailure> {
+        if let Some(match_id) = &ticket.match_id {
+            let view = self.api.match_view(match_id).await?;
+            self.status = "匹配成功，对局开始".to_owned();
+            self.screen = Screen::Game(GameScreen {
+                view,
+                selected_tile: 0,
+                marked_tile_ids: Vec::new(),
+            });
+        } else {
+            self.status = "正在匹配".to_owned();
+            self.screen = Screen::Matchmaking(ticket);
         }
         Ok(())
     }
@@ -373,13 +442,21 @@ fn auth_key(form: &mut AuthForm, key: KeyEvent, quit: &mut bool) -> Option<Actio
             };
             form.active_field = 0;
         }
-        KeyCode::Tab => {
+        KeyCode::Tab | KeyCode::Down => {
             let fields = if form.mode == AuthMode::Register {
                 3
             } else {
                 2
             };
             form.active_field = (form.active_field + 1) % fields;
+        }
+        KeyCode::BackTab | KeyCode::Up => {
+            let fields = if form.mode == AuthMode::Register {
+                3
+            } else {
+                2
+            };
+            form.active_field = (form.active_field + fields - 1) % fields;
         }
         KeyCode::Backspace => active_auth_text(form).pop().map(|_| ())?,
         KeyCode::Char(character) => active_auth_text(form).push(character),
@@ -413,6 +490,8 @@ fn rooms_key(browser: &mut RoomBrowser, key: KeyEvent, quit: &mut bool) -> Optio
         }
         KeyCode::Char('r') => return Some(Action::RefreshRooms),
         KeyCode::Char('n') => return Some(Action::OpenCreateRoom),
+        KeyCode::Char('4') => return Some(Action::EnterMatchmaking { variant: "yonma" }),
+        KeyCode::Char('3') => return Some(Action::EnterMatchmaking { variant: "sanma" }),
         KeyCode::Enter | KeyCode::Char('j') => {
             if let Some(room) = browser.rooms.get(browser.selected) {
                 return Some(Action::JoinRoom {
@@ -426,23 +505,40 @@ fn rooms_key(browser: &mut RoomBrowser, key: KeyEvent, quit: &mut bool) -> Optio
     None
 }
 
+fn matchmaking_key(_ticket: &MatchmakingTicketView, key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Char('r') => Some(Action::RefreshMatchmaking),
+        KeyCode::Esc | KeyCode::Char('c') => Some(Action::CancelMatchmaking),
+        _ => None,
+    }
+}
+
 fn create_room_key(form: &mut CreateRoomForm, key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Esc => return Some(Action::BackToRooms),
-        KeyCode::Tab => form.active_field = (form.active_field + 1) % 3,
-        KeyCode::F(3) => {
-            form.variant = if form.variant == "yonma" {
-                "sanma".to_owned()
-            } else {
-                "yonma".to_owned()
-            };
+        KeyCode::Tab | KeyCode::Down => form.active_field = (form.active_field + 1) % 6,
+        KeyCode::BackTab | KeyCode::Up => {
+            form.active_field = (form.active_field + 5) % 6;
         }
-        KeyCode::F(4) => form.head_bump = !form.head_bump,
-        KeyCode::F(5) => form.tobi = !form.tobi,
+        KeyCode::F(3) => toggle_create_option(form, 3),
+        KeyCode::F(4) => toggle_create_option(form, 4),
+        KeyCode::F(5) => toggle_create_option(form, 5),
+        KeyCode::Left | KeyCode::Right if form.active_field >= 3 => {
+            toggle_create_option(form, form.active_field);
+        }
         KeyCode::Backspace => {
-            active_create_text(form).pop();
+            if let Some(text) = active_create_text(form) {
+                text.pop();
+            }
         }
-        KeyCode::Char(character) => active_create_text(form).push(character),
+        KeyCode::Char(' ') if form.active_field >= 3 => {
+            toggle_create_option(form, form.active_field);
+        }
+        KeyCode::Char(character) => {
+            if let Some(text) = active_create_text(form) {
+                text.push(character);
+            }
+        }
         KeyCode::Enter => {
             return Some(Action::CreateRoom {
                 name: form.name.clone(),
@@ -458,11 +554,27 @@ fn create_room_key(form: &mut CreateRoomForm, key: KeyEvent) -> Option<Action> {
     None
 }
 
-fn active_create_text(form: &mut CreateRoomForm) -> &mut String {
+fn active_create_text(form: &mut CreateRoomForm) -> Option<&mut String> {
     match form.active_field {
-        0 => &mut form.name,
-        1 => &mut form.initial_points,
-        _ => &mut form.noten_payment,
+        0 => Some(&mut form.name),
+        1 => Some(&mut form.initial_points),
+        2 => Some(&mut form.noten_payment),
+        _ => None,
+    }
+}
+
+fn toggle_create_option(form: &mut CreateRoomForm, field: usize) {
+    match field {
+        3 => {
+            form.variant = if form.variant == "yonma" {
+                "sanma".to_owned()
+            } else {
+                "yonma".to_owned()
+            };
+        }
+        4 => form.head_bump = !form.head_bump,
+        5 => form.tobi = !form.tobi,
+        _ => {}
     }
 }
 
@@ -481,6 +593,9 @@ fn room_key(room: &RoomView, key: KeyEvent) -> Option<Action> {
 
 fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Action> {
     match key.code {
+        KeyCode::Char('b') | KeyCode::Esc if game.view.result.is_some() => {
+            return Some(Action::ReturnToRoom);
+        }
         KeyCode::Char('q') => *quit = true,
         KeyCode::Left => game.selected_tile = game.selected_tile.saturating_sub(1),
         KeyCode::Right => {
@@ -491,14 +606,25 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
         KeyCode::Char('d') | KeyCode::Enter => {
             return selected_tile_command(game, "riichi.discard");
         }
-        KeyCode::Char('r') => return selected_tile_command(game, "riichi.riichi_discard"),
-        KeyCode::Char('t') => {
+        KeyCode::Char('r') if !game.view.turn_actions.riichi_discard_tile_ids.is_empty() => {
+            let tile = own_tiles(&game.view).and_then(|tiles| tiles.get(game.selected_tile))?;
+            if !game
+                .view
+                .turn_actions
+                .riichi_discard_tile_ids
+                .contains(&tile.id)
+            {
+                return Some(Action::ShowStatus("所选牌不能立直"));
+            }
+            return selected_tile_command(game, "riichi.riichi_discard");
+        }
+        KeyCode::Char('t') if game.view.turn_actions.can_tsumo => {
             return Some(Action::GameCommand {
                 name: "riichi.tsumo",
                 payload: None,
             });
         }
-        KeyCode::Char('p') if !game.view.available_reactions.is_empty() => {
+        KeyCode::Char('s') if !game.view.available_reactions.is_empty() => {
             return Some(Action::GameCommand {
                 name: "riichi.pass",
                 payload: None,
@@ -511,43 +637,42 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
             });
         }
         KeyCode::Char('c') if has_reaction(&game.view, ReactionKind::Chi) => {
-            return Some(marked_tiles_command(
+            return Some(reaction_tiles_command(
                 game,
+                ReactionKind::Chi,
                 "riichi.chi",
                 2,
                 "吃牌需标记 2 张手牌",
             ));
         }
-        KeyCode::Char('o') if has_reaction(&game.view, ReactionKind::Pon) => {
-            return Some(marked_tiles_command(
+        KeyCode::Char('p') | KeyCode::Char('o') if has_reaction(&game.view, ReactionKind::Pon) => {
+            return Some(reaction_tiles_command(
                 game,
+                ReactionKind::Pon,
                 "riichi.pon",
                 2,
                 "碰牌需标记 2 张手牌",
             ));
         }
         KeyCode::Char('k') => {
-            let (name, count) = if matches!(game.view.phase, MatchPhase::AwaitingResponses { .. }) {
+            if matches!(game.view.phase, MatchPhase::AwaitingResponses { .. }) {
                 if !has_reaction(&game.view, ReactionKind::OpenKan) {
                     return Some(Action::ShowStatus("当前不能杠"));
                 }
-                ("riichi.open_kan", 3)
-            } else {
-                ("riichi.concealed_kan", 4)
-            };
-            return Some(marked_tiles_command(
-                game,
-                name,
-                count,
-                if name == "riichi.open_kan" {
-                    "明杠需标记 3 张手牌"
-                } else {
-                    "暗杠需标记 4 张手牌"
-                },
-            ));
+                return Some(reaction_tiles_command(
+                    game,
+                    ReactionKind::OpenKan,
+                    "riichi.open_kan",
+                    3,
+                    "明杠需标记 3 张手牌",
+                ));
+            }
+            return Some(concealed_kan_command(game));
         }
-        KeyCode::Char('a') => return Some(added_kan_command(game)),
-        KeyCode::Char('9') => {
+        KeyCode::Char('a') if !game.view.turn_actions.added_kan_options.is_empty() => {
+            return Some(added_kan_command(game));
+        }
+        KeyCode::Char('9') if game.view.turn_actions.can_nine_terminals => {
             return Some(Action::GameCommand {
                 name: "riichi.nine_terminals",
                 payload: None,
@@ -602,30 +727,60 @@ fn marked_tiles_command(
     }
 }
 
+fn reaction_tiles_command(
+    game: &GameScreen,
+    kind: ReactionKind,
+    name: &'static str,
+    expected_count: usize,
+    invalid_selection: &'static str,
+) -> Action {
+    let candidates = reaction_tile_candidates(&game.view, kind);
+    if candidates.len() == 1 {
+        return Action::GameCommand {
+            name,
+            payload: Some(json!({"tile_ids": candidates[0]})),
+        };
+    }
+    marked_tiles_command(game, name, expected_count, invalid_selection)
+}
+
 fn added_kan_command(game: &GameScreen) -> Action {
     let Some(tile) = own_tiles(&game.view).and_then(|tiles| tiles.get(game.selected_tile)) else {
         return Action::ShowStatus("请先选择要加杠的牌");
     };
-    let Some(own) = game
+    let Some(option) = game
         .view
-        .players
+        .turn_actions
+        .added_kan_options
         .iter()
-        .find(|player| player.seat == game.view.observer_seat)
+        .find(|option| option.tile_id == tile.id)
     else {
-        return Action::ShowStatus("手牌状态异常");
-    };
-    let Some(meld) = own.melds.iter().find(|meld| {
-        meld.kind == "pon"
-            && meld
-                .tiles
-                .first()
-                .is_some_and(|meld_tile| same_tile_kind(&meld_tile.code, &tile.code))
-    }) else {
-        return Action::ShowStatus("所选牌没有对应的碰");
+        return Action::ShowStatus("所选牌不能加杠");
     };
     Action::GameCommand {
         name: "riichi.added_kan",
-        payload: Some(json!({"meld_id": meld.id, "tile_id": tile.id})),
+        payload: Some(json!({"meld_id": option.meld_id, "tile_id": tile.id})),
+    }
+}
+
+fn concealed_kan_command(game: &GameScreen) -> Action {
+    let selected = own_tiles(&game.view)
+        .and_then(|tiles| tiles.get(game.selected_tile))
+        .map(|tile| tile.id);
+    let candidates = &game.view.turn_actions.concealed_kan_tile_ids;
+    let candidate = selected
+        .and_then(|tile_id| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.contains(&tile_id))
+        })
+        .or_else(|| (candidates.len() == 1).then(|| &candidates[0]));
+    let Some(candidate) = candidate else {
+        return Action::ShowStatus("请选择要暗杠的牌");
+    };
+    Action::GameCommand {
+        name: "riichi.concealed_kan",
+        payload: Some(json!({"tile_ids": candidate})),
     }
 }
 
@@ -659,29 +814,28 @@ fn reaction_kind_for_command(name: &str) -> Option<ReactionKind> {
 }
 
 fn reaction_selection_allowed(view: &MatchView, expected: ReactionKind, selected: &[u16]) -> bool {
-    view.available_reactions.iter().any(|reaction| {
-        let candidate: &[u16] = match (expected, reaction) {
+    reaction_tile_candidates(view, expected)
+        .into_iter()
+        .any(|candidate| {
+            candidate.len() == selected.len()
+                && candidate.iter().all(|tile_id| selected.contains(tile_id))
+        })
+}
+
+fn reaction_tile_candidates(view: &MatchView, expected: ReactionKind) -> Vec<&[u16]> {
+    view.available_reactions
+        .iter()
+        .filter_map(|reaction| match (expected, reaction) {
             (ReactionKind::Chi, ReactionOptionView::Chi { tile_ids })
-            | (ReactionKind::Pon, ReactionOptionView::Pon { tile_ids }) => tile_ids,
-            (ReactionKind::OpenKan, ReactionOptionView::OpenKan { tile_ids }) => tile_ids,
-            _ => return false,
-        };
-        candidate.len() == selected.len()
-            && candidate.iter().all(|tile_id| selected.contains(tile_id))
-    })
-}
-
-fn same_tile_kind(left: &str, right: &str) -> bool {
-    normalize_red_five(left) == normalize_red_five(right)
-}
-
-fn normalize_red_five(code: &str) -> &str {
-    match code {
-        "0m" => "5m",
-        "0p" => "5p",
-        "0s" => "5s",
-        _ => code,
-    }
+            | (ReactionKind::Pon, ReactionOptionView::Pon { tile_ids }) => {
+                Some(tile_ids.as_slice())
+            }
+            (ReactionKind::OpenKan, ReactionOptionView::OpenKan { tile_ids }) => {
+                Some(tile_ids.as_slice())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn own_tiles(view: &MatchView) -> Option<&Vec<crate::model::TileView>> {
@@ -734,19 +888,40 @@ fn command_status(name: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_status, normalize_red_five, same_tile_kind};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    #[test]
-    fn red_fives_match_their_normal_tile_kind() {
-        assert!(same_tile_kind("0m", "5m"));
-        assert!(same_tile_kind("5p", "0p"));
-        assert!(!same_tile_kind("0s", "5p"));
-        assert_eq!(normalize_red_five("7z"), "7z");
-    }
+    use super::{CreateRoomForm, command_status, create_room_key};
 
     #[test]
     fn protocol_command_names_do_not_leak_into_game_copy() {
         assert_eq!(command_status("riichi.discard"), "已打牌");
         assert_eq!(command_status("riichi.concealed_kan"), "已杠牌");
+    }
+
+    #[test]
+    fn room_rule_shortcuts_do_not_consume_text_characters() {
+        let mut form = CreateRoomForm {
+            active_field: 0,
+            name: String::new(),
+            variant: "yonma".to_owned(),
+            initial_points: "25000".to_owned(),
+            noten_payment: "3000".to_owned(),
+            head_bump: false,
+            tobi: true,
+        };
+
+        create_room_key(
+            &mut form,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        );
+        assert_eq!(form.name, "v");
+        assert_eq!(form.variant, "yonma");
+
+        form.active_field = 3;
+        create_room_key(
+            &mut form,
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
+        );
+        assert_eq!(form.variant, "sanma");
     }
 }

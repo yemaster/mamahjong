@@ -1,8 +1,12 @@
 use reqwest::{Client, Method, Response};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use std::time::Duration;
 
-use crate::model::{ApiFailure, AuthResponse, MatchView, RoomList, RoomView, StartMatchResponse};
+use crate::model::{
+    ApiFailure, AuthResponse, MatchView, MatchmakingTicketView, RoomList, RoomView,
+    StartMatchResponse,
+};
 
 #[derive(Clone)]
 pub struct ApiClient {
@@ -14,7 +18,11 @@ pub struct ApiClient {
 impl ApiClient {
     pub fn new(base_url: String) -> Result<Self, ApiFailure> {
         let base_url = base_url.trim_end_matches('/').to_owned();
-        let client = Client::builder().build().map_err(transport_error)?;
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(transport_error)?;
         Ok(Self {
             base_url,
             client,
@@ -59,6 +67,42 @@ impl ApiClient {
 
     pub async fn rooms(&self) -> Result<RoomList, ApiFailure> {
         self.send(Method::GET, "/api/v1/rooms", None).await
+    }
+
+    pub async fn enter_matchmaking(
+        &self,
+        variant: &str,
+    ) -> Result<MatchmakingTicketView, ApiFailure> {
+        self.send(
+            Method::POST,
+            "/api/v1/matchmaking-tickets",
+            Some(json!({"rule_set_id": format!("riichi/{variant}")})),
+        )
+        .await
+    }
+
+    pub async fn matchmaking_ticket(
+        &self,
+        ticket_id: &str,
+    ) -> Result<MatchmakingTicketView, ApiFailure> {
+        self.send(
+            Method::GET,
+            &format!("/api/v1/matchmaking-tickets/{ticket_id}"),
+            None,
+        )
+        .await
+    }
+
+    pub async fn cancel_matchmaking(
+        &self,
+        ticket_id: &str,
+    ) -> Result<MatchmakingTicketView, ApiFailure> {
+        self.send(
+            Method::DELETE,
+            &format!("/api/v1/matchmaking-tickets/{ticket_id}"),
+            None,
+        )
+        .await
     }
 
     #[allow(clippy::too_many_arguments)]

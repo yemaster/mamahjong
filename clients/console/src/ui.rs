@@ -6,55 +6,227 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
 use crate::app::{App, AuthMode, CreateRoomForm, GameScreen, RoomBrowser, Screen};
 use crate::model::{
-    MatchPlayerView, MatchResultView, MatchView, ReactionOptionView, RoomView, TileView,
+    MatchPlayerView, MatchResultView, MatchView, MatchmakingTicketView, ReactionOptionView,
+    RoomView, TileView,
 };
 
 const FELT: Color = Color::Rgb(18, 82, 64);
 const IVORY: Color = Color::Rgb(245, 238, 214);
 const GOLD: Color = Color::Rgb(230, 184, 82);
+const INK: Color = Color::Rgb(10, 35, 31);
+const MUTED: Color = Color::Rgb(153, 166, 160);
+const MIN_WIDTH: u16 = 76;
+const MIN_HEIGHT: u16 = 22;
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
+    if frame.area().width < MIN_WIDTH || frame.area().height < MIN_HEIGHT {
+        render_too_small(frame, frame.area());
+        return;
+    }
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(1),
             Constraint::Min(8),
-            Constraint::Length(3),
+            Constraint::Length(2),
         ])
         .split(frame.area());
-    frame.render_widget(
-        Paragraph::new(" MAMAHJONG · 在线日麻 ")
-            .alignment(Alignment::Center)
-            .style(
-                Style::default()
-                    .fg(GOLD)
-                    .bg(Color::Rgb(10, 35, 31))
-                    .add_modifier(Modifier::BOLD),
-            )
-            .block(Block::default().borders(Borders::ALL)),
-        chunks[0],
-    );
+    render_header(frame, chunks[0], app);
     match &app.screen {
         Screen::Auth(form) => render_auth(frame, chunks[1], form),
         Screen::Rooms(browser) => render_rooms(frame, chunks[1], browser),
         Screen::CreateRoom(form) => render_create(frame, chunks[1], form),
+        Screen::Matchmaking(ticket) => render_matchmaking(frame, chunks[1], ticket),
         Screen::Room(room) => render_room(frame, chunks[1], room, app),
         Screen::Game(game) => render_game(frame, chunks[1], game),
     }
+    render_footer(frame, chunks[2], app);
+}
+
+fn render_header(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .split(area);
+    let screen = match &app.screen {
+        Screen::Auth(_) => "登录",
+        Screen::Rooms(_) => "大厅",
+        Screen::CreateRoom(_) => "创建房间",
+        Screen::Matchmaking(_) => "段位匹配",
+        Screen::Room(room) => room.name.as_str(),
+        Screen::Game(_) => "对局",
+    };
     frame.render_widget(
-        Paragraph::new(app.status.as_str())
-            .style(Style::default().fg(Color::White).bg(Color::DarkGray))
-            .block(Block::default().borders(Borders::ALL).title("状态")),
-        chunks[2],
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                " 麻将 ",
+                Style::default()
+                    .fg(INK)
+                    .bg(GOLD)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("  {screen}"), Style::default().fg(IVORY).bg(INK)),
+        ]))
+        .style(Style::default().bg(INK)),
+        columns[0],
+    );
+    let user = app
+        .user
+        .as_ref()
+        .map_or("", |user| user.profile.nickname.as_str());
+    frame.render_widget(
+        Paragraph::new(format!("{user} "))
+            .alignment(Alignment::Right)
+            .style(Style::default().fg(MUTED).bg(INK)),
+        columns[1],
+    );
+}
+
+fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let help = help_text(app);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                format!(" {}", app.status),
+                Style::default().fg(Color::White),
+            )),
+            Line::from(Span::styled(
+                format!(" {help}"),
+                Style::default().fg(Color::Black).bg(GOLD),
+            )),
+        ])
+        .style(Style::default().bg(Color::Rgb(32, 39, 37))),
+        area,
+    );
+}
+
+fn help_text(app: &App) -> String {
+    match &app.screen {
+        Screen::Auth(form) => format!(
+            "Tab 切换  Enter {}  F2 {}  Esc 退出",
+            if form.mode == AuthMode::Login {
+                "登录"
+            } else {
+                "注册"
+            },
+            if form.mode == AuthMode::Login {
+                "注册"
+            } else {
+                "登录"
+            }
+        ),
+        Screen::Rooms(_) => {
+            "↑↓ 选择  Enter 加入  4 四麻匹配  3 三麻匹配  n 建房  r 刷新  q 退出".to_owned()
+        }
+        Screen::CreateRoom(_) => "Tab 切换  ←→ / Space 修改  Enter 创建  Esc 返回".to_owned(),
+        Screen::Matchmaking(_) => "Esc 取消匹配".to_owned(),
+        Screen::Room(room) => {
+            let ready = current_user_ready(room, app);
+            format!(
+                "Space {}  s 开始  r 刷新  Esc 离开",
+                if ready { "取消准备" } else { "准备" }
+            )
+        }
+        Screen::Game(game) if game.view.result.is_some() => "Esc 返回房间  q 退出".to_owned(),
+        Screen::Game(game) => game_help(&game.view),
+    }
+}
+
+fn game_help(view: &MatchView) -> String {
+    if !view.available_reactions.is_empty() {
+        let mut actions = Vec::new();
+        if has_reaction(view, "ron") {
+            actions.push("h 荣和");
+        }
+        if has_reaction(view, "pon") {
+            actions.push("p 碰");
+        }
+        if has_reaction(view, "open_kan") {
+            actions.push("k 杠");
+        }
+        if has_reaction(view, "chi") {
+            actions.push("c 吃");
+        }
+        actions.push("s 过");
+        if view
+            .available_reactions
+            .iter()
+            .filter(|reaction| !matches!(reaction, ReactionOptionView::Ron))
+            .count()
+            > 1
+        {
+            actions.insert(0, "Space 选牌");
+        }
+        return actions.join("  ");
+    }
+    let own_turn = matches!(
+        view.phase,
+        crate::model::MatchPhase::AwaitingTurnAction { seat }
+            | crate::model::MatchPhase::AwaitingDiscard { seat }
+            if seat == view.observer_seat
+    );
+    if own_turn {
+        let mut actions = vec!["←→ 选牌", "Enter 打牌"];
+        if !view.turn_actions.riichi_discard_tile_ids.is_empty() {
+            actions.push("r 立直");
+        }
+        if view.turn_actions.can_tsumo {
+            actions.push("t 自摸");
+        }
+        if !view.turn_actions.concealed_kan_tile_ids.is_empty() {
+            actions.push("k 暗杠");
+        }
+        if !view.turn_actions.added_kan_options.is_empty() {
+            actions.push("a 加杠");
+        }
+        if view.turn_actions.can_nine_terminals {
+            actions.push("9 九种九牌");
+        }
+        actions.join("  ")
+    } else {
+        "等待其他玩家  x 同步  q 退出".to_owned()
+    }
+}
+
+fn has_reaction(view: &MatchView, kind: &str) -> bool {
+    view.available_reactions.iter().any(|reaction| {
+        matches!(
+            (kind, reaction),
+            ("ron", ReactionOptionView::Ron)
+                | ("chi", ReactionOptionView::Chi { .. })
+                | ("pon", ReactionOptionView::Pon { .. })
+                | ("open_kan", ReactionOptionView::OpenKan { .. })
+        )
+    })
+}
+
+fn render_too_small(frame: &mut Frame<'_>, area: Rect) {
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from("终端窗口过小"),
+            Line::from(""),
+            Line::from(format!(
+                "至少需要 {MIN_WIDTH}×{MIN_HEIGHT}，当前 {}×{}",
+                area.width, area.height
+            )),
+        ])
+        .alignment(Alignment::Center)
+        .style(Style::default().fg(IVORY).bg(INK))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(GOLD)),
+        ),
+        centered(area, area.width.min(48), area.height.min(7)),
     );
 }
 
 fn render_auth(frame: &mut Frame<'_>, area: Rect, form: &crate::app::AuthForm) {
-    let width = area.width.min(62);
+    let width = area.width.min(52);
     let height = if form.mode == AuthMode::Register {
-        15
-    } else {
         12
+    } else {
+        9
     };
     let dialog = centered(area, width, height);
     frame.render_widget(Clear, dialog);
@@ -80,32 +252,35 @@ fn render_auth(frame: &mut Frame<'_>, area: Rect, form: &crate::app::AuthForm) {
             form.active_field == 2,
         )));
     }
-    lines.push(Line::from(""));
-    lines.push(Line::from("Enter 提交  ·  Tab 下一项  ·  F2 登录/注册"));
     frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title(title)),
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(GOLD))
+                .title(format!(" {title} ")),
+        ),
         dialog,
     );
 }
 
 fn render_rooms(frame: &mut Frame<'_>, area: Rect, browser: &RoomBrowser) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(68), Constraint::Percentage(32)])
+        .split(area);
     let items = if browser.rooms.is_empty() {
-        vec![ListItem::new("暂无公开房间，按 n 创建")]
+        vec![ListItem::new(Line::from(vec![Span::styled(
+            "  暂无公开房间",
+            Style::default().fg(MUTED),
+        )]))]
     } else {
         browser
             .rooms
             .iter()
             .enumerate()
             .map(|(index, room)| {
-                let marker = if index == browser.selected {
-                    "▶"
-                } else {
-                    " "
-                };
                 ListItem::new(format!(
-                    "{marker} {}  [{}/{}]  {} · {}",
+                    "  {}  {}/{}  {}  {}",
                     room.name,
                     room.members.len(),
                     seat_count(room),
@@ -124,14 +299,70 @@ fn render_rooms(frame: &mut Frame<'_>, area: Rect, browser: &RoomBrowser) {
         List::new(items).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("房间大厅 · ↑↓ 选择 / Enter 加入 / n 新建 / r 刷新 / q 退出"),
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(format!(" 公开房间 ({}) ", browser.rooms.len())),
         ),
-        area,
+        columns[0],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "4  四人东南战",
+                Style::default().fg(INK).bg(GOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "3  三人东南战",
+                Style::default().fg(INK).bg(GOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled("n  创建房间", Style::default().fg(IVORY))),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(" 快速开始 "),
+        ),
+        columns[1],
+    );
+}
+
+fn render_matchmaking(frame: &mut Frame<'_>, area: Rect, ticket: &MatchmakingTicketView) {
+    let dialog = centered(area, area.width.min(46), 8);
+    frame.render_widget(Clear, dialog);
+    let variant = if ticket.rule_set_id == "riichi/yonma" {
+        "四人东南战"
+    } else {
+        "三人东南战"
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                variant,
+                Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(match ticket.status.as_str() {
+                "waiting" => "匹配中",
+                "matched" => "已匹配",
+                "cancelled" => "已取消",
+                _ => "匹配状态已更新",
+            }),
+        ])
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(GOLD))
+                .title(" 段位匹配 "),
+        ),
+        dialog,
     );
 }
 
 fn render_create(frame: &mut Frame<'_>, area: Rect, form: &CreateRoomForm) {
-    let dialog = centered(area, area.width.min(72), 17);
+    let dialog = centered(area, area.width.min(62), 15);
     frame.render_widget(Clear, dialog);
     let lines = vec![
         Line::from(field_line("房间名", &form.name, form.active_field == 0)),
@@ -148,30 +379,65 @@ fn render_create(frame: &mut Frame<'_>, area: Rect, form: &CreateRoomForm) {
             form.active_field == 2,
         )),
         Line::from(""),
-        Line::from(format!(
-            "F3 人数：[{}]    F4 荣和：[{}]    F5 击飞：[{}]",
-            if form.variant == "yonma" {
-                "四麻"
-            } else {
-                "三麻"
-            },
-            if form.head_bump {
-                "头跳"
-            } else {
-                "多家和"
-            },
-            if form.tobi { "有" } else { "无" }
-        )),
-        Line::from(""),
-        Line::from("Enter 创建 · Tab 切换输入 · Esc 返回"),
+        create_option_line(form),
     ];
     frame.render_widget(
-        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("创建房间")),
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(GOLD))
+                .title(" 创建房间 "),
+        ),
         dialog,
     );
 }
 
-fn render_room(frame: &mut Frame<'_>, area: Rect, room: &RoomView, app: &App) {
+fn create_option_line(form: &CreateRoomForm) -> Line<'static> {
+    let option = |label: String, active: bool| {
+        Span::styled(
+            label,
+            if active {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(GOLD)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            },
+        )
+    };
+    Line::from(vec![
+        Span::raw("人数  "),
+        option(
+            if form.variant == "yonma" {
+                "[四麻]".to_owned()
+            } else {
+                "[三麻]".to_owned()
+            },
+            form.active_field == 3,
+        ),
+        Span::raw("    荣和  "),
+        option(
+            if form.head_bump {
+                "[头跳]".to_owned()
+            } else {
+                "[多家和]".to_owned()
+            },
+            form.active_field == 4,
+        ),
+        Span::raw("    击飞  "),
+        option(
+            if form.tobi {
+                "[有]".to_owned()
+            } else {
+                "[无]".to_owned()
+            },
+            form.active_field == 5,
+        ),
+    ])
+}
+
+fn render_room(frame: &mut Frame<'_>, area: Rect, room: &RoomView, _app: &App) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
@@ -186,13 +452,13 @@ fn render_room(frame: &mut Frame<'_>, area: Rect, room: &RoomView, app: &App) {
                 ""
             };
             ListItem::new(format!(
-                "{}位  {}  {}{}",
-                member.seat + 1,
+                " {}家  {:<12} {}{}",
+                wind_for_seat(member.seat),
                 member.nickname,
                 if member.ready {
-                    "✓ 已准备"
+                    "已准备"
                 } else {
-                    "○ 等待"
+                    "等待中"
                 },
                 owner
             ))
@@ -202,53 +468,58 @@ fn render_room(frame: &mut Frame<'_>, area: Rect, room: &RoomView, app: &App) {
         List::new(members).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!("{} · 成员", room.name)),
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(format!(
+                    " 成员 {}/{} ",
+                    room.members.len(),
+                    seat_count(room)
+                )),
         ),
         columns[0],
     );
     let config = &room.rule_snapshot["config"];
-    let me = app.user.as_ref().map(|user| user.id.as_str());
-    let ready = room
-        .members
-        .iter()
-        .find(|member| Some(member.user_id.as_str()) == me)
-        .is_some_and(|member| member.ready);
     let lines = vec![
-        Line::from(format!("玩法：{}", variant_label(room))),
+        Line::from(format!("{}东南战", variant_label(room))),
+        Line::from(""),
         Line::from(format!(
-            "初始点数：{}",
+            "持有点  {}",
             config["match_rules"]["initial_points"]
         )),
         Line::from(format!(
-            "流局罚点：{}",
+            "流局罚点 {}",
             config["settlement"]["noten_payment"]
         )),
         Line::from(format!(
-            "荣和：{}",
+            "荣和方式 {}",
             if config["settlement"]["ron_resolution"] == "head_bump" {
                 "头跳"
             } else {
                 "多家和"
             }
         )),
-        Line::from(""),
-        Line::from(if ready {
-            "Space 取消准备"
-        } else {
-            "Space 准备"
-        }),
-        Line::from("s 开始（房主） · l 离开 · r 刷新"),
+        Line::from(format!(
+            "击飞     {}",
+            if config["match_rules"]["tobi"] == true {
+                "有"
+            } else {
+                "无"
+            }
+        )),
     ];
     frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title("规则")),
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray))
+                .title(" 规则 "),
+        ),
         columns[1],
     );
 }
 
 fn render_game(frame: &mut Frame<'_>, area: Rect, game: &GameScreen) {
     let view = &game.view;
+    frame.render_widget(Block::default().style(Style::default().bg(FELT)), area);
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -301,18 +572,19 @@ fn render_player(
     marked: &[u16],
     dealer: u8,
 ) {
+    let mut state = String::new();
+    if player.seat == dealer {
+        state.push_str(" · 亲");
+    }
+    if player.riichi_status == "established" {
+        state.push_str(" · 立直");
+    }
     let title = format!(
         "{}家 · {} · {}点{}",
         wind_for_seat(player.seat),
         player.nickname,
         player.points,
-        if player.riichi_status == "established" {
-            " · 立直"
-        } else if player.seat == dealer {
-            " · 亲"
-        } else {
-            ""
-        }
+        state
     );
     let mut lines = Vec::new();
     let discards = player
@@ -320,13 +592,13 @@ fn render_player(
         .iter()
         .map(|discard| {
             if discard.riichi_declared {
-                format!("{}*", discard.tile.code)
+                format!("{}↔", tile_label(&discard.tile.code))
             } else if discard.claimed_by.is_some() {
-                format!("({})", discard.tile.code)
+                format!("({})", tile_label(&discard.tile.code))
             } else if discard.tsumogiri {
-                format!("{}˙", discard.tile.code)
+                format!("{}·", tile_label(&discard.tile.code))
             } else {
-                discard.tile.code.clone()
+                tile_label(&discard.tile.code)
             }
         })
         .collect::<Vec<_>>()
@@ -343,7 +615,7 @@ fn render_player(
                     meld_label(&meld.kind),
                     meld.tiles
                         .iter()
-                        .map(|tile| tile.code.as_str())
+                        .map(|tile| tile_label(&tile.code))
                         .collect::<Vec<_>>()
                         .join(" ")
                 ))
@@ -383,7 +655,7 @@ fn render_center(frame: &mut Frame<'_>, area: Rect, view: &MatchView) {
     let dora = view
         .dora_indicators
         .iter()
-        .map(|tile| tile.code.as_str())
+        .map(|tile| tile_label(&tile.code))
         .collect::<Vec<_>>()
         .join(" ");
     let phase = match view.phase {
@@ -404,112 +676,60 @@ fn render_center(frame: &mut Frame<'_>, area: Rect, view: &MatchView) {
             format!("本局结束 · {}", end_reason_label(reason))
         }
     };
-    let (primary_controls, secondary_controls) = game_controls(view);
     let lines = vec![
-        Line::from(format!(
-            "{}{}局  {}本场",
-            wind_label(&view.progress.round_wind),
-            view.progress.round_number,
-            view.progress.honba
+        Line::from(Span::styled(
+            format!(
+                "{}{}局  {}本场",
+                wind_label(&view.progress.round_wind),
+                view.progress.round_number,
+                view.progress.honba
+            ),
+            Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
         )),
         Line::from(format!(
-            "供托 {} · 余 {} 张 · 事件 #{}",
-            view.progress.riichi_sticks, view.remaining_live_draws, view.event_sequence
+            "供托 {}　余牌 {}",
+            view.progress.riichi_sticks, view.remaining_live_draws
         )),
-        Line::from(format!("宝牌指示：{dora}")),
+        Line::from(format!("宝牌指示 {dora}")),
         Line::from(""),
         Line::from(phase),
-        Line::from(""),
-        Line::from(primary_controls),
-        Line::from(secondary_controls),
     ];
     frame.render_widget(
         Paragraph::new(lines)
             .alignment(Alignment::Center)
             .style(Style::default().fg(IVORY).bg(Color::Rgb(8, 55, 43)))
             .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title("桌心")),
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(GOLD)),
+            ),
         area,
     );
-}
-
-fn game_controls(view: &MatchView) -> (String, String) {
-    if !view.available_reactions.is_empty() {
-        let mut actions = Vec::new();
-        if view
-            .available_reactions
-            .iter()
-            .any(|reaction| matches!(reaction, ReactionOptionView::Ron))
-        {
-            actions.push("h 荣和");
-        }
-        if view
-            .available_reactions
-            .iter()
-            .any(|reaction| matches!(reaction, ReactionOptionView::Pon { .. }))
-        {
-            actions.push("o 碰");
-        }
-        if view
-            .available_reactions
-            .iter()
-            .any(|reaction| matches!(reaction, ReactionOptionView::OpenKan { .. }))
-        {
-            actions.push("k 杠");
-        }
-        if view
-            .available_reactions
-            .iter()
-            .any(|reaction| matches!(reaction, ReactionOptionView::Chi { .. }))
-        {
-            actions.push("c 吃");
-        }
-        actions.push("p 过");
-        return (
-            format!("可操作：{}", actions.join(" · ")),
-            "Space 标记副露用牌".to_owned(),
-        );
-    }
-    let own_turn = matches!(
-        view.phase,
-        crate::model::MatchPhase::AwaitingTurnAction { seat }
-            | crate::model::MatchPhase::AwaitingDiscard { seat }
-            if seat == view.observer_seat
-    );
-    if own_turn {
-        (
-            "←→ 选牌 · d 打牌 · r 立直 · t 自摸".to_owned(),
-            "Space 标记 · k 暗杠 · a 加杠 · 9 九种九牌".to_owned(),
-        )
-    } else {
-        (String::new(), String::new())
-    }
 }
 
 fn render_result(frame: &mut Frame<'_>, area: Rect, result: &MatchResultView) {
     let dialog = centered(area, area.width.min(56), 10);
     frame.render_widget(Clear, dialog);
-    let mut lines = vec![Line::from(format!(
-        "结束原因：{}",
-        match_end_reason_label(&result.end_reason)
+    let mut lines = vec![Line::from(Span::styled(
+        match_end_reason_label(&result.end_reason),
+        Style::default().fg(GOLD).add_modifier(Modifier::BOLD),
     ))];
     for placement in &result.placements {
         lines.push(Line::from(format!(
-            "{}位  {}家  {}点  成绩 {:+.1}",
+            "{}位　{}家　{}点　{:+.1}",
             placement.rank,
             wind_for_seat(placement.seat),
             placement.points,
             f64::from(placement.score_tenths) / 10.0
         )));
     }
-    lines.push(Line::from(""));
-    lines.push(Line::from("q 退出客户端"));
     frame.render_widget(
         Paragraph::new(lines).alignment(Alignment::Center).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(GOLD))
-                .title("整场结果"),
+                .title(" 对局结果 "),
         ),
         dialog,
     );
@@ -525,7 +745,7 @@ fn tile_line(
     for (index, tile) in tiles.iter().enumerate() {
         let mut style = Style::default().fg(Color::Black).bg(IVORY);
         if tile.code.starts_with('0') {
-            style = style.fg(Color::Red);
+            style = style.fg(Color::Red).add_modifier(Modifier::BOLD);
         }
         if index == selected {
             style = style.bg(GOLD).add_modifier(Modifier::BOLD);
@@ -535,18 +755,29 @@ fn tile_line(
                 .bg(Color::Blue)
                 .add_modifier(Modifier::BOLD);
         }
-        let marker = if Some(tile.id) == drawn { "˙" } else { " " };
-        spans.push(Span::styled(format!(" {}{marker} ", tile.code), style));
+        let marker = if marked.contains(&tile.id) {
+            "●"
+        } else if index == selected {
+            "▴"
+        } else if Some(tile.id) == drawn {
+            "·"
+        } else {
+            " "
+        };
+        spans.push(Span::styled(
+            format!("{}{marker}", tile_label(&tile.code)),
+            style,
+        ));
         spans.push(Span::raw(" "));
     }
     Line::from(spans)
 }
 
-fn field_line<'a>(label: &'a str, value: &'a str, active: bool) -> Vec<Span<'a>> {
+fn field_line(label: &str, value: &str, active: bool) -> Vec<Span<'static>> {
     vec![
-        Span::styled(format!("{label:>8}："), Style::default().fg(Color::Gray)),
+        Span::styled(format!("  {label}  "), Style::default().fg(MUTED)),
         Span::styled(
-            if value.is_empty() { " " } else { value },
+            format!("{value:<32}"),
             if active {
                 Style::default()
                     .fg(Color::Black)
@@ -557,6 +788,29 @@ fn field_line<'a>(label: &'a str, value: &'a str, active: bool) -> Vec<Span<'a>>
             },
         ),
     ]
+}
+
+fn tile_label(code: &str) -> String {
+    let Some(suit) = code.chars().nth(1) else {
+        return code.to_owned();
+    };
+    let number = code.chars().next().unwrap_or('?');
+    match (number, suit) {
+        ('0', 'm') => "5萬".to_owned(),
+        ('0', 'p') => "5筒".to_owned(),
+        ('0', 's') => "5索".to_owned(),
+        (number @ '1'..='9', 'm') => format!("{number}萬"),
+        (number @ '1'..='9', 'p') => format!("{number}筒"),
+        (number @ '1'..='9', 's') => format!("{number}索"),
+        ('1', 'z') => "東".to_owned(),
+        ('2', 'z') => "南".to_owned(),
+        ('3', 'z') => "西".to_owned(),
+        ('4', 'z') => "北".to_owned(),
+        ('5', 'z') => "白".to_owned(),
+        ('6', 'z') => "發".to_owned(),
+        ('7', 'z') => "中".to_owned(),
+        _ => code.to_owned(),
+    }
 }
 
 fn relative_seats(view: &MatchView) -> [u8; 4] {
@@ -587,6 +841,16 @@ fn variant_label(room: &RoomView) -> &'static str {
     } else {
         "四麻"
     }
+}
+
+fn current_user_ready(room: &RoomView, app: &App) -> bool {
+    let Some(user) = &app.user else {
+        return false;
+    };
+    room.members
+        .iter()
+        .find(|member| member.user_id == user.id)
+        .is_some_and(|member| member.ready)
 }
 
 fn lifecycle_label(lifecycle: &str) -> &'static str {
@@ -665,4 +929,140 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
             Constraint::Min(0),
         ])
         .split(vertical[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::{MIN_HEIGHT, MIN_WIDTH, render, tile_label};
+    use crate::app::{App, GameScreen, Screen};
+    use crate::model::MatchView;
+
+    #[test]
+    fn tile_codes_are_rendered_as_mahjong_faces() {
+        assert_eq!(tile_label("1m"), "1萬");
+        assert_eq!(tile_label("0p"), "5筒");
+        assert_eq!(tile_label("6z"), "發");
+        assert_eq!(tile_label("invalid"), "invalid");
+    }
+
+    #[test]
+    fn auth_screen_keeps_controls_in_the_footer() {
+        let app = App::new("http://127.0.0.1:8080".to_owned()).expect("app");
+        let backend = TestBackend::new(90, 28);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| render(frame, &app)).expect("draw");
+
+        let screen = screen_text(terminal.backend().buffer());
+        assert!(screen.contains("麻将"));
+        assert!(screen.contains("登录名"));
+        assert!(screen.contains("Tab切换"));
+    }
+
+    #[test]
+    fn small_terminal_has_a_single_clear_message() {
+        let app = App::new("http://127.0.0.1:8080".to_owned()).expect("app");
+        let backend = TestBackend::new(MIN_WIDTH - 1, MIN_HEIGHT - 1);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| render(frame, &app)).expect("draw");
+
+        assert!(screen_text(terminal.backend().buffer()).contains("终端窗口过小"));
+    }
+
+    #[test]
+    fn game_screen_uses_localized_tiles_and_only_legal_actions() {
+        let mut app = App::new("http://127.0.0.1:8080".to_owned()).expect("app");
+        let view = serde_json::from_value::<MatchView>(serde_json::json!({
+            "id": "match-1",
+            "room_id": "room-1",
+            "version": 1,
+            "hand_index": 0,
+            "observer_seat": 0,
+            "progress": {
+                "round_wind": "east",
+                "round_number": 1,
+                "dealer": 0,
+                "honba": 0,
+                "riichi_sticks": 0
+            },
+            "phase": {"kind": "awaiting_turn_action", "seat": 0},
+            "remaining_live_draws": 69,
+            "dora_indicators": [{"id": 90, "code": "1z"}],
+            "players": [
+                {
+                    "seat": 0,
+                    "nickname": "自家",
+                    "points": 25000,
+                    "concealed_tiles": [
+                        {"id": 1, "code": "1m"},
+                        {"id": 2, "code": "0p"}
+                    ],
+                    "concealed_tile_count": 2,
+                    "drawn_tile_id": 2,
+                    "melds": [],
+                    "discards": [],
+                    "riichi_status": "none"
+                },
+                {
+                    "seat": 1,
+                    "nickname": "下家",
+                    "points": 25000,
+                    "concealed_tiles": null,
+                    "concealed_tile_count": 13,
+                    "drawn_tile_id": null,
+                    "melds": [],
+                    "discards": [],
+                    "riichi_status": "none"
+                },
+                {
+                    "seat": 2,
+                    "nickname": "对家",
+                    "points": 25000,
+                    "concealed_tiles": null,
+                    "concealed_tile_count": 13,
+                    "drawn_tile_id": null,
+                    "melds": [],
+                    "discards": [],
+                    "riichi_status": "none"
+                }
+            ],
+            "available_reactions": [],
+            "turn_actions": {
+                "can_tsumo": true,
+                "riichi_discard_tile_ids": [],
+                "concealed_kan_tile_ids": [],
+                "added_kan_options": [],
+                "can_nine_terminals": false
+            },
+            "result": null
+        }))
+        .expect("match view");
+        app.screen = Screen::Game(GameScreen {
+            view,
+            selected_tile: 0,
+            marked_tile_ids: Vec::new(),
+        });
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| render(frame, &app)).expect("draw");
+
+        let screen = screen_text(terminal.backend().buffer());
+        assert!(screen.contains("1萬"));
+        assert!(screen.contains("5筒"));
+        assert!(screen.contains("東"));
+        assert!(screen.contains("t自摸"));
+        assert!(!screen.contains("9九种九牌"));
+    }
+
+    fn screen_text(buffer: &ratatui::buffer::Buffer) -> String {
+        buffer
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .filter(|symbol| !symbol.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("")
+    }
 }

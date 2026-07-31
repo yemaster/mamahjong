@@ -21,7 +21,8 @@
       "old_yaku": false,
       "yakuman_value": "stacked_only",
       "nagashi_mangan": false,
-      "kazoe_yakuman": false
+      "kazoe_yakuman": false,
+      "kokushi_ankan_chankan": false
     },
     "bonuses": {
       "red_fives": {

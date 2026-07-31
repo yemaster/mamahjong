@@ -1,8 +1,8 @@
-use mahjong_core::{MatchId, UserId};
+use mahjong_core::{MatchId, RoomId, UserId};
 use mahjong_riichi::{
     Discard, HandEvent, HandOutcome, HandPhase, HandSettlement, MatchResult, Meld, MeldId,
-    Reaction, RiichiHand, RiichiMatch, RiichiScorer, RiichiStatus, ScoredWinner, Seat,
-    TableProgress, Tile, TileId, WallSeed, WinEvaluation,
+    MeldKind, Reaction, RiichiHand, RiichiMatch, RiichiScorer, RiichiStatus, ScoredWinner, Seat,
+    TableProgress, Tile, TileId, TileKind, WallSeed, WinEvaluation,
 };
 
 use crate::{ApplicationError, ErrorCode, GameRuleSnapshot, Room, RoomLifecycle};
@@ -130,9 +130,64 @@ impl ObserverPlayer {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AddedKanOption {
+    meld_id: u8,
+    tile_id: u16,
+}
+
+impl AddedKanOption {
+    #[must_use]
+    pub const fn meld_id(self) -> u8 {
+        self.meld_id
+    }
+
+    #[must_use]
+    pub const fn tile_id(self) -> u16 {
+        self.tile_id
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TurnActions {
+    can_tsumo: bool,
+    riichi_discard_tile_ids: Box<[u16]>,
+    concealed_kan_tile_ids: Box<[[u16; 4]]>,
+    added_kan_options: Box<[AddedKanOption]>,
+    can_nine_terminals: bool,
+}
+
+impl TurnActions {
+    #[must_use]
+    pub const fn can_tsumo(&self) -> bool {
+        self.can_tsumo
+    }
+
+    #[must_use]
+    pub fn riichi_discard_tile_ids(&self) -> &[u16] {
+        &self.riichi_discard_tile_ids
+    }
+
+    #[must_use]
+    pub fn concealed_kan_tile_ids(&self) -> &[[u16; 4]] {
+        &self.concealed_kan_tile_ids
+    }
+
+    #[must_use]
+    pub fn added_kan_options(&self) -> &[AddedKanOption] {
+        &self.added_kan_options
+    }
+
+    #[must_use]
+    pub const fn can_nine_terminals(&self) -> bool {
+        self.can_nine_terminals
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObserverMatch {
     id: MatchId,
+    room_id: RoomId,
     observer_seat: Seat,
     version: u64,
     event_sequence: u64,
@@ -143,6 +198,7 @@ pub struct ObserverMatch {
     dora_indicators: Box<[Tile]>,
     players: Box<[ObserverPlayer]>,
     available_reactions: Box<[Reaction]>,
+    turn_actions: TurnActions,
     result: Option<MatchResult>,
 }
 
@@ -150,6 +206,11 @@ impl ObserverMatch {
     #[must_use]
     pub const fn id(&self) -> &MatchId {
         &self.id
+    }
+
+    #[must_use]
+    pub const fn room_id(&self) -> &RoomId {
+        &self.room_id
     }
 
     #[must_use]
@@ -203,6 +264,11 @@ impl ObserverMatch {
     }
 
     #[must_use]
+    pub const fn turn_actions(&self) -> &TurnActions {
+        &self.turn_actions
+    }
+
+    #[must_use]
     pub const fn result(&self) -> Option<&MatchResult> {
         self.result.as_ref()
     }
@@ -211,6 +277,7 @@ impl ObserverMatch {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GameRuntime {
     pub(crate) id: MatchId,
+    pub(crate) room_id: RoomId,
     pub(crate) version: u64,
     pub(crate) event_sequence: u64,
     hand_index: u32,
@@ -254,6 +321,7 @@ impl GameRuntime {
         let seat_count = usize::from(snapshot.rules().variant.seat_count().value());
         let mut runtime = Self {
             id,
+            room_id: room.id().clone(),
             version: 1,
             event_sequence: 0,
             hand_index: 0,
@@ -299,6 +367,7 @@ impl GameRuntime {
             .into_boxed_slice();
         Ok(ObserverMatch {
             id: self.id.clone(),
+            room_id: self.room_id.clone(),
             observer_seat: actor_seat,
             version: self.version,
             event_sequence: self.event_sequence,
@@ -317,7 +386,77 @@ impl GameRuntime {
                 .available_reactions(actor_seat, &RiichiScorer)
                 .map_err(|error| internal_error(error.to_string()))?
                 .into_boxed_slice(),
+            turn_actions: self.available_turn_actions(actor_seat)?,
             result: self.game.result().cloned(),
+        })
+    }
+
+    fn available_turn_actions(&self, actor: Seat) -> Result<TurnActions, ApplicationError> {
+        if !matches!(self.hand.phase(), HandPhase::AwaitingTurnAction { seat } if seat == actor) {
+            return Ok(TurnActions::default());
+        }
+        let player = self
+            .hand
+            .player(actor)
+            .map_err(|error| internal_error(error.to_string()))?;
+
+        let riichi_discard_tile_ids = player
+            .concealed()
+            .iter()
+            .filter_map(|tile| {
+                let mut hand = self.hand.clone();
+                hand.declare_riichi_and_discard(actor, tile.id(), &RiichiScorer)
+                    .is_ok()
+                    .then_some(tile.id().value())
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+
+        let mut tiles_by_kind = vec![Vec::new(); TileKind::COUNT];
+        for tile in player.concealed() {
+            tiles_by_kind[tile.kind().index()].push(tile.id());
+        }
+        let concealed_kan_tile_ids = tiles_by_kind
+            .into_iter()
+            .filter(|tiles| tiles.len() == 4)
+            .filter_map(|tiles| {
+                let tile_ids: [TileId; 4] = tiles.try_into().ok()?;
+                let mut hand = self.hand.clone();
+                hand.declare_concealed_kan(actor, tile_ids, &RiichiScorer)
+                    .is_ok()
+                    .then_some(tile_ids.map(TileId::value))
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+
+        let mut added_kan_options = Vec::new();
+        for meld in player
+            .melds()
+            .iter()
+            .filter(|meld| matches!(meld.kind(), MeldKind::Pon))
+        {
+            for tile in player
+                .concealed()
+                .iter()
+                .filter(|tile| tile.kind() == meld.tile_kind())
+            {
+                let mut hand = self.hand.clone();
+                if hand.declare_added_kan(actor, meld.id(), tile.id()).is_ok() {
+                    added_kan_options.push(AddedKanOption {
+                        meld_id: meld.id().value(),
+                        tile_id: tile.id().value(),
+                    });
+                }
+            }
+        }
+
+        let mut nine_terminals_hand = self.hand.clone();
+        Ok(TurnActions {
+            can_tsumo: self.hand.evaluate_tsumo(actor).is_ok(),
+            riichi_discard_tile_ids,
+            concealed_kan_tile_ids,
+            added_kan_options: added_kan_options.into_boxed_slice(),
+            can_nine_terminals: nine_terminals_hand.declare_nine_terminals(actor).is_ok(),
         })
     }
 

@@ -60,6 +60,7 @@ pub struct ScoringRuleOverrides {
     pub yakuman_value: Option<YakumanValue>,
     pub nagashi_mangan: Option<bool>,
     pub kazoe_yakuman: Option<bool>,
+    pub kokushi_ankan_chankan: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -207,6 +208,10 @@ fn apply_scoring_overrides(scoring: &mut ScoringRules, overrides: ScoringRuleOve
     apply_if_some(&mut scoring.yakuman_value, overrides.yakuman_value);
     apply_if_some(&mut scoring.nagashi_mangan, overrides.nagashi_mangan);
     apply_if_some(&mut scoring.kazoe_yakuman, overrides.kazoe_yakuman);
+    apply_if_some(
+        &mut scoring.kokushi_ankan_chankan,
+        overrides.kokushi_ankan_chankan,
+    );
 }
 
 fn apply_if_some<T>(target: &mut T, value: Option<T>) {

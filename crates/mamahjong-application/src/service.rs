@@ -1,16 +1,20 @@
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use mahjong_core::{MatchId, RoomId, UserId};
-use mahjong_riichi::{RiichiVariant, RoomRuleRequest};
+use mahjong_core::{MatchId, RoomId, TicketId, UserId};
+use mahjong_riichi::{RiichiRuleSnapshot, RiichiRules, RiichiVariant, RoomRuleRequest};
 
 use crate::game::GameRuntime;
 use crate::store::MemoryStore;
 use crate::{
-    AccountStatus, ApplicationError, ErrorCode, GameRuleSnapshot, Nickname, ObserverMatch, Room,
-    RoomVisibility, Session, SubmitGameCommand, User,
+    AccountStatus, ApplicationError, ErrorCode, GameRuleSnapshot, MatchmakingStatus,
+    MatchmakingTicket, Nickname, ObserverMatch, Room, RoomVisibility, Session, SubmitGameCommand,
+    User,
 };
+
+const MAX_PASSWORD_BYTES: usize = 128;
+static DUMMY_PASSWORD_HASH: OnceLock<Result<String, ApplicationError>> = OnceLock::new();
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisterUser {
@@ -89,25 +93,23 @@ impl Application {
         password: &str,
     ) -> Result<(User, Session), ApplicationError> {
         let login_name = canonical_login_name(login_name)?;
-        let (user_id, password_hash, user) = {
+        if password.len() > MAX_PASSWORD_BYTES {
+            return Err(invalid_credentials());
+        }
+        let credentials = {
             let store = self.read_store()?;
-            let user_id = store
-                .login_index
-                .get(&login_name)
-                .ok_or_else(invalid_credentials)?
-                .clone();
-            let password_hash = store
-                .password_hashes
-                .get(&user_id)
-                .ok_or_else(internal_error)?
-                .clone();
-            let user = store
-                .users
-                .get(&user_id)
-                .ok_or_else(internal_error)?
-                .clone();
-            (user_id, password_hash, user)
+            store.login_index.get(&login_name).map(|user_id| {
+                let password_hash = store.password_hashes.get(user_id).cloned();
+                let user = store.users.get(user_id).cloned();
+                (user_id.clone(), password_hash, user)
+            })
         };
+        let Some((user_id, password_hash, user)) = credentials else {
+            verify_unknown_credentials(password)?;
+            return Err(invalid_credentials());
+        };
+        let password_hash = password_hash.ok_or_else(internal_error)?;
+        let user = user.ok_or_else(internal_error)?;
         verify_password(password, &password_hash)?;
         if user.status() != AccountStatus::Active {
             return Err(ApplicationError::new(
@@ -157,6 +159,7 @@ impl Application {
         let name = validate_room_name(command.name)?;
         let snapshot = resolve_rules(command.rules)?;
         let mut store = self.write_store()?;
+        ensure_user_available_for_lobby(&store, actor)?;
         let owner = store.users.get(actor).ok_or_else(internal_error)?;
         let room = Room::new(
             actor.clone(),
@@ -199,6 +202,7 @@ impl Application {
         expected_version: u64,
     ) -> Result<Room, ApplicationError> {
         let mut store = self.write_store()?;
+        ensure_user_available_for_lobby_except_room(&store, actor, room_id)?;
         let nickname = store
             .users
             .get(actor)
@@ -300,12 +304,165 @@ impl Application {
         command: SubmitGameCommand,
     ) -> Result<ObserverMatch, ApplicationError> {
         let mut store = self.write_store()?;
-        let game = store
-            .matches
-            .get_mut(match_id)
-            .ok_or_else(match_not_found)?;
-        game.execute(actor, command)?;
-        game.view(actor)
+        let view = {
+            let game = store
+                .matches
+                .get_mut(match_id)
+                .ok_or_else(match_not_found)?;
+            game.execute(actor, command)?;
+            game.view(actor)?
+        };
+        if view.result().is_some() {
+            let room = store
+                .rooms
+                .values_mut()
+                .find(|room| room.active_match_id() == Some(match_id))
+                .ok_or_else(internal_error)?;
+            room.finish_match(match_id)?;
+        }
+        Ok(view)
+    }
+
+    pub fn enter_matchmaking(
+        &self,
+        actor: &UserId,
+        variant: RiichiVariant,
+    ) -> Result<MatchmakingTicket, ApplicationError> {
+        let mut store = self.write_store()?;
+        if store.matchmaking_tickets.values().any(|ticket| {
+            ticket.user_id() == actor && matches!(ticket.status(), MatchmakingStatus::Waiting)
+        }) {
+            return Err(ApplicationError::new(
+                ErrorCode::AlreadyQueued,
+                "user already has a waiting matchmaking ticket",
+            ));
+        }
+        ensure_user_available_for_lobby(&store, actor)?;
+        if !store.users.contains_key(actor) {
+            return Err(internal_error());
+        }
+        let join_order = store.next_matchmaking_order;
+        store.next_matchmaking_order = store
+            .next_matchmaking_order
+            .checked_add(1)
+            .ok_or_else(internal_error)?;
+        let ticket = MatchmakingTicket::new(actor.clone(), variant, join_order);
+
+        let mut candidates: Vec<_> = store
+            .matchmaking_tickets
+            .values()
+            .filter(|candidate| {
+                candidate.variant() == variant
+                    && matches!(candidate.status(), MatchmakingStatus::Waiting)
+            })
+            .cloned()
+            .collect();
+        candidates.push(ticket.clone());
+        candidates.sort_unstable_by_key(|candidate| candidate.join_order);
+        let required = usize::from(variant.seat_count().value());
+        if candidates.len() < required {
+            store
+                .matchmaking_tickets
+                .insert(ticket.id().clone(), ticket.clone());
+            return Ok(ticket);
+        }
+        let selected = &candidates[..required];
+        let mut selected_users = Vec::with_capacity(required);
+        for candidate in selected {
+            let user = store
+                .users
+                .get(candidate.user_id())
+                .ok_or_else(internal_error)?;
+            selected_users.push((
+                candidate.id().clone(),
+                candidate.user_id().clone(),
+                user.profile().nickname().as_str().to_owned(),
+            ));
+        }
+
+        let snapshot = RiichiRuleSnapshot::try_new(RiichiRules::standard(variant), None)
+            .map_err(|_| internal_error())?;
+        let mut room = Room::new(
+            selected_users[0].1.clone(),
+            selected_users[0].2.clone(),
+            format!(
+                "段位{}",
+                if matches!(variant, RiichiVariant::Yonma) {
+                    "四麻"
+                } else {
+                    "三麻"
+                }
+            ),
+            RoomVisibility::Private,
+            GameRuleSnapshot::Riichi(snapshot),
+        );
+        for (_, user_id, nickname) in &selected_users[1..] {
+            room.join(user_id.clone(), nickname.clone())?;
+        }
+        for (_, user_id, _) in &selected_users {
+            room.set_ready(user_id, true)?;
+        }
+        let match_id = room.start(&selected_users[0].1)?;
+        let game = GameRuntime::start(&room, match_id.clone())?;
+        let room_id = room.id().clone();
+
+        store
+            .matchmaking_tickets
+            .insert(ticket.id().clone(), ticket);
+        for (ticket_id, _, _) in &selected_users {
+            store
+                .matchmaking_tickets
+                .get_mut(ticket_id)
+                .ok_or_else(internal_error)?
+                .mark_matched(room_id.clone(), match_id.clone());
+        }
+        store.rooms.insert(room_id, room);
+        store.matches.insert(match_id, game);
+        store
+            .matchmaking_tickets
+            .get(
+                selected
+                    .iter()
+                    .find(|candidate| candidate.user_id() == actor)
+                    .ok_or_else(internal_error)?
+                    .id(),
+            )
+            .cloned()
+            .ok_or_else(internal_error)
+    }
+
+    pub fn matchmaking_ticket(
+        &self,
+        actor: &UserId,
+        ticket_id: &TicketId,
+    ) -> Result<MatchmakingTicket, ApplicationError> {
+        self.read_store()?
+            .matchmaking_tickets
+            .get(ticket_id)
+            .filter(|ticket| ticket.user_id() == actor)
+            .cloned()
+            .ok_or_else(matchmaking_ticket_not_found)
+    }
+
+    pub fn cancel_matchmaking(
+        &self,
+        actor: &UserId,
+        ticket_id: &TicketId,
+    ) -> Result<MatchmakingTicket, ApplicationError> {
+        let mut store = self.write_store()?;
+        let ticket = store
+            .matchmaking_tickets
+            .get_mut(ticket_id)
+            .filter(|ticket| ticket.user_id() == actor)
+            .ok_or_else(matchmaking_ticket_not_found)?;
+        if !matches!(ticket.status(), MatchmakingStatus::Waiting) {
+            return Err(ApplicationError::new(
+                ErrorCode::MatchmakingTicketNotWaiting,
+                "matchmaking ticket is no longer waiting",
+            ));
+        }
+        ticket.cancel();
+        Ok(ticket.clone())
     }
 
     fn read_store(&self) -> Result<RwLockReadGuard<'_, MemoryStore>, ApplicationError> {
@@ -336,12 +493,21 @@ fn canonical_login_name(value: &str) -> Result<String, ApplicationError> {
 }
 
 fn validate_password(password: &str) -> Result<(), ApplicationError> {
-    if !(10..=128).contains(&password.len()) {
+    if !(10..=MAX_PASSWORD_BYTES).contains(&password.len()) {
         return Err(ApplicationError::new(
             ErrorCode::InvalidPassword,
             "password must contain 10 to 128 bytes",
         ));
     }
+    Ok(())
+}
+
+fn verify_unknown_credentials(password: &str) -> Result<(), ApplicationError> {
+    let encoded = DUMMY_PASSWORD_HASH
+        .get_or_init(|| hash_password("mamahjong dummy credential"))
+        .as_ref()
+        .map_err(|_| internal_error())?;
+    let _ = verify_password(password, encoded);
     Ok(())
 }
 
@@ -410,6 +576,56 @@ fn ensure_version(room: &Room, expected: u64) -> Result<(), ApplicationError> {
     }
 }
 
+fn ensure_user_available_for_lobby(
+    store: &MemoryStore,
+    actor: &UserId,
+) -> Result<(), ApplicationError> {
+    let in_room = store.rooms.values().any(|room| {
+        room.lifecycle() != crate::RoomLifecycle::Closed
+            && room
+                .members()
+                .iter()
+                .any(|member| member.user_id() == actor)
+    });
+    let queued = store.matchmaking_tickets.values().any(|ticket| {
+        ticket.user_id() == actor && matches!(ticket.status(), MatchmakingStatus::Waiting)
+    });
+    if in_room || queued {
+        Err(ApplicationError::new(
+            ErrorCode::UserBusy,
+            "user is already in a room or matchmaking queue",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_user_available_for_lobby_except_room(
+    store: &MemoryStore,
+    actor: &UserId,
+    target_room: &RoomId,
+) -> Result<(), ApplicationError> {
+    let in_other_room = store.rooms.values().any(|room| {
+        room.id() != target_room
+            && room.lifecycle() != crate::RoomLifecycle::Closed
+            && room
+                .members()
+                .iter()
+                .any(|member| member.user_id() == actor)
+    });
+    let queued = store.matchmaking_tickets.values().any(|ticket| {
+        ticket.user_id() == actor && matches!(ticket.status(), MatchmakingStatus::Waiting)
+    });
+    if in_other_room || queued {
+        Err(ApplicationError::new(
+            ErrorCode::UserBusy,
+            "user is already in another room or matchmaking queue",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn invalid_credentials() -> ApplicationError {
     ApplicationError::new(
         ErrorCode::InvalidCredentials,
@@ -423,6 +639,13 @@ fn room_not_found() -> ApplicationError {
 
 fn match_not_found() -> ApplicationError {
     ApplicationError::new(ErrorCode::MatchNotFound, "match was not found")
+}
+
+fn matchmaking_ticket_not_found() -> ApplicationError {
+    ApplicationError::new(
+        ErrorCode::MatchmakingTicketNotFound,
+        "matchmaking ticket was not found",
+    )
 }
 
 fn internal_error() -> ApplicationError {
@@ -440,7 +663,7 @@ mod tests {
     use super::{
         Application, CreateRoom, RegisterUser, RoomRuleSelection, UpdateProfile, UpdateRoom,
     };
-    use crate::{ErrorCode, GameCommand, RoomVisibility, SubmitGameCommand};
+    use crate::{ErrorCode, GameCommand, MatchmakingStatus, RoomVisibility, SubmitGameCommand};
 
     fn register(application: &Application, suffix: &str) -> (crate::User, crate::Session) {
         application
@@ -474,6 +697,48 @@ mod tests {
                 .code(),
             ErrorCode::InvalidCredentials
         );
+    }
+
+    #[test]
+    fn sanma_matchmaking_starts_when_the_third_player_enters() {
+        let application = Application::new();
+        let players: Vec<_> = (0..3)
+            .map(|index| register(&application, &format!("queue_{index}")).0)
+            .collect();
+
+        let first = application
+            .enter_matchmaking(players[0].id(), RiichiVariant::Sanma)
+            .expect("first ticket");
+        let second = application
+            .enter_matchmaking(players[1].id(), RiichiVariant::Sanma)
+            .expect("second ticket");
+        assert!(matches!(first.status(), MatchmakingStatus::Waiting));
+        assert!(matches!(second.status(), MatchmakingStatus::Waiting));
+
+        let third = application
+            .enter_matchmaking(players[2].id(), RiichiVariant::Sanma)
+            .expect("matched ticket");
+        let MatchmakingStatus::Matched { match_id, .. } = third.status() else {
+            panic!("third player must complete a sanma table");
+        };
+        let match_id = match_id.clone();
+        for (player, ticket) in players.iter().zip([first, second, third]) {
+            let current = application
+                .matchmaking_ticket(player.id(), ticket.id())
+                .expect("ticket");
+            assert!(matches!(
+                current.status(),
+                MatchmakingStatus::Matched { .. }
+            ));
+            assert_eq!(
+                application
+                    .match_view(player.id(), &match_id)
+                    .expect("matched game")
+                    .players()
+                    .len(),
+                3
+            );
+        }
     }
 
     #[test]
@@ -930,6 +1195,15 @@ mod tests {
         assert_eq!(
             encoded["hands"].as_array().expect("hand records").len(),
             seat_count
+        );
+        assert!(
+            encoded["hands"][0]["events"]
+                .as_array()
+                .is_some_and(|events| !events.is_empty())
+        );
+        assert_eq!(
+            encoded["hands"][0]["events"][0]["name"],
+            "riichi.hand_started"
         );
         assert!(encoded["result"]["placements"].is_array());
         assert!(encoded["rule_snapshot"]["config"].is_object());

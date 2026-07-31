@@ -228,6 +228,11 @@ impl PlayerHand {
         player.concealed = concealed;
         player
     }
+
+    #[cfg(test)]
+    pub(crate) fn add_scoring_fixture_discard(&mut self, tile: Tile) {
+        self.discards.push(Discard::new(tile, false, false));
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

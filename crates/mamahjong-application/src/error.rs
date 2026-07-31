@@ -26,6 +26,10 @@ pub enum ErrorCode {
     MatchVersionConflict,
     InvalidGameCommand,
     MatchFinished,
+    AlreadyQueued,
+    MatchmakingTicketNotFound,
+    MatchmakingTicketNotWaiting,
+    UserBusy,
     Internal,
 }
 
@@ -56,6 +60,10 @@ impl ErrorCode {
             Self::MatchVersionConflict => "game.stale_version",
             Self::InvalidGameCommand => "game.invalid_command",
             Self::MatchFinished => "game.finished",
+            Self::AlreadyQueued => "matchmaking.already_queued",
+            Self::MatchmakingTicketNotFound => "matchmaking.ticket_not_found",
+            Self::MatchmakingTicketNotWaiting => "matchmaking.ticket_not_waiting",
+            Self::UserBusy => "lobby.user_busy",
             Self::Internal => "server.internal",
         }
     }

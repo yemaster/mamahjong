@@ -163,7 +163,7 @@ cargo run -p mamahjong-bot -- \
 
 当前账号、会话、房间和进行中的牌局仍在内存中；服务重启后不能恢复进行中
 的牌局。已写入卷的 `match_record.v1` 单局与整场记录不会随容器重建丢失。
-PostgreSQL 阶段会增加在线历史查询、完整事件复盘和运行中牌局恢复。
+PostgreSQL 阶段会增加可索引的在线历史查询、运行中事件事务和牌局恢复。
 
 运行镜像使用无 shell 的 Distroless 基础镜像和 UID/GID `65532:65532`。
 容器健康检查由镜像内的 `mamahjong-healthcheck` 执行，不依赖 curl 或 shell。

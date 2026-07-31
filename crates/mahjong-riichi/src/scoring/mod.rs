@@ -40,7 +40,16 @@ impl RiichiScorer {
 
 impl HandJudge for RiichiScorer {
     fn can_win(&self, query: crate::WinQuery<'_>) -> bool {
-        self.evaluate(query).is_some()
+        if !matches!(query.source(), crate::WinSource::Tsumo(_))
+            && is_discard_furiten(query.player())
+        {
+            return false;
+        }
+        self.evaluate(query).is_some_and(|evaluation| {
+            !matches!(query.source(), crate::WinSource::ConcealedKan { .. })
+                || query.rules().scoring.kokushi_ankan_chankan
+                    && matches!(evaluation.shape(), crate::HandShape::ThirteenOrphans)
+        })
     }
 
     fn can_riichi(&self, query: RiichiQuery<'_>) -> bool {
@@ -65,6 +74,9 @@ impl HandJudge for RiichiScorer {
         let Some(drawn_tile_id) = query.player().drawn_tile_id() else {
             return false;
         };
+        if !query.tile_ids().contains(&drawn_tile_id) {
+            return false;
+        }
         let before: Vec<_> = query
             .player()
             .concealed()
@@ -96,6 +108,14 @@ impl HandJudge for RiichiScorer {
     ) -> bool {
         !self.waiting_tiles(player).is_empty()
     }
+}
+
+fn is_discard_furiten(player: &PlayerHand) -> bool {
+    let waits = shape::waiting_tiles(player.concealed(), player.melds().len());
+    player
+        .discards()
+        .iter()
+        .any(|discard| waits.kinds().contains(&discard.tile().kind()))
 }
 
 fn known_kind_count(player: &PlayerHand, kind: crate::TileKind) -> usize {

@@ -292,6 +292,24 @@ impl Room {
         Ok(match_id)
     }
 
+    pub(crate) fn finish_match(&mut self, match_id: &MatchId) -> Result<(), ApplicationError> {
+        if self.lifecycle != RoomLifecycle::Playing
+            || self.active_match_id.as_ref() != Some(match_id)
+        {
+            return Err(ApplicationError::new(
+                ErrorCode::Internal,
+                "room is not linked to the finished match",
+            ));
+        }
+        self.lifecycle = RoomLifecycle::Waiting;
+        self.active_match_id = None;
+        for member in &mut self.members {
+            member.ready = false;
+        }
+        self.version += 1;
+        Ok(())
+    }
+
     fn ensure_waiting(&self) -> Result<(), ApplicationError> {
         match self.lifecycle {
             RoomLifecycle::Waiting => Ok(()),

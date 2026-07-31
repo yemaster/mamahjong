@@ -41,6 +41,15 @@ impl ApiError {
         }
     }
 
+    pub(super) fn invalid_rule_set() -> Self {
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: "request.invalid_rule_set",
+            message: "rule_set_id is not supported for matchmaking".to_owned(),
+            retryable: false,
+        }
+    }
+
     pub(super) fn missing_bearer() -> Self {
         Self {
             status: StatusCode::UNAUTHORIZED,
@@ -83,7 +92,11 @@ impl From<ApplicationError> for ApiError {
             | ErrorCode::RoomPlaying
             | ErrorCode::RoomNotReady
             | ErrorCode::MatchVersionConflict
-            | ErrorCode::MatchFinished => StatusCode::CONFLICT,
+            | ErrorCode::MatchFinished
+            | ErrorCode::AlreadyQueued
+            | ErrorCode::MatchmakingTicketNotWaiting => StatusCode::CONFLICT,
+            ErrorCode::UserBusy => StatusCode::CONFLICT,
+            ErrorCode::MatchmakingTicketNotFound => StatusCode::NOT_FOUND,
             ErrorCode::InvalidGameCommand => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         };
