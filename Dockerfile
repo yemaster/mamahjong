@@ -12,6 +12,7 @@ RUN --mount=type=cache,id=mamahjong-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=mamahjong-target,target=/build/target,sharing=locked \
     cargo build --locked --release --package mamahjong-server \
     && mkdir --parents /artifacts \
+    && mkdir --parents /artifacts/data \
     && cp /build/target/release/mamahjong-server /artifacts/ \
     && cp /build/target/release/mamahjong-healthcheck /artifacts/
 
@@ -23,6 +24,9 @@ COPY --from=builder --chown=65532:65532 \
 COPY --from=builder --chown=65532:65532 \
     /artifacts/mamahjong-healthcheck \
     /usr/local/bin/mamahjong-healthcheck
+COPY --from=builder --chown=65532:65532 \
+    /artifacts/data/ \
+    /var/lib/mamahjong/
 
 ENV MAMAHJONG_BIND_ADDRESS=0.0.0.0:8080 \
     RUST_LOG=info

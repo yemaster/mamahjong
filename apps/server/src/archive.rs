@@ -5,6 +5,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use mamahjong_application::MatchRecord;
 
@@ -28,6 +29,7 @@ impl MatchArchive {
     pub fn open(directory: impl AsRef<Path>) -> Result<Self, ArchiveError> {
         fs::create_dir_all(directory.as_ref()).map_err(ArchiveError::Io)?;
         let directory = fs::canonicalize(directory.as_ref()).map_err(ArchiveError::Io)?;
+        verify_writable(&directory)?;
         Ok(Self {
             inner: Some(Arc::new(DirectoryArchive {
                 directory,
@@ -70,12 +72,31 @@ impl MatchArchive {
     }
 }
 
+fn verify_writable(directory: &Path) -> Result<(), ArchiveError> {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| ArchiveError::Clock)?
+        .as_nanos();
+    let probe = directory.join(format!(
+        ".mamahjong-write-test-{}-{timestamp}",
+        std::process::id()
+    ));
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(ArchiveError::Io)?;
+    file.sync_all().map_err(ArchiveError::Io)?;
+    fs::remove_file(probe).map_err(ArchiveError::Io)
+}
+
 #[derive(Debug)]
 pub enum ArchiveError {
     Io(std::io::Error),
     Encode(serde_json::Error),
     LockPoisoned,
     TaskFailed,
+    Clock,
 }
 
 impl Display for ArchiveError {
@@ -85,6 +106,7 @@ impl Display for ArchiveError {
             Self::Encode(error) => write!(formatter, "match archive encoding failed: {error}"),
             Self::LockPoisoned => formatter.write_str("match archive lock is poisoned"),
             Self::TaskFailed => formatter.write_str("match archive task failed"),
+            Self::Clock => formatter.write_str("system clock is before the Unix epoch"),
         }
     }
 }
@@ -94,7 +116,7 @@ impl Error for ArchiveError {
         match self {
             Self::Io(error) => Some(error),
             Self::Encode(error) => Some(error),
-            Self::LockPoisoned | Self::TaskFailed => None,
+            Self::LockPoisoned | Self::TaskFailed | Self::Clock => None,
         }
     }
 }
