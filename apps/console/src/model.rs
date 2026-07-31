@@ -65,7 +65,17 @@ pub struct MatchView {
     pub remaining_live_draws: usize,
     pub dora_indicators: Vec<TileView>,
     pub players: Vec<MatchPlayerView>,
+    pub available_reactions: Vec<ReactionOptionView>,
     pub result: Option<MatchResultView>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReactionOptionView {
+    Ron,
+    Chi { tile_ids: [u16; 2] },
+    Pon { tile_ids: [u16; 2] },
+    OpenKan { tile_ids: [u16; 3] },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -189,3 +199,19 @@ impl std::fmt::Display for ApiFailure {
 }
 
 impl std::error::Error for ApiFailure {}
+
+#[cfg(test)]
+mod tests {
+    use super::ReactionOptionView;
+
+    #[test]
+    fn reaction_options_decode_exact_server_tile_ids() {
+        let option = serde_json::from_value::<ReactionOptionView>(serde_json::json!({
+            "kind": "pon",
+            "tile_ids": [17, 42]
+        }))
+        .expect("reaction option");
+
+        assert_eq!(option, ReactionOptionView::Pon { tile_ids: [17, 42] });
+    }
+}

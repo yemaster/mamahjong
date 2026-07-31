@@ -748,9 +748,12 @@ mod tests {
                         )
                         .expect("discard");
                 }
-                mahjong_riichi::HandPhase::AwaitingResponses { trigger_seat } => {
-                    for (seat_index, actor) in players.iter().enumerate() {
-                        if seat_index == usize::from(trigger_seat.index()) {
+                mahjong_riichi::HandPhase::AwaitingResponses { .. } => {
+                    for actor in players {
+                        let actor_view = application
+                            .match_view(actor.id(), &match_id)
+                            .expect("responder view");
+                        if actor_view.available_reactions().is_empty() {
                             continue;
                         }
                         view = application
@@ -758,7 +761,7 @@ mod tests {
                                 actor.id(),
                                 &match_id,
                                 SubmitGameCommand {
-                                    expected_version: view.version(),
+                                    expected_version: actor_view.version(),
                                     command: GameCommand::Pass,
                                 },
                             )
@@ -773,7 +776,7 @@ mod tests {
 
         assert_eq!(view.hand_index(), 1);
         assert_eq!(view.progress().round_number().value(), 2);
-        assert!(view.event_sequence() > 200);
+        assert!(view.event_sequence() > 100);
     }
 
     #[test]
@@ -877,9 +880,12 @@ mod tests {
                         )
                         .expect("discard");
                 }
-                mahjong_riichi::HandPhase::AwaitingResponses { trigger_seat } => {
-                    for (index, actor) in players.iter().enumerate() {
-                        if index == usize::from(trigger_seat.index()) {
+                mahjong_riichi::HandPhase::AwaitingResponses { .. } => {
+                    for actor in &players {
+                        let actor_view = application
+                            .match_view(actor.id(), &match_id)
+                            .expect("responder view");
+                        if actor_view.available_reactions().is_empty() {
                             continue;
                         }
                         view = application
@@ -887,7 +893,7 @@ mod tests {
                                 actor.id(),
                                 &match_id,
                                 SubmitGameCommand {
-                                    expected_version: view.version(),
+                                    expected_version: actor_view.version(),
                                     command: GameCommand::Pass,
                                 },
                             )

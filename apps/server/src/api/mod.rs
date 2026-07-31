@@ -249,7 +249,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(discarded["version"], 2);
-        assert_eq!(discarded["phase"]["kind"], "awaiting_responses");
+        assert!(discarded["available_reactions"].is_array());
     }
 
     #[tokio::test]
@@ -393,9 +393,21 @@ mod tests {
                     view = next_view;
                 }
                 "awaiting_responses" => {
-                    let trigger = phase["trigger_seat"].as_u64().expect("trigger seat") as usize;
-                    for (seat, token) in tokens.iter().enumerate() {
-                        if seat == trigger {
+                    for token in &tokens {
+                        let (status, responder_view) = request_json(
+                            router.clone(),
+                            Method::GET,
+                            &format!("/api/v1/matches/{match_id}"),
+                            Some(token),
+                            None,
+                        )
+                        .await;
+                        assert_eq!(status, StatusCode::OK);
+                        if responder_view["available_reactions"]
+                            .as_array()
+                            .expect("available reactions")
+                            .is_empty()
+                        {
                             continue;
                         }
                         let (status, next_view) = request_json(
@@ -404,7 +416,7 @@ mod tests {
                             &format!("/api/v1/matches/{match_id}/commands"),
                             Some(token),
                             Some(json!({
-                                "expected_version": view["version"],
+                                "expected_version": responder_view["version"],
                                 "command": {"name": "riichi.pass"}
                             })),
                         )

@@ -48,6 +48,23 @@ GET    /api/v1/matches/{match_id}/record
 
 终端客户端使用 HTTP 命令并轮询观察者视图。
 
+`match_view.v1` 的 `available_reactions` 只包含当前观察者实际可执行的响应，
+不会泄露其他玩家的候选动作。例如：
+
+```json
+{
+  "available_reactions": [
+    {"kind": "pon", "tile_ids": [41, 42]},
+    {"kind": "pon", "tile_ids": [41, 43]}
+  ]
+}
+```
+
+牌张 ID 用于区分赤牌等同种牌实例。空数组表示当前观察者无需响应；若所有
+玩家的数组均为空，服务端在弃牌命令内直接推进到下一家摸牌，不等待客户端
+提交 `riichi.pass`。存在候选动作的玩家才可提交对应响应或
+`riichi.pass`。
+
 ## 规划资源
 
 ```text

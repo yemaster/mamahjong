@@ -5,7 +5,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
 use crate::app::{App, AuthMode, CreateRoomForm, GameScreen, RoomBrowser, Screen};
-use crate::model::{MatchPlayerView, MatchResultView, MatchView, RoomView, TileView};
+use crate::model::{
+    MatchPlayerView, MatchResultView, MatchView, ReactionOptionView, RoomView, TileView,
+};
 
 const FELT: Color = Color::Rgb(18, 82, 64);
 const IVORY: Color = Color::Rgb(245, 238, 214);
@@ -392,12 +394,17 @@ fn render_center(frame: &mut Frame<'_>, area: Rect, view: &MatchView) {
             format!("{}家打牌", wind_for_seat(seat))
         }
         crate::model::MatchPhase::AwaitingResponses { trigger_seat } => {
-            format!("等待响应 · {}家打牌", wind_for_seat(trigger_seat))
+            if view.available_reactions.is_empty() {
+                format!("等待其他玩家 · {}家打牌", wind_for_seat(trigger_seat))
+            } else {
+                format!("可响应 · {}家打牌", wind_for_seat(trigger_seat))
+            }
         }
         crate::model::MatchPhase::Ended { reason } => {
             format!("本局结束 · {}", end_reason_label(reason))
         }
     };
+    let (primary_controls, secondary_controls) = game_controls(view);
     let lines = vec![
         Line::from(format!(
             "{}{}局  {}本场",
@@ -413,8 +420,8 @@ fn render_center(frame: &mut Frame<'_>, area: Rect, view: &MatchView) {
         Line::from(""),
         Line::from(phase),
         Line::from(""),
-        Line::from("←→ 选牌 · Space 标记 · d 打牌 · r 立直 · t 自摸"),
-        Line::from("p 过 · h 荣和 · c 吃 · o 碰 · k 杠 · a 加杠 · 9 九种九牌"),
+        Line::from(primary_controls),
+        Line::from(secondary_controls),
     ];
     frame.render_widget(
         Paragraph::new(lines)
@@ -424,6 +431,59 @@ fn render_center(frame: &mut Frame<'_>, area: Rect, view: &MatchView) {
             .block(Block::default().borders(Borders::ALL).title("桌心")),
         area,
     );
+}
+
+fn game_controls(view: &MatchView) -> (String, String) {
+    if !view.available_reactions.is_empty() {
+        let mut actions = Vec::new();
+        if view
+            .available_reactions
+            .iter()
+            .any(|reaction| matches!(reaction, ReactionOptionView::Ron))
+        {
+            actions.push("h 荣和");
+        }
+        if view
+            .available_reactions
+            .iter()
+            .any(|reaction| matches!(reaction, ReactionOptionView::Pon { .. }))
+        {
+            actions.push("o 碰");
+        }
+        if view
+            .available_reactions
+            .iter()
+            .any(|reaction| matches!(reaction, ReactionOptionView::OpenKan { .. }))
+        {
+            actions.push("k 杠");
+        }
+        if view
+            .available_reactions
+            .iter()
+            .any(|reaction| matches!(reaction, ReactionOptionView::Chi { .. }))
+        {
+            actions.push("c 吃");
+        }
+        actions.push("p 过");
+        return (
+            format!("可操作：{}", actions.join(" · ")),
+            "Space 标记副露用牌".to_owned(),
+        );
+    }
+    let own_turn = matches!(
+        view.phase,
+        crate::model::MatchPhase::AwaitingTurnAction { seat }
+            | crate::model::MatchPhase::AwaitingDiscard { seat }
+            if seat == view.observer_seat
+    );
+    if own_turn {
+        (
+            "←→ 选牌 · d 打牌 · r 立直 · t 自摸".to_owned(),
+            "Space 标记 · k 暗杠 · a 加杠 · 9 九种九牌".to_owned(),
+        )
+    } else {
+        (String::new(), String::new())
+    }
 }
 
 fn render_result(frame: &mut Frame<'_>, area: Rect, result: &MatchResultView) {

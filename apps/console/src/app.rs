@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::{Value, json};
 
 use crate::api::ApiClient;
-use crate::model::{MatchPhase, MatchView, RoomView, UserView};
+use crate::model::{MatchPhase, MatchView, ReactionOptionView, RoomView, UserView};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -45,7 +45,6 @@ pub struct GameScreen {
     pub view: MatchView,
     pub selected_tile: usize,
     pub marked_tile_ids: Vec<u16>,
-    pub responded_in_window: bool,
 }
 
 #[derive(Debug)]
@@ -97,7 +96,6 @@ enum Action {
     GameCommand {
         name: &'static str,
         payload: Option<Value>,
-        response: bool,
     },
 }
 
@@ -241,11 +239,7 @@ impl App {
             Action::StartRoom => self.start_room().await,
             Action::LeaveRoom => self.leave_room().await,
             Action::RefreshGame => self.refresh_game().await,
-            Action::GameCommand {
-                name,
-                payload,
-                response,
-            } => self.submit_game_command(name, payload, response).await,
+            Action::GameCommand { name, payload } => self.submit_game_command(name, payload).await,
         };
         if let Err(error) = result {
             self.status = error.to_string();
@@ -272,7 +266,6 @@ impl App {
                 view,
                 selected_tile: 0,
                 marked_tile_ids: Vec::new(),
-                responded_in_window: false,
             });
         } else {
             self.screen = Screen::Room(room);
@@ -313,7 +306,6 @@ impl App {
             view,
             selected_tile: 0,
             marked_tile_ids: Vec::new(),
-            responded_in_window: false,
         });
         Ok(())
     }
@@ -330,29 +322,14 @@ impl App {
         let Screen::Game(game) = &self.screen else {
             return Ok(());
         };
-        let old_phase = game.view.phase;
         let old_hand = game.view.hand_index;
         let view = self.api.match_view(&game.view.id).await?;
-        let same_response_window = old_hand == view.hand_index
-            && matches!(
-                (old_phase, view.phase),
-                (
-                    MatchPhase::AwaitingResponses {
-                        trigger_seat: old
-                    },
-                    MatchPhase::AwaitingResponses {
-                        trigger_seat: new
-                    }
-                ) if old == new
-            );
-        let responded = game.responded_in_window && same_response_window;
         let selected = clamp_selection(game.selected_tile, &view);
         let marked_tile_ids = retained_marks(&game.marked_tile_ids, &view, old_hand);
         self.screen = Screen::Game(GameScreen {
             view,
             selected_tile: selected,
             marked_tile_ids,
-            responded_in_window: responded,
         });
         Ok(())
     }
@@ -361,30 +338,14 @@ impl App {
         &mut self,
         name: &'static str,
         payload: Option<Value>,
-        response: bool,
     ) -> Result<(), crate::model::ApiFailure> {
         let Screen::Game(game) = &self.screen else {
             return Ok(());
         };
-        let old_phase = game.view.phase;
-        let old_hand = game.view.hand_index;
         let mut view = self
             .api
             .game_command(&game.view.id, game.view.version, name, payload)
             .await?;
-        let same_response_window = old_hand == view.hand_index
-            && matches!(
-                (old_phase, view.phase),
-                (
-                    MatchPhase::AwaitingResponses {
-                        trigger_seat: old
-                    },
-                    MatchPhase::AwaitingResponses {
-                        trigger_seat: new
-                    }
-                ) if old == new
-            );
-        let responded = response && same_response_window;
         let selected = clamp_selection(game.selected_tile, &view);
         if view.result.is_some() {
             self.status = "整场结束".to_owned();
@@ -397,7 +358,6 @@ impl App {
             view,
             selected_tile: selected,
             marked_tile_ids: Vec::new(),
-            responded_in_window: responded,
         });
         Ok(())
     }
@@ -536,44 +496,41 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
             return Some(Action::GameCommand {
                 name: "riichi.tsumo",
                 payload: None,
-                response: false,
             });
         }
-        KeyCode::Char('p') if !game.responded_in_window => {
+        KeyCode::Char('p') if !game.view.available_reactions.is_empty() => {
             return Some(Action::GameCommand {
                 name: "riichi.pass",
                 payload: None,
-                response: true,
             });
         }
-        KeyCode::Char('h') if !game.responded_in_window => {
+        KeyCode::Char('h') if has_reaction(&game.view, ReactionKind::Ron) => {
             return Some(Action::GameCommand {
                 name: "riichi.ron",
                 payload: None,
-                response: true,
             });
         }
-        KeyCode::Char('c') if !game.responded_in_window => {
+        KeyCode::Char('c') if has_reaction(&game.view, ReactionKind::Chi) => {
             return Some(marked_tiles_command(
                 game,
                 "riichi.chi",
                 2,
-                true,
                 "吃牌需标记 2 张手牌",
             ));
         }
-        KeyCode::Char('o') if !game.responded_in_window => {
+        KeyCode::Char('o') if has_reaction(&game.view, ReactionKind::Pon) => {
             return Some(marked_tiles_command(
                 game,
                 "riichi.pon",
                 2,
-                true,
                 "碰牌需标记 2 张手牌",
             ));
         }
         KeyCode::Char('k') => {
-            let response = matches!(game.view.phase, MatchPhase::AwaitingResponses { .. });
-            let (name, count) = if response {
+            let (name, count) = if matches!(game.view.phase, MatchPhase::AwaitingResponses { .. }) {
+                if !has_reaction(&game.view, ReactionKind::OpenKan) {
+                    return Some(Action::ShowStatus("当前不能杠"));
+                }
                 ("riichi.open_kan", 3)
             } else {
                 ("riichi.concealed_kan", 4)
@@ -582,8 +539,7 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
                 game,
                 name,
                 count,
-                response,
-                if response {
+                if name == "riichi.open_kan" {
                     "明杠需标记 3 张手牌"
                 } else {
                     "暗杠需标记 4 张手牌"
@@ -595,7 +551,6 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
             return Some(Action::GameCommand {
                 name: "riichi.nine_terminals",
                 payload: None,
-                response: false,
             });
         }
         KeyCode::Char('x') => return Some(Action::RefreshGame),
@@ -609,7 +564,6 @@ fn selected_tile_command(game: &GameScreen, name: &'static str) -> Option<Action
     Some(Action::GameCommand {
         name,
         payload: Some(json!({"tile_id": tile.id})),
-        response: false,
     })
 }
 
@@ -632,16 +586,19 @@ fn marked_tiles_command(
     game: &GameScreen,
     name: &'static str,
     expected_count: usize,
-    response: bool,
     invalid_selection: &'static str,
 ) -> Action {
     if game.marked_tile_ids.len() != expected_count {
         return Action::ShowStatus(invalid_selection);
     }
+    if let Some(kind) = reaction_kind_for_command(name)
+        && !reaction_selection_allowed(&game.view, kind, &game.marked_tile_ids)
+    {
+        return Action::ShowStatus("所选牌不能执行该操作");
+    }
     Action::GameCommand {
         name,
         payload: Some(json!({"tile_ids": game.marked_tile_ids})),
-        response,
     }
 }
 
@@ -669,8 +626,49 @@ fn added_kan_command(game: &GameScreen) -> Action {
     Action::GameCommand {
         name: "riichi.added_kan",
         payload: Some(json!({"meld_id": meld.id, "tile_id": tile.id})),
-        response: false,
     }
+}
+
+#[derive(Clone, Copy)]
+enum ReactionKind {
+    Ron,
+    Chi,
+    Pon,
+    OpenKan,
+}
+
+fn has_reaction(view: &MatchView, expected: ReactionKind) -> bool {
+    view.available_reactions.iter().any(|reaction| {
+        matches!(
+            (expected, reaction),
+            (ReactionKind::Ron, ReactionOptionView::Ron)
+                | (ReactionKind::Chi, ReactionOptionView::Chi { .. })
+                | (ReactionKind::Pon, ReactionOptionView::Pon { .. })
+                | (ReactionKind::OpenKan, ReactionOptionView::OpenKan { .. })
+        )
+    })
+}
+
+fn reaction_kind_for_command(name: &str) -> Option<ReactionKind> {
+    match name {
+        "riichi.chi" => Some(ReactionKind::Chi),
+        "riichi.pon" => Some(ReactionKind::Pon),
+        "riichi.open_kan" => Some(ReactionKind::OpenKan),
+        _ => None,
+    }
+}
+
+fn reaction_selection_allowed(view: &MatchView, expected: ReactionKind, selected: &[u16]) -> bool {
+    view.available_reactions.iter().any(|reaction| {
+        let candidate: &[u16] = match (expected, reaction) {
+            (ReactionKind::Chi, ReactionOptionView::Chi { tile_ids })
+            | (ReactionKind::Pon, ReactionOptionView::Pon { tile_ids }) => tile_ids,
+            (ReactionKind::OpenKan, ReactionOptionView::OpenKan { tile_ids }) => tile_ids,
+            _ => return false,
+        };
+        candidate.len() == selected.len()
+            && candidate.iter().all(|tile_id| selected.contains(tile_id))
+    })
 }
 
 fn same_tile_kind(left: &str, right: &str) -> bool {

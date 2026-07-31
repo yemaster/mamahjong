@@ -1,5 +1,5 @@
 use mahjong_riichi::{
-    Discard, EndReason, HandPhase, MatchResult, Meld, MeldKind, RiichiStatus, Tile, Wind,
+    Discard, EndReason, HandPhase, MatchResult, Meld, MeldKind, Reaction, RiichiStatus, Tile, Wind,
 };
 use mamahjong_application::{
     AccountStatus, CharacterSummary, GameRuleSnapshot, ObserverMatch, ObserverPlayer, RankSummary,
@@ -229,6 +229,7 @@ pub(super) struct MatchViewResponse {
     remaining_live_draws: usize,
     dora_indicators: Vec<TileResponse>,
     players: Vec<MatchPlayerResponse>,
+    available_reactions: Vec<ReactionResponse>,
     result: Option<MatchResultResponse>,
 }
 
@@ -262,7 +263,39 @@ impl From<&ObserverMatch> for MatchViewResponse {
                 .iter()
                 .map(MatchPlayerResponse::from)
                 .collect(),
+            available_reactions: value
+                .available_reactions()
+                .iter()
+                .map(ReactionResponse::from)
+                .collect(),
             result: value.result().map(MatchResultResponse::from),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ReactionResponse {
+    Ron,
+    Chi { tile_ids: [u16; 2] },
+    Pon { tile_ids: [u16; 2] },
+    OpenKan { tile_ids: [u16; 3] },
+}
+
+impl From<&Reaction> for ReactionResponse {
+    fn from(value: &Reaction) -> Self {
+        match value {
+            Reaction::Ron => Self::Ron,
+            Reaction::Chi { hand_tiles } => Self::Chi {
+                tile_ids: hand_tiles.map(mahjong_riichi::TileId::value),
+            },
+            Reaction::Pon { hand_tiles } => Self::Pon {
+                tile_ids: hand_tiles.map(mahjong_riichi::TileId::value),
+            },
+            Reaction::OpenKan { hand_tiles } => Self::OpenKan {
+                tile_ids: hand_tiles.map(mahjong_riichi::TileId::value),
+            },
+            Reaction::Pass => unreachable!("pass is not an available reaction"),
         }
     }
 }

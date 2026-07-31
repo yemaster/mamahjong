@@ -7,6 +7,87 @@ use crate::{
 use super::state::{PendingDiscard, PendingKan, Phase};
 
 impl RiichiHand {
+    pub fn available_reactions(
+        &self,
+        actor: Seat,
+        judge: &dyn HandJudge,
+    ) -> Result<Vec<Reaction>, HandError> {
+        self.validate_seat(actor)?;
+        match &self.phase {
+            Phase::Responses(pending) => {
+                if actor == pending.discarder
+                    || pending.responses[usize::from(actor.index())].is_some()
+                {
+                    return Ok(Vec::new());
+                }
+                Ok(self.discard_reaction_options(pending, actor, judge))
+            }
+            Phase::KanResponses(pending) => {
+                if actor == pending.declarer()
+                    || pending.responses()[usize::from(actor.index())].is_some()
+                {
+                    return Ok(Vec::new());
+                }
+                Ok(self
+                    .can_ron(actor, judge)
+                    .is_some()
+                    .then_some(Reaction::Ron)
+                    .into_iter()
+                    .collect())
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+
+    pub fn advance_automatic_reactions(
+        &mut self,
+        judge: &dyn HandJudge,
+    ) -> Result<HandTransition, HandError> {
+        let unavailable = (0..self.rules.variant.seat_count().value())
+            .filter_map(|index| {
+                let seat =
+                    Seat::new(self.rules.variant, index).expect("seat index is within variant");
+                match self.available_reactions(seat, judge) {
+                    Ok(options) if options.is_empty() => Some(Ok(seat)),
+                    Ok(_) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        match &mut self.phase {
+            Phase::Responses(pending) => {
+                for seat in unavailable {
+                    let response = &mut pending.responses[usize::from(seat.index())];
+                    if response.is_none() {
+                        *response = Some(Reaction::Pass);
+                    }
+                }
+                if pending.responses.iter().all(Option::is_some) {
+                    let pending = pending.clone();
+                    Ok(self.resolve_discard_responses(&pending, judge))
+                } else {
+                    Ok(HandTransition::default())
+                }
+            }
+            Phase::KanResponses(pending) => {
+                for seat in unavailable {
+                    let response = &mut pending.responses_mut()[usize::from(seat.index())];
+                    if response.is_none() {
+                        *response = Some(Reaction::Pass);
+                    }
+                }
+                if pending.responses().iter().all(Option::is_some) {
+                    let pending = pending.clone();
+                    Ok(self.resolve_kan_responses(pending))
+                } else {
+                    Ok(HandTransition::default())
+                }
+            }
+            _ => Ok(HandTransition::default()),
+        }
+    }
+
     pub fn evaluate_pending_ron(&self, actor: Seat) -> Result<WinEvaluation, HandError> {
         self.validate_seat(actor)?;
         let (tile, source) = self
@@ -238,6 +319,64 @@ impl RiichiHand {
                 validate_chi(&player.concealed, hand_tiles, called_tile)
             }
         }
+    }
+
+    fn discard_reaction_options(
+        &self,
+        pending: &PendingDiscard,
+        actor: Seat,
+        judge: &dyn HandJudge,
+    ) -> Vec<Reaction> {
+        let mut options = Vec::new();
+        if self.can_ron(actor, judge).is_some() {
+            options.push(Reaction::Ron);
+        }
+        if self.wall.remaining_live_draws() == 0 {
+            return options;
+        }
+        let player = &self.players[usize::from(actor.index())];
+        if !matches!(player.riichi, RiichiStatus::None) {
+            return options;
+        }
+        let called_tile = self.players[usize::from(pending.discarder.index())].discards
+            [pending.discard_index]
+            .tile();
+        let matching = player
+            .concealed
+            .iter()
+            .filter(|tile| tile.kind() == called_tile.kind())
+            .map(|tile| tile.id())
+            .collect::<Vec<_>>();
+        for left in 0..matching.len() {
+            for right in left + 1..matching.len() {
+                options.push(Reaction::Pon {
+                    hand_tiles: [matching[left], matching[right]],
+                });
+            }
+        }
+        if matching.len() >= 3 && self.validate_kan_capacity().is_ok() {
+            for first in 0..matching.len() {
+                for second in first + 1..matching.len() {
+                    for third in second + 1..matching.len() {
+                        options.push(Reaction::OpenKan {
+                            hand_tiles: [matching[first], matching[second], matching[third]],
+                        });
+                    }
+                }
+            }
+        }
+        let next = super::state::seat_at_offset(self.rules.variant, pending.discarder, 1);
+        if matches!(self.rules.variant, RiichiVariant::Yonma) && actor == next {
+            for left in 0..player.concealed.len() {
+                for right in left + 1..player.concealed.len() {
+                    let hand_tiles = [player.concealed[left].id(), player.concealed[right].id()];
+                    if validate_chi(&player.concealed, &hand_tiles, called_tile).is_ok() {
+                        options.push(Reaction::Chi { hand_tiles });
+                    }
+                }
+            }
+        }
+        options
     }
 
     fn validate_kan_reaction(
@@ -905,6 +1044,31 @@ mod tests {
         panic!("deterministic seed search did not find a matching call");
     }
 
+    fn find_uncallable_discard() -> (RiichiHand, Seat, TileId) {
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        for seed in 0..10_000 {
+            let hand = start_yonma(seed);
+            let discards = hand.player(dealer).expect("dealer").concealed().to_vec();
+            for discard in discards {
+                let mut candidate = hand.clone();
+                candidate
+                    .discard(dealer, discard.id())
+                    .expect("candidate discard");
+                let no_reactions = (1..4).all(|index| {
+                    let seat = Seat::new(RiichiVariant::Yonma, index).expect("opponent");
+                    candidate
+                        .available_reactions(seat, &RejectAllHandJudge)
+                        .expect("reaction options")
+                        .is_empty()
+                });
+                if no_reactions {
+                    return (hand, dealer, discard.id());
+                }
+            }
+        }
+        panic!("deterministic seed search did not find an uncallable discard");
+    }
+
     fn find_chi_scenario() -> (RiichiHand, Seat, TileId, [TileId; 2], TileId) {
         let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
         let caller = Seat::new(RiichiVariant::Yonma, 1).expect("next seat");
@@ -1033,6 +1197,44 @@ mod tests {
                 |event| matches!(event, HandEvent::MeldDeclared { seat, .. } if *seat == caller)
             )
         );
+    }
+
+    #[test]
+    fn unavailable_reactions_are_skipped_and_next_player_draws_immediately() {
+        let (mut hand, dealer, discard_id) = find_uncallable_discard();
+        let next = Seat::new(RiichiVariant::Yonma, 1).expect("next seat");
+        hand.discard(dealer, discard_id).expect("discard");
+
+        let transition = hand
+            .advance_automatic_reactions(&RejectAllHandJudge)
+            .expect("automatic reactions");
+
+        assert_eq!(hand.phase(), HandPhase::AwaitingTurnAction { seat: next });
+        assert!(
+            transition
+                .events()
+                .iter()
+                .any(|event| matches!(event, HandEvent::TileDrawn { seat, .. } if *seat == next))
+        );
+    }
+
+    #[test]
+    fn reaction_options_include_exact_pon_tile_ids() {
+        let (mut hand, caller, discard_id, matching) = find_matching_scenario(2);
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        hand.discard(dealer, discard_id).expect("discard");
+
+        let options = hand
+            .available_reactions(caller, &RejectAllHandJudge)
+            .expect("reaction options");
+
+        assert!(options.iter().any(|reaction| {
+            matches!(
+                reaction,
+                Reaction::Pon { hand_tiles }
+                    if hand_tiles.contains(&matching[0]) && hand_tiles.contains(&matching[1])
+            )
+        }));
     }
 
     #[test]

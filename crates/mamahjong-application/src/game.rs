@@ -142,6 +142,7 @@ pub struct ObserverMatch {
     remaining_live_draws: usize,
     dora_indicators: Box<[Tile]>,
     players: Box<[ObserverPlayer]>,
+    available_reactions: Box<[Reaction]>,
     result: Option<MatchResult>,
 }
 
@@ -194,6 +195,11 @@ impl ObserverMatch {
     #[must_use]
     pub fn players(&self) -> &[ObserverPlayer] {
         &self.players
+    }
+
+    #[must_use]
+    pub fn available_reactions(&self) -> &[Reaction] {
+        &self.available_reactions
     }
 
     #[must_use]
@@ -306,6 +312,11 @@ impl GameRuntime {
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
             players,
+            available_reactions: self
+                .hand
+                .available_reactions(actor_seat, &RiichiScorer)
+                .map_err(|error| internal_error(error.to_string()))?
+                .into_boxed_slice(),
             result: self.game.result().cloned(),
         })
     }
@@ -386,8 +397,13 @@ impl GameRuntime {
             GameCommand::NineTerminals => self.hand.declare_nine_terminals(seat),
         }
         .map_err(invalid_command)?;
-
-        let events = transition.into_events();
+        let automatic = self
+            .hand
+            .advance_automatic_reactions(&RiichiScorer)
+            .map_err(invalid_command)?;
+        let mut events = transition.into_events().into_vec();
+        events.extend(automatic.into_events());
+        let events = events.into_boxed_slice();
         self.synchronize_riichi(&events)?;
         let ended = events.iter().find(|event| {
             matches!(
