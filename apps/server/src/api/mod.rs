@@ -18,6 +18,8 @@ pub(super) fn routes() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use axum::Router;
     use axum::body::{Body, to_bytes};
     use axum::http::{Method, Request, StatusCode};
@@ -27,6 +29,8 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::{AppState, build_router};
+
+    static NEXT_ARCHIVE: AtomicU64 = AtomicU64::new(0);
 
     async fn request_json(
         router: Router,
@@ -250,7 +254,14 @@ mod tests {
 
     #[tokio::test]
     async fn complete_sanma_match_can_finish_through_public_http_api() {
-        let router = build_router(AppState::new());
+        let archive_directory = std::env::temp_dir().join(format!(
+            "mamahjong-http-match-test-{}-{}",
+            std::process::id(),
+            NEXT_ARCHIVE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let router = build_router(
+            AppState::persistent(&archive_directory).expect("persistent application state"),
+        );
         let mut tokens = Vec::new();
         for index in 0..3 {
             let registration = register(router.clone(), &format!("full_match_{index}")).await;
@@ -422,5 +433,24 @@ mod tests {
                 .sum::<i64>(),
             75_000
         );
+
+        let (status, record) = request_json(
+            router,
+            Method::GET,
+            &format!("/api/v1/matches/{match_id}/record"),
+            Some(&tokens[0]),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(record["schema"], "match_record.v1");
+        assert_eq!(record["hands"].as_array().expect("hands").len(), 3);
+        assert!(!record["result"].is_null());
+
+        let archived = std::fs::read_to_string(archive_directory.join(format!("{match_id}.json")))
+            .expect("durable match record");
+        let archived: Value = serde_json::from_str(&archived).expect("archived JSON");
+        assert_eq!(archived, record);
+        std::fs::remove_dir_all(archive_directory).expect("remove test archive");
     }
 }

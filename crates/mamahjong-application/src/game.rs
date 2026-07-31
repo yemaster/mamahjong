@@ -204,14 +204,15 @@ impl ObserverMatch {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GameRuntime {
-    id: MatchId,
-    version: u64,
-    event_sequence: u64,
+    pub(crate) id: MatchId,
+    pub(crate) version: u64,
+    pub(crate) event_sequence: u64,
     hand_index: u32,
-    players: Box<[MatchPlayer]>,
-    game: RiichiMatch,
+    pub(crate) players: Box<[MatchPlayer]>,
+    pub(crate) rule_snapshot: mahjong_riichi::RiichiRuleSnapshot,
+    pub(crate) game: RiichiMatch,
     hand: RiichiHand,
-    events: Vec<GameEventRecord>,
+    pub(crate) events: Vec<GameEventRecord>,
     ron_evaluations: Box<[Option<WinEvaluation>]>,
 }
 
@@ -221,6 +222,7 @@ impl GameRuntime {
             return Err(internal_error("room is not linked to the starting match"));
         }
         let GameRuleSnapshot::Riichi(snapshot) = room.rule_snapshot();
+        let rule_snapshot = snapshot.clone();
         let rules = snapshot.rules().clone();
         let dealer = Seat::new(rules.variant, 0)
             .map_err(|_| internal_error("starting dealer is invalid"))?;
@@ -250,6 +252,7 @@ impl GameRuntime {
             event_sequence: 0,
             hand_index: 0,
             players,
+            rule_snapshot,
             game,
             hand,
             events: Vec::new(),
@@ -526,7 +529,7 @@ impl GameRuntime {
         Ok(())
     }
 
-    fn seat_for(&self, user_id: &UserId) -> Result<Seat, ApplicationError> {
+    pub(crate) fn seat_for(&self, user_id: &UserId) -> Result<Seat, ApplicationError> {
         self.players
             .iter()
             .find(|player| &player.user_id == user_id)

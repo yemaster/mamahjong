@@ -283,6 +283,16 @@ impl Application {
             .view(actor)
     }
 
+    pub fn match_record(
+        &self,
+        actor: &UserId,
+        match_id: &MatchId,
+    ) -> Result<crate::MatchRecord, ApplicationError> {
+        let store = self.read_store()?;
+        let game = store.matches.get(match_id).ok_or_else(match_not_found)?;
+        crate::MatchRecord::from_runtime(game, actor)
+    }
+
     pub fn submit_game_command(
         &self,
         actor: &UserId,
@@ -904,5 +914,18 @@ mod tests {
             result.final_points().iter().sum::<i32>(),
             i32::try_from(seat_count).expect("seat count") * 25_000
         );
+        let record = application
+            .match_record(players[0].id(), &match_id)
+            .expect("match record");
+        assert_eq!(record.hand_count(), seat_count);
+        assert!(record.is_finished());
+        let encoded = serde_json::to_value(record).expect("serialize record");
+        assert_eq!(encoded["schema"], "match_record.v1");
+        assert_eq!(
+            encoded["hands"].as_array().expect("hand records").len(),
+            seat_count
+        );
+        assert!(encoded["result"]["placements"].is_array());
+        assert!(encoded["rule_snapshot"]["config"].is_object());
     }
 }

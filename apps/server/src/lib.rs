@@ -1,10 +1,14 @@
 mod api;
+mod archive;
 mod config;
 mod health;
 
 use axum::{Router, routing::get};
+use mahjong_core::{MatchId, UserId};
 use mamahjong_application::Application;
+use std::path::Path;
 
+pub use archive::{ArchiveError, MatchArchive};
 pub use config::{ConfigError, ServerConfig};
 pub use health::Readiness;
 
@@ -12,6 +16,7 @@ pub use health::Readiness;
 pub struct AppState {
     readiness: Readiness,
     application: Application,
+    archive: MatchArchive,
 }
 
 impl AppState {
@@ -20,7 +25,16 @@ impl AppState {
         Self {
             readiness: Readiness::new(),
             application: Application::new(),
+            archive: MatchArchive::default(),
         }
+    }
+
+    pub fn persistent(data_dir: impl AsRef<Path>) -> Result<Self, ArchiveError> {
+        Ok(Self {
+            readiness: Readiness::new(),
+            application: Application::new(),
+            archive: MatchArchive::open(data_dir)?,
+        })
     }
 
     #[must_use]
@@ -31,6 +45,21 @@ impl AppState {
     #[must_use]
     pub const fn application(&self) -> &Application {
         &self.application
+    }
+
+    pub(crate) async fn persist_match(
+        &self,
+        actor: &UserId,
+        match_id: &MatchId,
+    ) -> Result<(), ArchiveError> {
+        let record = self
+            .application
+            .match_record(actor, match_id)
+            .map_err(|_| ArchiveError::TaskFailed)?;
+        let archive = self.archive.clone();
+        tokio::task::spawn_blocking(move || archive.persist(&record))
+            .await
+            .map_err(|_| ArchiveError::TaskFailed)?
     }
 }
 

@@ -12,7 +12,7 @@ async fn main() -> Result<(), AnyError> {
     let config = ServerConfig::from_env()?;
     init_telemetry()?;
 
-    let state = AppState::new();
+    let state = AppState::persistent(config.data_dir())?;
     let app = build_router(state.clone());
     let listener = TcpListener::bind(config.bind_address()).await?;
 

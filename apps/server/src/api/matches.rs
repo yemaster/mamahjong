@@ -14,6 +14,7 @@ use crate::AppState;
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/matches/{match_id}", get(get_match))
+        .route("/matches/{match_id}/record", get(get_match_record))
         .route("/matches/{match_id}/commands", post(submit_command))
 }
 
@@ -27,6 +28,18 @@ async fn get_match(
         .application()
         .match_view(user.user().id(), &match_id)?;
     Ok(Json(MatchViewResponse::from(&view)))
+}
+
+async fn get_match_record(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(match_id): Path<String>,
+) -> Result<Json<mamahjong_application::MatchRecord>, ApiError> {
+    let match_id = parse_match_id(match_id)?;
+    let record = state
+        .application()
+        .match_record(user.user().id(), &match_id)?;
+    Ok(Json(record))
 }
 
 #[derive(Deserialize)]
@@ -97,6 +110,13 @@ async fn submit_command(
             command: payload.command.into(),
         },
     )?;
+    state
+        .persist_match(user.user().id(), &match_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, %match_id, "failed to persist match record");
+            ApiError::internal()
+        })?;
     Ok(Json(MatchViewResponse::from(&view)))
 }
 

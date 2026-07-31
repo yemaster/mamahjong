@@ -10,10 +10,13 @@ services:
     restart: unless-stopped
     environment:
       MAMAHJONG_BIND_ADDRESS: 0.0.0.0:8080
+      MAMAHJONG_DATA_DIR: /var/lib/mamahjong
       RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "${MAMAHJONG_HOST:-127.0.0.1}:${MAMAHJONG_PORT:-8080}:8080"
     read_only: true
+    volumes:
+      - match-records:/var/lib/mamahjong
     tmpfs:
       - /tmp:size=16m,mode=1777
     cap_drop:
@@ -28,3 +31,5 @@ services:
         max-size: 10m
         max-file: "3"
 
+volumes:
+  match-records:

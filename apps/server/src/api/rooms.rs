@@ -221,6 +221,13 @@ async fn start_room(
         state
             .application()
             .start_room(user.user().id(), &room_id, payload.expected_version)?;
+    state
+        .persist_match(user.user().id(), &match_id)
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, %match_id, "failed to persist initial match record");
+            ApiError::internal()
+        })?;
     Ok((
         StatusCode::CREATED,
         Json(StartRoomResponse {
