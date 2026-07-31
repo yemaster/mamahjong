@@ -6,7 +6,8 @@
 
 ```text
 apps/server/          后端进程入口
-apps/console/         独立 HTTP 终端客户端
+clients/console/      独立 HTTP 终端客户端
+clients/bot/          独立牌效机器人与对局测试器
 crates/mamahjong-application/ 用例、身份、房间和桌局编排
 crates/mahjong-core/  不依赖网络和存储的领域核心
 crates/mahjong-riichi/ 四麻/三麻日麻规则实现
@@ -41,6 +42,24 @@ cargo run -p mamahjong-console
 cargo run -p mamahjong-console -- --server http://服务器地址:端口
 ```
 
+## 机器人测试
+
+牌效机器人会自动注册测试账号、建房并打完整场。默认依次测试四麻和三麻：
+
+```bash
+cargo run -p mamahjong-bot -- --all
+```
+
+只测试一种玩法：
+
+```bash
+cargo run -p mamahjong-bot -- --variant yonma --quiet
+cargo run -p mamahjong-bot -- --variant sanma --quiet
+```
+
+机器人与服务端、终端客户端是三个独立程序，只通过 HTTP JSON 通信。策略与
+限制见 [牌效机器人](docs/bot.md)。
+
 ## 本地启动与检查
 
 ```bash
@@ -58,4 +77,5 @@ cargo clippy --workspace --all-targets -- -D warnings
 [日麻规则配置](docs/riichi-rules.md)，单局推进与恢复约束见
 [日麻单局状态机](docs/riichi-hand-state.md)，计分与逐局留存边界见
 [日麻和牌与计分](docs/riichi-scoring.md)，终端及后续多端规划见
-[客户端与 UI 演进](docs/client-ui.md)。
+[客户端与 UI 演进](docs/client-ui.md)，自动对局见
+[牌效机器人](docs/bot.md)。

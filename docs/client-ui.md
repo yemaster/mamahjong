@@ -15,6 +15,7 @@ Client session + command state
         ↓
 Observer ViewModel
         ├── Terminal TUI
+        ├── Test Bot
         ├── Web UI
         └── Native app UI
 ```
@@ -22,7 +23,7 @@ Observer ViewModel
 客户端从不重算合法动作、和牌或分数；只展示服务端给当前观察者的裁剪视图，
 并提交带预期版本的意图。WebSocket 阶段再加入命令 ID 和幂等回执。
 
-当前 `apps/console` 不依赖服务端、应用层或日麻 crate，只维护自己的 HTTP
+当前 `clients/console` 不依赖服务端、应用层或日麻 crate，只维护自己的 HTTP
 DTO。服务端与客户端可以使用不同语言。详细约束见
 [ADR-0008](adr/0008-protocol-separated-clients.md)。
 

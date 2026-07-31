@@ -6,6 +6,7 @@ WORKDIR /build
 
 COPY Cargo.toml Cargo.lock rustfmt.toml ./
 COPY apps ./apps
+COPY clients ./clients
 COPY crates ./crates
 
 RUN --mount=type=cache,id=mamahjong-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \

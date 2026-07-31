@@ -14,7 +14,7 @@
 ## 分层
 
 ```text
-Console / future GUI
+Console / Bot / future GUI
         │ protocol
 Server transport
         │ commands / events
@@ -89,6 +89,8 @@ HTTP 用于身份、房间和匹配等请求；WebSocket 用于桌局命令、�
 - 领域层不执行 I/O、不读取时钟、不使用全局随机数。
 - 网络 DTO 不作为领域实体使用。
 - 客户端不得链接服务端或规则 crate，只依赖版本化外部协议。
+- `clients/console` 与 `clients/bot` 分别构建，不相互依赖；服务端位于
+  `apps/server`。
 - 跨层调用依赖接口，具体实现由进程入口组装。
 
 ## 质量门槛

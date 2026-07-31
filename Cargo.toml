@@ -1,8 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
-    "apps/console",
     "apps/server",
+    "clients/bot",
+    "clients/console",
     "crates/mamahjong-application",
     "crates/mahjong-core",
     "crates/mahjong-riichi",

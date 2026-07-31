@@ -133,6 +133,23 @@ MAMAHJONG_SERVER_URL=http://127.0.0.1:18080 \
 三麻启动三个客户端，四麻启动四个客户端。具体按键见项目根目录
 `README.md`。
 
+## 启动机器人测试
+
+服务端启动后运行：
+
+```bash
+cargo run -p mamahjong-bot -- --all
+```
+
+机器人会为四麻、三麻各创建一个东风测试房并打至整场结束。连接其他地址：
+
+```bash
+cargo run -p mamahjong-bot -- \
+  --all --server http://127.0.0.1:18080
+```
+
+机器人是独立 HTTP 客户端，不需要与服务端部署在同一台机器。
+
 ## 生产部署基线
 
 - 在容器前放置支持 WebSocket 的 TLS 反向代理；
