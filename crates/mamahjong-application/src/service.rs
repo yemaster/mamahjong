@@ -174,7 +174,10 @@ impl Application {
         let mut rooms: Vec<_> = store
             .rooms
             .values()
-            .filter(|room| room.visibility() == RoomVisibility::Public)
+            .filter(|room| {
+                room.visibility() == RoomVisibility::Public
+                    && room.lifecycle() == crate::RoomLifecycle::Waiting
+            })
             .cloned()
             .collect();
         rooms.sort_unstable_by(|left, right| left.id().cmp(right.id()));
@@ -621,6 +624,32 @@ mod tests {
             .expect("owner leave");
 
         assert_eq!(room.owner_user_id(), first_guest.id());
+    }
+
+    #[test]
+    fn closed_public_room_is_removed_from_the_joinable_lobby() {
+        let application = Application::new();
+        let (owner, _) = register(&application, "closed_room_host");
+        let room = application
+            .create_room(
+                owner.id(),
+                CreateRoom {
+                    name: "即将关闭".to_owned(),
+                    visibility: RoomVisibility::Public,
+                    rules: RoomRuleSelection::Riichi {
+                        variant: mahjong_riichi::RiichiVariant::Yonma,
+                        request: mahjong_riichi::RoomRuleRequest::default(),
+                    },
+                },
+            )
+            .expect("room");
+        assert_eq!(application.list_rooms().expect("list").len(), 1);
+
+        application
+            .leave_room(owner.id(), room.id(), room.version())
+            .expect("close room");
+
+        assert!(application.list_rooms().expect("list").is_empty());
     }
 
     #[test]
