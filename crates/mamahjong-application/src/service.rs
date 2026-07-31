@@ -418,7 +418,11 @@ fn internal_error() -> ApplicationError {
 
 #[cfg(test)]
 mod tests {
-    use mahjong_riichi::{RiichiRuleOverrides, RonResolution, SettlementRuleOverrides};
+    use mahjong_riichi::{
+        AbortiveDrawRuleOverrides, DealerContinuation, MatchLength, MatchRuleOverrides,
+        RiichiRuleOverrides, RiichiVariant, RonResolution, ScoringRuleOverrides,
+        SettlementRuleOverrides,
+    };
 
     use super::{
         Application, CreateRoom, RegisterUser, RoomRuleSelection, UpdateProfile, UpdateRoom,
@@ -731,5 +735,145 @@ mod tests {
         assert_eq!(view.hand_index(), 1);
         assert_eq!(view.progress().round_number().value(), 2);
         assert!(view.event_sequence() > 200);
+    }
+
+    #[test]
+    fn yonma_and_sanma_can_each_finish_a_complete_east_only_match() {
+        for variant in [RiichiVariant::Yonma, RiichiVariant::Sanma] {
+            finish_east_only_match(variant);
+        }
+    }
+
+    fn finish_east_only_match(variant: RiichiVariant) {
+        let application = Application::new();
+        let seat_count = usize::from(variant.seat_count().value());
+        let prefix = if variant == RiichiVariant::Yonma {
+            "yonma"
+        } else {
+            "sanma"
+        };
+        let players = (0..seat_count)
+            .map(|index| register(&application, &format!("{prefix}_{index}")).0)
+            .collect::<Vec<_>>();
+        let room = application
+            .create_room(
+                players[0].id(),
+                CreateRoom {
+                    name: format!("{prefix} complete match"),
+                    visibility: RoomVisibility::Private,
+                    rules: RoomRuleSelection::Riichi {
+                        variant,
+                        request: mahjong_riichi::RoomRuleRequest {
+                            preset: None,
+                            overrides: RiichiRuleOverrides {
+                                match_rules: Some(MatchRuleOverrides {
+                                    length: Some(MatchLength::EastOnly),
+                                    tobi: Some(false),
+                                    dealer_continuation: Some(DealerContinuation::WinOnly),
+                                    agari_yame: Some(false),
+                                    ..MatchRuleOverrides::default()
+                                }),
+                                scoring: Some(ScoringRuleOverrides {
+                                    nagashi_mangan: Some(false),
+                                    ..ScoringRuleOverrides::default()
+                                }),
+                                abortive_draws: Some(AbortiveDrawRuleOverrides {
+                                    four_winds: Some(false),
+                                    four_kans: Some(false),
+                                    nine_terminals: Some(false),
+                                    four_riichi: Some(false),
+                                }),
+                                ..RiichiRuleOverrides::default()
+                            },
+                        },
+                    },
+                },
+            )
+            .expect("room");
+        let mut room = room;
+        for player in &players[1..] {
+            room = application
+                .join_room(player.id(), room.id(), room.version())
+                .expect("join");
+        }
+        for player in &players {
+            room = application
+                .set_ready(player.id(), room.id(), room.version(), true)
+                .expect("ready");
+        }
+        let (_, match_id) = application
+            .start_room(players[0].id(), room.id(), room.version())
+            .expect("start");
+        let mut view = application
+            .match_view(players[0].id(), &match_id)
+            .expect("initial view");
+
+        for _ in 0..5_000 {
+            if view.result().is_some() {
+                break;
+            }
+            match view.phase() {
+                mahjong_riichi::HandPhase::AwaitingTurnAction { seat }
+                | mahjong_riichi::HandPhase::AwaitingDiscard { seat } => {
+                    let actor = &players[usize::from(seat.index())];
+                    let actor_view = application
+                        .match_view(actor.id(), &match_id)
+                        .expect("actor view");
+                    let tile_id = actor_view
+                        .players()
+                        .iter()
+                        .find(|player| player.player().seat() == seat)
+                        .and_then(crate::ObserverPlayer::concealed_tiles)
+                        .expect("own concealed tiles")[0]
+                        .id()
+                        .value();
+                    view = application
+                        .submit_game_command(
+                            actor.id(),
+                            &match_id,
+                            SubmitGameCommand {
+                                expected_version: actor_view.version(),
+                                command: GameCommand::Discard { tile_id },
+                            },
+                        )
+                        .expect("discard");
+                }
+                mahjong_riichi::HandPhase::AwaitingResponses { trigger_seat } => {
+                    for (index, actor) in players.iter().enumerate() {
+                        if index == usize::from(trigger_seat.index()) {
+                            continue;
+                        }
+                        view = application
+                            .submit_game_command(
+                                actor.id(),
+                                &match_id,
+                                SubmitGameCommand {
+                                    expected_version: view.version(),
+                                    command: GameCommand::Pass,
+                                },
+                            )
+                            .expect("pass");
+                    }
+                }
+                mahjong_riichi::HandPhase::Ended { .. } => {
+                    assert!(
+                        view.result().is_some(),
+                        "only the terminal hand stays ended"
+                    );
+                }
+            }
+        }
+
+        let result = view
+            .result()
+            .expect("match must finish within command bound");
+        assert_eq!(
+            result.hand_count(),
+            u32::try_from(seat_count).expect("seat count")
+        );
+        assert_eq!(
+            result.final_points().iter().sum::<i32>(),
+            i32::try_from(seat_count).expect("seat count") * 25_000
+        );
     }
 }
