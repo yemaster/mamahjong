@@ -21,7 +21,7 @@ const seatChip: React.CSSProperties = {
   gap: 8,
   padding: "4px 12px",
   borderRadius: "var(--radius-sm)",
-  background: "var(--color-surface)",
+  background: "var(--warm-white)",
 };
 
 export function ClockBar() {
@@ -44,10 +44,10 @@ export function ClockBar() {
             ? c.remaining_ms / (c.base_ms + c.reserve_ms)
             : 0;
         const color =
-          totalS <= 5 ? "#C44B4B" : totalS <= 10 ? "#D4A853" : "#4ECCA3";
+          totalS <= 5 ? "var(--red-soft)" : totalS <= 10 ? "var(--pink)" : "var(--mint)";
         return (
           <div key={c.seat} style={seatChip}>
-            <span style={{ color: "var(--color-text-dim)" }}>
+            <span style={{ color: "#7A5C48" }}>
               {playerNames.get(c.seat) ?? `玩家${c.seat}`}
             </span>
             <span style={{ color, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>

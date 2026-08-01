@@ -18,7 +18,7 @@ const spinner: React.CSSProperties = {
   width: 64,
   height: 64,
   border: "4px solid rgba(255,255,255,0.1)",
-  borderTop: "4px solid var(--color-accent)",
+  borderTop: "4px solid var(--pink)",
   borderRadius: "50%",
   animation: "spin 1s linear infinite",
   marginBottom: 24,
@@ -78,7 +78,7 @@ export default function MatchmakingScene({ ticketId }: MatchmakingSceneProps) {
         </>
       ) : (
         <>
-          <p style={{ color: "var(--color-text-dim)", fontSize: 14 }}>
+          <p style={{ color: "#7A5C48", fontSize: 14 }}>
             请稍候，正在寻找对手…
           </p>
           <div style={{ marginTop: 24 }}>

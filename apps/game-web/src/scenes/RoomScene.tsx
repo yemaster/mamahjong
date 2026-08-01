@@ -16,13 +16,13 @@ const heading: React.CSSProperties = {
   fontSize: 22,
   fontWeight: 800,
   letterSpacing: "0.08em",
-  color: "var(--color-gold-bright)",
+  color: "var(--pink-dark)",
   marginBottom: 24,
 };
 
 const section: React.CSSProperties = {
-  background: "var(--color-surface)",
-  border: "1px solid var(--color-border)",
+  background: "var(--warm-white)",
+  border: "1px solid var(--border)",
   padding: 20,
   marginBottom: 16,
   maxWidth: 520,
@@ -32,11 +32,11 @@ const sectionTitle: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 700,
   letterSpacing: "0.08em",
-  color: "var(--color-text-dim)",
+  color: "#7A5C48",
   textTransform: "uppercase",
   marginBottom: 14,
   paddingBottom: 8,
-  borderBottom: "1px solid var(--color-border)",
+  borderBottom: "1px solid var(--border)",
 };
 
 const memberRow: React.CSSProperties = {
@@ -52,10 +52,10 @@ const readyDot = (ready: boolean): React.CSSProperties => ({
   width: 8,
   height: 8,
   borderRadius: "50%",
-  background: ready ? "var(--color-success)" : "var(--color-gold-dim)",
+  background: ready ? "var(--mint)" : "var(--pink)",
   boxShadow: ready
-    ? "0 0 6px var(--color-success)"
-    : "0 0 6px var(--color-gold-dim)",
+    ? "0 0 6px var(--mint)"
+    : "0 0 6px var(--pink)",
   display: "inline-block",
   marginRight: 10,
 });
@@ -79,10 +79,10 @@ export default function RoomScene({ roomId }: RoomSceneProps) {
   });
 
   if (room.isLoading)
-    return <div style={{ padding: 40, color: "var(--color-text-dim)" }}>加载中…</div>;
+    return <div style={{ padding: 40, color: "#7A5C48" }}>加载中…</div>;
   if (room.error)
     return (
-      <div style={{ padding: 40, color: "#e88" }}>
+      <div style={{ padding: 40, color: "var(--red-soft)" }}>
         {apiFailure(room.error).message}
         <div style={{ marginTop: 12 }}>
           <Button variant="ghost" size="sm" onClick={() => navigateTo({ kind: "lobby" })}>
@@ -124,7 +124,7 @@ export default function RoomScene({ roomId }: RoomSceneProps) {
               <span style={readyDot(m.ready)} />
               {m.nickname}
               {m.user_id === data.owner_user_id && (
-                <span style={{ color: "var(--color-gold-dim)", marginLeft: 8, fontSize: 11 }}>
+                <span style={{ color: "var(--pink)", marginLeft: 8, fontSize: 11 }}>
                   房主
                 </span>
               )}
@@ -138,13 +138,13 @@ export default function RoomScene({ roomId }: RoomSceneProps) {
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {!isMember && (
-          <Button variant="gold" onClick={call(() => gameApi.joinRoom(roomId, data.version, token!))}>
+          <Button variant="pink" onClick={call(() => gameApi.joinRoom(roomId, data.version, token!))}>
             加入房间
           </Button>
         )}
         {isMember && (
           <Button
-            variant="gold"
+            variant="pink"
             onClick={call(() => gameApi.setReady(roomId, data.version, !selfMember?.ready, token!))}
           >
             {selfMember?.ready ? "取消准备" : "准备"}
@@ -152,7 +152,7 @@ export default function RoomScene({ roomId }: RoomSceneProps) {
         )}
         {isOwner && (
           <Button
-            variant="gold"
+            variant="pink"
             onClick={call(() => gameApi.startRoom(roomId, data.version, token!))}
             disabled={!allReady}
           >

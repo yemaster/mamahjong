@@ -14,14 +14,14 @@ const heading: React.CSSProperties = {
   fontSize: 22,
   fontWeight: 800,
   letterSpacing: "0.08em",
-  color: "var(--color-gold-bright)",
+  color: "var(--pink-dark)",
   marginBottom: 24,
 };
 const label: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
   letterSpacing: "0.08em",
-  color: "var(--color-text-dim)",
+  color: "#7A5C48",
   textTransform: "uppercase",
   marginBottom: 4,
 };
@@ -31,9 +31,9 @@ const field: React.CSSProperties = {
   padding: "10px 14px",
   marginBottom: 16,
   background: "rgba(0,0,0,0.35)",
-  border: "1px solid var(--color-border)",
+  border: "1px solid var(--border)",
   borderRadius: "var(--radius-sm)",
-  color: "var(--color-text)",
+  color: "var(--brown)",
   fontSize: 14,
   outline: "none",
   letterSpacing: "0.04em",
@@ -77,9 +77,9 @@ export default function CreateRoomScene() {
     <div style={page}>
       <h2 style={heading}>创建房间</h2>
       {catalog.error && (
-        <div style={{ color: "#e88", marginBottom: 14, fontSize: 13 }}>无法加载规则：{apiFailure(catalog.error).message}</div>
+        <div style={{ color: "var(--red-soft)", marginBottom: 14, fontSize: 13 }}>无法加载规则：{apiFailure(catalog.error).message}</div>
       )}
-      {error && <div style={{ color: "#e88", marginBottom: 14, fontSize: 13 }}>{error}</div>}
+      {error && <div style={{ color: "var(--red-soft)", marginBottom: 14, fontSize: 13 }}>{error}</div>}
       <div style={label}>房间名称</div>
       <input style={field} placeholder="输入房间名称" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
       <div style={label}>规则</div>
@@ -100,7 +100,7 @@ export default function CreateRoomScene() {
         </>
       )}
       <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
-        <Button variant="gold" size="lg" onClick={submit} disabled={loading}>创建</Button>
+        <Button variant="pink" size="lg" onClick={submit} disabled={loading}>创建</Button>
         <Button variant="ghost" size="lg" onClick={() => navigateTo({ kind: "lobby" })}>取消</Button>
       </div>
     </div>

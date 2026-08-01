@@ -19,8 +19,8 @@ const heading: React.CSSProperties = {
   fontSize: 30,
   fontWeight: 900,
   letterSpacing: "0.1em",
-  color: "var(--color-gold-bright)",
-  textShadow: "0 0 20px var(--color-gold-dim)",
+  color: "var(--pink-dark)",
+  
   marginBottom: 36,
 };
 
@@ -33,37 +33,37 @@ const placementsRow: React.CSSProperties = {
 };
 
 const placementCard = (rank: number): React.CSSProperties => ({
-  background: "var(--color-surface)",
+  background: "var(--warm-white)",
   padding: "24px 32px",
   minWidth: 160,
   textAlign: "center",
   border:
     rank === 1
-      ? "2px solid var(--color-gold-bright)"
-      : "1px solid var(--color-border)",
+      ? "2px solid var(--pink-dark)"
+      : "1px solid var(--border)",
   boxShadow:
     rank === 1
-      ? "0 0 20px var(--color-gold-dim)"
+      ? "0 0 20px var(--pink)"
       : "0 2px 8px rgba(0,0,0,0.4)",
 });
 
 const rankStyle: React.CSSProperties = {
   fontSize: 36,
   fontWeight: 900,
-  color: "var(--color-gold-bright)",
+  color: "var(--pink-dark)",
   marginBottom: 8,
 };
 
 const nicknameStyle: React.CSSProperties = {
   fontSize: 16,
   fontWeight: 600,
-  color: "var(--color-text)",
+  color: "var(--brown)",
   marginBottom: 4,
 };
 
 const pointsStyle: React.CSSProperties = {
   fontSize: 14,
-  color: "var(--color-text-dim)",
+  color: "#7A5C48",
 };
 
 interface ResultSceneProps {
@@ -133,7 +133,7 @@ export default function ResultScene({ matchId }: ResultSceneProps) {
 
       <div style={{ display: "flex", gap: 12 }}>
         <Button
-          variant="gold"
+          variant="pink"
           size="lg"
           onClick={() => navigateTo({ kind: "lobby" })}
         >

@@ -5,11 +5,11 @@ import { navigateTo } from "../routing";
 import { useAuthStore } from "../stores/authStore";
 
 const page: React.CSSProperties = { padding: "36px 44px", height: "100%", overflow: "auto" };
-const heading: React.CSSProperties = { fontSize: 22, fontWeight: 800, letterSpacing: "0.08em", color: "var(--color-gold-bright)", marginBottom: 24 };
-const section: React.CSSProperties = { background: "var(--color-surface)", border: "1px solid var(--color-border)", padding: 20, marginBottom: 14, maxWidth: 460 };
-const secLabel: React.CSSProperties = { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--color-text-dim)", textTransform: "uppercase", marginBottom: 6 };
-const secValue: React.CSSProperties = { fontSize: 15, fontWeight: 600, letterSpacing: "0.04em", color: "var(--color-text)" };
-const field: React.CSSProperties = { width: "100%", padding: "10px 14px", marginTop: 6, marginBottom: 10, background: "rgba(0,0,0,0.35)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", color: "var(--color-text)", fontSize: 14, outline: "none" };
+const heading: React.CSSProperties = { fontSize: 22, fontWeight: 800, letterSpacing: "0.08em", color: "var(--pink-dark)", marginBottom: 24 };
+const section: React.CSSProperties = { background: "var(--warm-white)", border: "1px solid var(--border)", padding: 20, marginBottom: 14, maxWidth: 460 };
+const secLabel: React.CSSProperties = { fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "#7A5C48", textTransform: "uppercase", marginBottom: 6 };
+const secValue: React.CSSProperties = { fontSize: 15, fontWeight: 600, letterSpacing: "0.04em", color: "var(--brown)" };
+const field: React.CSSProperties = { width: "100%", padding: "10px 14px", marginTop: 6, marginBottom: 10, background: "rgba(0,0,0,0.35)", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", color: "var(--brown)", fontSize: 14, outline: "none" };
 
 export default function ProfileScene() {
   const { identity, token, setIdentity, logout } = useAuthStore();
@@ -48,14 +48,14 @@ export default function ProfileScene() {
           <div style={secLabel}>段位</div>
           {identity.profile.ranks.map((r) => (
             <div key={r.rule_set_id} style={{ marginTop: 4 }}>
-              <span style={{ color: "var(--color-gold-bright)", fontWeight: 700, letterSpacing: "0.06em" }}>{r.rank}</span>
-              <span style={{ color: "var(--color-text-dim)", fontSize: 12, marginLeft: 8 }}>{r.rule_set_id} · {r.points}pt</span>
+              <span style={{ color: "var(--pink-dark)", fontWeight: 700, letterSpacing: "0.06em" }}>{r.rank}</span>
+              <span style={{ color: "#7A5C48", fontSize: 12, marginLeft: 8 }}>{r.rule_set_id} · {r.points}pt</span>
             </div>
           ))}
         </div>
       )}
       <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-        <Button variant="gold" onClick={() => navigateTo({ kind: "lobby" })}>返回大厅</Button>
+        <Button variant="pink" onClick={() => navigateTo({ kind: "lobby" })}>返回大厅</Button>
         <Button variant="danger" onClick={() => { logout(); navigateTo({ kind: "lobby" }); }}>退出登录</Button>
       </div>
     </div>

@@ -17,7 +17,7 @@ const heading: React.CSSProperties = {
   fontSize: 22,
   fontWeight: 800,
   letterSpacing: "0.08em",
-  color: "var(--color-gold-bright)",
+  color: "var(--pink-dark)",
   marginBottom: 28,
 };
 
@@ -28,8 +28,8 @@ const grid: React.CSSProperties = {
 };
 
 const cardBase: React.CSSProperties = {
-  background: "var(--color-surface)",
-  border: "1px solid var(--color-border)",
+  background: "var(--warm-white)",
+  border: "1px solid var(--border)",
   padding: 18,
   cursor: "pointer",
   textAlign: "left",
@@ -37,7 +37,7 @@ const cardBase: React.CSSProperties = {
 };
 
 const cardHover: React.CSSProperties = {
-  borderColor: "var(--color-border-glow)",
+  borderColor: "var(--border)",
   boxShadow: "0 0 12px rgba(180,140,60,0.1)",
 };
 
@@ -45,14 +45,14 @@ const cardName: React.CSSProperties = {
   fontSize: 16,
   fontWeight: 700,
   letterSpacing: "0.05em",
-  color: "var(--color-gold-bright)",
+  color: "var(--pink-dark)",
   marginBottom: 8,
 };
 
 const cardMeta: React.CSSProperties = {
   fontSize: 12,
   letterSpacing: "0.04em",
-  color: "var(--color-text-dim)",
+  color: "#7A5C48",
 };
 
 const actions: React.CSSProperties = {
@@ -67,15 +67,15 @@ const sectionTitle: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 700,
   letterSpacing: "0.1em",
-  color: "var(--color-text-dim)",
+  color: "#7A5C48",
   textTransform: "uppercase",
   marginBottom: 14,
   paddingBottom: 8,
-  borderBottom: "1px solid var(--color-border)",
+  borderBottom: "1px solid var(--border)",
 };
 
 const empty: React.CSSProperties = {
-  color: "var(--color-text-dim)",
+  color: "#7A5C48",
   fontSize: 14,
   letterSpacing: "0.04em",
   textAlign: "center",
@@ -83,7 +83,7 @@ const empty: React.CSSProperties = {
 };
 
 const errorStyle: React.CSSProperties = {
-  color: "#e88",
+  color: "var(--red-soft)",
   fontSize: 13,
   marginTop: 16,
 };
@@ -114,7 +114,7 @@ export default function LobbyScene() {
 
       <div style={actions}>
         <Button
-          variant="gold"
+          variant="pink"
           size="lg"
           onClick={() => navigateTo({ kind: "create-room" })}
         >
@@ -129,7 +129,7 @@ export default function LobbyScene() {
       </div>
 
       {rooms.isLoading && (
-        <div style={{ color: "var(--color-text-dim)", marginTop: 40 }}>
+        <div style={{ color: "#7A5C48", marginTop: 40 }}>
           加载中…
         </div>
       )}
