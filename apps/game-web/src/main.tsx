@@ -1,12 +1,21 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./styles/global.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: 1, staleTime: 15_000 },
   },
 });
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
+  </React.StrictMode>,
+);
 
 function App() {
   return (
@@ -16,20 +25,12 @@ function App() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#0D2818",
-        color: "#F5EED6",
-        fontFamily: '"Noto Sans SC", "PingFang SC", sans-serif',
+        background: "var(--color-bg)",
+        color: "var(--color-text)",
+        fontFamily: "var(--font-game)",
       }}
     >
       <h1>麻麻的将</h1>
     </div>
   );
 }
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </React.StrictMode>
-);
