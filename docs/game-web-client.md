@@ -1,6 +1,6 @@
 # 二次元网页客户端设计
 
-状态：设计中
+状态：网页端已实现，桌面端设计中
 最后更新：2026-08-01
 
 ## 目标
@@ -331,3 +331,67 @@ else → POST /api/v1/matches/{id}/commands
 - 牌谱回放
 - 角色 Live2D 动画（用静态占位图）
 - 道具/付费系统
+
+## 桌面分发 (Tauri)
+
+`apps/desktop` 用 Tauri v2 将 game-web 打包为独立桌面窗口。
+
+### 架构
+
+```text
+┌──────────────────────────────────────┐
+│           Tauri 原生窗口              │
+│  ┌────────────────────────────────┐  │
+│  │       WebView                   │  │
+│  │  http://localhost:8080/game/    │  │
+│  │  (或内嵌 game-web dist)         │  │
+│  └────────────────────────────────┘  │
+│  ┌────────────────────────────────┐  │
+│  │   本地资源加载 (tauri://)        │  │
+│  │   assets/characters/            │  │
+│  │   assets/voices/                │  │
+│  └────────────────────────────────┘  │
+└──────────────────────────────────────┘
+```
+
+桌面端连接本地或远程服务端。素材从本地文件系统加载，不再走 HTTP 的
+`public/assets/` 路径。Tauri 提供 `tauri://localhost` 自定义协议或
+文件系统 API 读取本地资源目录。
+
+### 窗口配置
+
+- 标题：麻麻的将
+- 默认尺寸：1280×800（16:10），最小 1024×768
+- 可全屏，保持 16:9 或 16:10 比例
+- 图标：`apps/desktop/src-tauri/icons/`（占位图标）
+
+### 自动更新
+
+预留 Tauri updater 插件接口，当前返回 "无更新" 占位响应。
+正式发布时配置更新服务器 URL 和签名密钥。
+
+### 本地素材
+
+桌面端素材目录（与 git 隔离）：
+```
+~/Library/Application Support/mamahjong/assets/
+  characters/
+  voices/
+  effects/
+  sounds/
+```
+
+客户端启动时检查素材目录是否存在，不存在则使用网页端同样的占位降级。
+素材加载通过 Tauri `fs` API 或自定义协议 `tauri://asset/` 完成。
+
+### 开发与构建
+
+```bash
+# 开发
+cd apps/desktop && npm run tauri dev
+
+# 构建 macOS .app
+cd apps/desktop && npm run tauri build
+```
+
+构建产物不包含服务端，用户需自行启动服务端或连接远程服务器。
