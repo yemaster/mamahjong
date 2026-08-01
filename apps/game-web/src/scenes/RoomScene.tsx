@@ -153,7 +153,6 @@ export default function RoomScene({ roomId }: RoomSceneProps) {
         {isOwner && (
           <Button
             variant="gold"
-            glow={allReady}
             onClick={call(() => gameApi.startRoom(roomId, data.version, token!))}
             disabled={!allReady}
           >

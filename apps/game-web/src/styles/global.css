@@ -130,25 +130,7 @@ a {
    ANIMATIONS
    ═══════════════════════════════════════════════════════════════ */
 
-@keyframes splashFloat {
-  0%   { transform: translateY(0) scale(0.6) rotate(0deg);   opacity: 0; }
-  8%   { opacity: 0.5; }
-  85%  { opacity: 0.2; }
-  100% { transform: translateY(-115vh) scale(1.2) rotate(60deg); opacity: 0; }
-}
-
-@keyframes splashPulse {
-  0%, 100% { opacity: 0.4; transform: scale(1); }
-  50%      { opacity: 1;   transform: scale(1.04); }
-}
-
 @keyframes glowPulse {
   0%, 100% { box-shadow: 0 0 4px var(--color-gold-dim); }
   50%      { box-shadow: 0 0 12px var(--color-gold-bright), 0 0 24px var(--color-gold-dim); }
-}
-
-@keyframes borderShimmer {
-  0%   { border-color: var(--color-border); }
-  50%  { border-color: var(--color-border-glow); }
-  100% { border-color: var(--color-border); }
 }

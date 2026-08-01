@@ -20,7 +20,7 @@ const overlay: React.CSSProperties = {
 };
 
 const card: React.CSSProperties = {
-  background: "linear-gradient(180deg, #122018 0%, #0c1812 100%)",
+  background: "#0f1f18",
   border: "1px solid var(--color-border)",
   boxShadow:
     "0 0 30px rgba(0,0,0,0.7), 0 0 60px rgba(140,110,30,0.08), inset 0 1px 0 rgba(255,255,255,0.03)",

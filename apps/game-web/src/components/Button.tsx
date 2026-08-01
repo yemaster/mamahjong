@@ -3,11 +3,8 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: "gold" | "danger" | "ghost";
   size?: "sm" | "md" | "lg";
-  glow?: boolean;
   children: ReactNode;
 }
-
-/* ══════ Base ══════ */
 
 const base: React.CSSProperties = {
   display: "inline-flex",
@@ -16,99 +13,82 @@ const base: React.CSSProperties = {
   gap: 6,
   fontWeight: 700,
   letterSpacing: "0.06em",
-  textTransform: "uppercase",
   cursor: "pointer",
-  transition: "all 0.12s ease",
+  transition: "background 0.12s, border-color 0.12s, color 0.12s, transform 0.08s",
   position: "relative",
   userSelect: "none",
 };
 
-/* ══════ Variants ══════ */
-
-const goldStyle: React.CSSProperties = {
-  background: "linear-gradient(180deg, #2a2010 0%, #1a1408 100%)",
-  color: "var(--color-gold-bright)",
-  border: "1px solid var(--color-gold-dim)",
-  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 4px rgba(0,0,0,0.5)",
+const gold: React.CSSProperties = {
+  ...base,
+  background: "#1a1408",
+  color: "#e8c547",
+  border: "1px solid #8a6d28",
 };
 
 const goldHover: React.CSSProperties = {
-  borderColor: "var(--color-gold-bright)",
-  boxShadow:
-    "inset 0 1px 0 rgba(255,255,255,0.08), 0 0 10px var(--color-gold-dim), 0 2px 4px rgba(0,0,0,0.5)",
-  color: "#fff",
+  background: "#2a2010",
+  borderColor: "#c9a034",
+  color: "#f5eed6",
 };
 
 const goldActive: React.CSSProperties = {
   transform: "scale(0.97)",
-  boxShadow: "inset 0 2px 4px rgba(0,0,0,0.4), 0 0 6px var(--color-gold-dim)",
 };
 
-const dangerStyle: React.CSSProperties = {
-  background: "linear-gradient(180deg, #3a1814 0%, #24100c 100%)",
+const danger: React.CSSProperties = {
+  ...base,
+  background: "#24100c",
   color: "#e88",
   border: "1px solid #733",
-  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04), 0 2px 4px rgba(0,0,0,0.5)",
 };
 
 const dangerHover: React.CSSProperties = {
+  background: "#3a1814",
   borderColor: "#c44",
-  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.06), 0 0 10px var(--color-danger-glow)",
-  color: "#faa",
 };
 
 const dangerActive: React.CSSProperties = {
   transform: "scale(0.97)",
-  boxShadow: "inset 0 2px 4px rgba(0,0,0,0.4), 0 0 6px var(--color-danger-glow)",
 };
 
-const ghostStyle: React.CSSProperties = {
+const ghost: React.CSSProperties = {
+  ...base,
   background: "transparent",
-  color: "var(--color-text-dim)",
+  color: "#7a7668",
   border: "1px solid transparent",
 };
 
 const ghostHover: React.CSSProperties = {
-  color: "var(--color-text)",
-  borderColor: "var(--color-border)",
+  color: "#f0e6c8",
+  borderColor: "rgba(180,140,60,0.25)",
 };
-
-/* ══════ Sizes ══════ */
 
 const sizes: Record<string, React.CSSProperties> = {
-  sm: { padding: "5px 14px", fontSize: 12, borderRadius: "var(--radius-sm)" },
-  md: { padding: "9px 22px", fontSize: 14, borderRadius: "var(--radius-sm)" },
-  lg: { padding: "13px 30px", fontSize: 16, borderRadius: "var(--radius)" },
+  sm: { padding: "5px 14px", fontSize: 12, borderRadius: 2 },
+  md: { padding: "9px 22px", fontSize: 14, borderRadius: 2 },
+  lg: { padding: "13px 30px", fontSize: 16, borderRadius: 4 },
 };
 
-/* ══════ Component ══════ */
-
-const variantStyles: Record<
-  string,
-  { base: React.CSSProperties; hover: React.CSSProperties; active: React.CSSProperties }
-> = {
-  gold:   { base: goldStyle,   hover: goldHover,   active: goldActive },
-  danger: { base: dangerStyle, hover: dangerHover, active: dangerActive },
-  ghost:  { base: ghostStyle,  hover: ghostHover,  active: { transform: "scale(0.98)" } },
-};
+const styles = { gold, goldHover, goldActive, danger, dangerHover, dangerActive, ghost, ghostHover };
 
 export function Button({
   variant = "gold",
   size = "md",
-  glow = false,
   style,
   disabled,
   children,
   ...props
 }: ButtonProps) {
-  const v = variantStyles[variant] ?? variantStyles.gold!;
+  const v = styles[variant] ?? styles.gold;
+  const h = styles[`${variant}Hover` as keyof typeof styles] as React.CSSProperties | undefined;
+  const a = styles[`${variant}Active` as keyof typeof styles] as React.CSSProperties | undefined;
+
   const merged: React.CSSProperties = {
-    ...base,
-    ...v.base,
+    ...v,
     ...sizes[size],
-    ...(glow ? { animation: "glowPulse 2.5s ease-in-out infinite" } : {}),
     ...(disabled
-      ? { opacity: 0.35, cursor: "not-allowed", pointerEvents: "none" }
+      ? { opacity: 0.3, cursor: "not-allowed", pointerEvents: "none" }
       : {}),
     ...style,
   };
@@ -118,20 +98,20 @@ export function Button({
       style={merged}
       disabled={disabled}
       onMouseEnter={(e) => {
-        if (disabled) return;
-        Object.assign((e.target as HTMLElement).style, v.hover);
+        if (disabled || !h) return;
+        Object.assign((e.target as HTMLElement).style, h);
       }}
       onMouseLeave={(e) => {
         if (disabled) return;
-        Object.assign((e.target as HTMLElement).style, v.base);
+        Object.assign((e.target as HTMLElement).style, v);
       }}
       onMouseDown={(e) => {
-        if (disabled) return;
-        Object.assign((e.target as HTMLElement).style, v.active);
+        if (disabled || !a) return;
+        Object.assign((e.target as HTMLElement).style, a);
       }}
       onMouseUp={(e) => {
-        if (disabled) return;
-        Object.assign((e.target as HTMLElement).style, v.hover);
+        if (disabled || !h) return;
+        Object.assign((e.target as HTMLElement).style, h);
       }}
       {...props}
     >

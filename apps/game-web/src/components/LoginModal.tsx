@@ -156,7 +156,6 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
       <Button
         variant="gold"
         size="md"
-        glow
         onClick={submit}
         disabled={loading || !loginName || !password}
         style={{ width: "100%", marginTop: 6 }}
