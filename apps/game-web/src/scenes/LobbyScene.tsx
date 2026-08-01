@@ -5,56 +5,90 @@ import { navigateTo } from "../routing";
 import { useAuthStore } from "../stores/authStore";
 import type { RoomView } from "../types";
 
+/* ══════ Styles ══════ */
+
 const page: React.CSSProperties = {
-  padding: "32px 40px",
+  padding: "36px 44px",
   height: "100%",
   overflow: "auto",
 };
 
-const title: React.CSSProperties = {
+const heading: React.CSSProperties = {
   fontSize: 22,
-  fontWeight: 700,
-  marginBottom: 24,
+  fontWeight: 800,
+  letterSpacing: "0.08em",
+  color: "var(--color-gold-bright)",
+  marginBottom: 28,
 };
 
 const grid: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
-  gap: 16,
+  gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))",
+  gap: 14,
 };
 
-const cardStyle: React.CSSProperties = {
+const cardBase: React.CSSProperties = {
   background: "var(--color-surface)",
-  borderRadius: "var(--radius)",
-  padding: 20,
-  border: "1px solid rgba(255,255,255,0.06)",
+  border: "1px solid var(--color-border)",
+  padding: 18,
+  cursor: "pointer",
+  textAlign: "left",
+  transition: "border-color 0.15s, box-shadow 0.15s",
 };
 
-const cardTitle: React.CSSProperties = {
+const cardHover: React.CSSProperties = {
+  borderColor: "var(--color-border-glow)",
+  boxShadow: "0 0 12px rgba(180,140,60,0.1)",
+};
+
+const cardName: React.CSSProperties = {
   fontSize: 16,
-  fontWeight: 600,
+  fontWeight: 700,
+  letterSpacing: "0.05em",
+  color: "var(--color-gold-bright)",
   marginBottom: 8,
 };
 
 const cardMeta: React.CSSProperties = {
-  fontSize: 13,
+  fontSize: 12,
+  letterSpacing: "0.04em",
   color: "var(--color-text-dim)",
-  marginBottom: 12,
 };
 
 const actions: React.CSSProperties = {
   display: "flex",
-  gap: 12,
-  marginTop: 24,
+  gap: 14,
+  marginTop: 30,
+  marginBottom: 28,
   flexWrap: "wrap",
+};
+
+const sectionTitle: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 700,
+  letterSpacing: "0.1em",
+  color: "var(--color-text-dim)",
+  textTransform: "uppercase",
+  marginBottom: 14,
+  paddingBottom: 8,
+  borderBottom: "1px solid var(--color-border)",
 };
 
 const empty: React.CSSProperties = {
   color: "var(--color-text-dim)",
-  fontSize: 15,
+  fontSize: 14,
+  letterSpacing: "0.04em",
   textAlign: "center",
   paddingTop: 80,
 };
+
+const errorStyle: React.CSSProperties = {
+  color: "#e88",
+  fontSize: 13,
+  marginTop: 16,
+};
+
+/* ══════ Component ══════ */
 
 export default function LobbyScene() {
   const token = useAuthStore((s) => s.token);
@@ -64,57 +98,33 @@ export default function LobbyScene() {
     refetchInterval: 5000,
   });
 
-  const joinRoom = (room: RoomView) => {
-    navigateTo({ kind: "room", roomId: room.id });
+  const quickMatch = (variant: string) => {
+    if (!token) return;
+    gameApi
+      .enterMatchmaking(`riichi/${variant}`, token)
+      .then((ticket) =>
+        navigateTo({ kind: "matchmaking", ticketId: ticket.id }),
+      )
+      .catch(() => {});
   };
 
   return (
     <div style={page}>
-      <h2 style={title}>大厅</h2>
+      <h2 style={heading}>大厅</h2>
+
       <div style={actions}>
         <Button
-          variant="primary"
+          variant="gold"
           size="lg"
           onClick={() => navigateTo({ kind: "create-room" })}
         >
           创建房间
         </Button>
-        <Button
-          size="lg"
-          onClick={() => {
-            if (token) {
-              gameApi
-                .enterMatchmaking("riichi/yonma", token)
-                .then((ticket) =>
-                  navigateTo({ kind: "matchmaking", ticketId: ticket.id }),
-                )
-                .catch(() => {});
-            }
-          }}
-        >
+        <Button size="lg" onClick={() => quickMatch("yonma")}>
           四人匹配
         </Button>
-        <Button
-          size="lg"
-          onClick={() => {
-            if (token) {
-              gameApi
-                .enterMatchmaking("riichi/sanma", token)
-                .then((ticket) =>
-                  navigateTo({ kind: "matchmaking", ticketId: ticket.id }),
-                )
-                .catch(() => {});
-            }
-          }}
-        >
+        <Button size="lg" onClick={() => quickMatch("sanma")}>
           三人匹配
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigateTo({ kind: "profile" })}
-        >
-          个人设置
         </Button>
       </div>
 
@@ -124,42 +134,43 @@ export default function LobbyScene() {
         </div>
       )}
       {rooms.error && (
-        <div style={{ color: "var(--color-danger)", marginTop: 40 }}>
-          {apiFailure(rooms.error).message}
-        </div>
+        <div style={errorStyle}>{apiFailure(rooms.error).message}</div>
       )}
       {rooms.data?.rooms.length === 0 && (
-        <div style={empty}>暂无公开房间，创建一个吧！</div>
+        <div style={empty}>暂无公开房间</div>
       )}
       {rooms.data && rooms.data.rooms.length > 0 && (
         <>
-          <h3 style={{ marginTop: 32, marginBottom: 16, fontSize: 16 }}>
-            公开房间
-          </h3>
+          <div style={sectionTitle}>公开房间</div>
           <div style={grid}>
             {rooms.data.rooms.map((room) => (
-              <button
-                key={room.id}
-                style={{
-                  ...cardStyle,
-                  cursor: "pointer",
-                  textAlign: "left",
-                  border: "1px solid rgba(255,255,255,0.06)",
-                  background: "var(--color-surface)",
-                }}
-                onClick={() => joinRoom(room)}
-              >
-                <div style={cardTitle}>{room.name}</div>
-                <div style={cardMeta}>
-                  {room.members.length}人 ·{" "}
-                  {room.lifecycle === "waiting" ? "等待中" : "对局中"} ·{" "}
-                  {room.visibility === "public" ? "公开" : "私有"}
-                </div>
-              </button>
+              <RoomCard key={room.id} room={room} />
             ))}
           </div>
         </>
       )}
     </div>
+  );
+}
+
+function RoomCard({ room }: { room: RoomView }) {
+  return (
+    <button
+      style={cardBase}
+      onClick={() => navigateTo({ kind: "room", roomId: room.id })}
+      onMouseEnter={(e) =>
+        Object.assign((e.target as HTMLElement).style, cardHover)
+      }
+      onMouseLeave={(e) =>
+        Object.assign((e.target as HTMLElement).style, cardBase)
+      }
+    >
+      <div style={cardName}>{room.name}</div>
+      <div style={cardMeta}>
+        {room.members.length} 人 ·{" "}
+        {room.lifecycle === "waiting" ? "等待中" : "对局中"} ·{" "}
+        {room.visibility === "public" ? "公开" : "私有"}
+      </div>
+    </button>
   );
 }

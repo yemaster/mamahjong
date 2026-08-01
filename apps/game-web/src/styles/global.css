@@ -1,21 +1,44 @@
+/* ═══════════════════════════════════════════════════════════════
+   MAMAHJONG GAME CLIENT — THEME TOKENS
+   ═══════════════════════════════════════════════════════════════ */
+
 :root {
-  --color-bg: #0D2818;
-  --color-felt: #12523C;
-  --color-surface: #1A1A2E;
-  --color-surface-raised: #232342;
-  --color-text: #F5EED6;
-  --color-text-dim: #888888;
-  --color-accent: #D4A853;
-  --color-danger: #C44B4B;
-  --color-success: #4ECCA3;
-  --color-offline: #666666;
-  --color-overlay: rgba(0, 0, 0, 0.6);
-  --font-game: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --radius: 8px;
-  --radius-sm: 4px;
-  --shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  --shadow-raised: 0 4px 16px rgba(0, 0, 0, 0.6);
+  /* ── Core palette ──────────────────── */
+  --color-bg:             #060f0c;
+  --color-felt:           #0d3423;
+  --color-surface:        #0f1f18;
+  --color-surface-raised: #162a21;
+  --color-border:         rgba(180, 140, 60, 0.25);
+  --color-border-glow:    rgba(200, 160, 60, 0.5);
+
+  /* ── Text ──────────────────────────── */
+  --color-text:           #f0e6c8;
+  --color-text-dim:       #7a7668;
+  --color-text-muted:     #4a463c;
+
+  /* ── Accent / Gold ─────────────────── */
+  --color-gold:           #c9a034;
+  --color-gold-bright:    #e8c547;
+  --color-gold-dim:       #8a6d28;
+
+  /* ── Functional ────────────────────── */
+  --color-danger:         #c0392b;
+  --color-danger-glow:    rgba(192, 57, 43, 0.4);
+  --color-success:        #27ae60;
+  --color-offline:        #555;
+  --color-overlay:        rgba(0, 0, 0, 0.75);
+
+  /* ── Typography ────────────────────── */
+  --font-game:  "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+
+  /* ── Shape ─────────────────────────── */
+  --radius-sm: 2px;
+  --radius:    4px;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════════════════════════ */
 
 *,
 *::before,
@@ -25,9 +48,7 @@
   padding: 0;
 }
 
-html,
-body,
-#root {
+html, body, #root {
   height: 100%;
   background: var(--color-bg);
   color: var(--color-text);
@@ -38,44 +59,96 @@ body {
   font-family: var(--font-game);
   min-width: 1024px;
   min-height: 768px;
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Subtle noise-like texture on the background via repeating gradient. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(255,255,255,0.003) 2px,
+      rgba(255,255,255,0.003) 4px
+    );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TYPOGRAPHY
+   ═══════════════════════════════════════════════════════════════ */
+
 button {
-  font-family: inherit;
+  font-family: var(--font-game);
   cursor: pointer;
   border: none;
   outline: none;
 }
 
-input {
-  font-family: inherit;
+input, select {
+  font-family: var(--font-game);
 }
 
 a {
-  color: var(--color-accent);
+  color: var(--color-gold-bright);
   text-decoration: none;
 }
 
-/* ── Splash screen animations ──────────── */
+/* ═══════════════════════════════════════════════════════════════
+   GAME PANEL — reusable card/section style
+   ═══════════════════════════════════════════════════════════════ */
+
+.game-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.03),
+    0 2px 8px rgba(0,0,0,0.5);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SCROLLBAR
+   ═══════════════════════════════════════════════════════════════ */
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════════ */
 
 @keyframes splashFloat {
-  0% {
-    transform: translateY(0) scale(1);
-    opacity: 0;
-  }
-  10% {
-    opacity: 0.4;
-  }
-  90% {
-    opacity: 0.2;
-  }
-  100% {
-    transform: translateY(-110vh) scale(0.4);
-    opacity: 0;
-  }
+  0%   { transform: translateY(0) scale(0.6) rotate(0deg);   opacity: 0; }
+  8%   { opacity: 0.5; }
+  85%  { opacity: 0.2; }
+  100% { transform: translateY(-115vh) scale(1.2) rotate(60deg); opacity: 0; }
 }
 
 @keyframes splashPulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.04); }
+}
+
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 4px var(--color-gold-dim); }
+  50%      { box-shadow: 0 0 12px var(--color-gold-bright), 0 0 24px var(--color-gold-dim); }
+}
+
+@keyframes borderShimmer {
+  0%   { border-color: var(--color-border); }
+  50%  { border-color: var(--color-border-glow); }
+  100% { border-color: var(--color-border); }
 }

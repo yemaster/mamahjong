@@ -4,23 +4,62 @@ import { useAuthStore } from "../stores/authStore";
 import { Button } from "./Button";
 import { Modal } from "./Modal";
 
-const fieldStyle: React.CSSProperties = {
+/* ══════ Game-style input ══════ */
+
+const gameInput: React.CSSProperties = {
   width: "100%",
   padding: "10px 14px",
-  marginBottom: 12,
-  background: "var(--color-surface-raised)",
-  border: "1px solid rgba(255,255,255,0.1)",
+  marginBottom: 14,
+  background: "rgba(0,0,0,0.35)",
+  border: "1px solid var(--color-border)",
   borderRadius: "var(--radius-sm)",
   color: "var(--color-text)",
-  fontSize: 15,
+  fontSize: 14,
   outline: "none",
+  transition: "border-color 0.2s",
+  letterSpacing: "0.04em",
+};
+
+const gameInputFocus: React.CSSProperties = {
+  borderColor: "var(--color-gold-bright)",
+  boxShadow: "0 0 6px var(--color-gold-dim)",
 };
 
 const errorStyle: React.CSSProperties = {
-  color: "var(--color-danger)",
-  fontSize: 13,
-  marginBottom: 8,
+  color: "#e88",
+  fontSize: 12,
+  marginBottom: 10,
+  letterSpacing: "0.04em",
 };
+
+/* ── Tab ──────────────────────────────── */
+
+const tabBar: React.CSSProperties = {
+  display: "flex",
+  marginBottom: 18,
+};
+
+const tabBase: React.CSSProperties = {
+  flex: 1,
+  padding: "8px 0",
+  background: "transparent",
+  color: "var(--color-text-dim)",
+  border: "none",
+  borderBottom: "2px solid transparent",
+  fontSize: 14,
+  fontWeight: 600,
+  letterSpacing: "0.06em",
+  cursor: "pointer",
+  transition: "all 0.15s",
+};
+
+const tabActive: React.CSSProperties = {
+  ...tabBase,
+  color: "var(--color-gold-bright)",
+  borderBottomColor: "var(--color-gold-bright)",
+};
+
+/* ══════ Component ══════ */
 
 interface LoginModalProps {
   open: boolean;
@@ -49,9 +88,7 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
       setIdentity(identity);
       onClose();
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "操作失败，请重试",
-      );
+      setError(err instanceof Error ? err.message : "操作失败，请重试");
     } finally {
       setLoading(false);
     }
@@ -59,84 +96,73 @@ export function LoginModal({ open, onClose }: LoginModalProps) {
 
   return (
     <Modal open={open} onClose={onClose} title="登录">
-      <div style={{ display: "flex", gap: 0, marginBottom: 16 }}>
-        <TabButton
-          active={tab === "login"}
+      <div style={tabBar}>
+        <button
+          style={tab === "login" ? tabActive : tabBase}
           onClick={() => setTab("login")}
         >
           登录
-        </TabButton>
-        <TabButton
-          active={tab === "register"}
+        </button>
+        <button
+          style={tab === "register" ? tabActive : tabBase}
           onClick={() => setTab("register")}
         >
           注册
-        </TabButton>
+        </button>
       </div>
       {error && <div style={errorStyle}>{error}</div>}
       <input
-        style={fieldStyle}
+        style={gameInput}
         placeholder="用户名"
         value={loginName}
         onChange={(e) => setLoginName(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && submit()}
+        onFocus={(e) =>
+          Object.assign((e.target as HTMLElement).style, gameInputFocus)
+        }
+        onBlur={(e) =>
+          Object.assign((e.target as HTMLElement).style, gameInput)
+        }
       />
       <input
-        style={fieldStyle}
+        style={gameInput}
         type="password"
         placeholder="密码"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && submit()}
+        onFocus={(e) =>
+          Object.assign((e.target as HTMLElement).style, gameInputFocus)
+        }
+        onBlur={(e) =>
+          Object.assign((e.target as HTMLElement).style, gameInput)
+        }
       />
       {tab === "register" && (
         <input
-          style={fieldStyle}
+          style={gameInput}
           placeholder="昵称"
           value={nickname}
           onChange={(e) => setNickname(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
+          onFocus={(e) =>
+            Object.assign((e.target as HTMLElement).style, gameInputFocus)
+          }
+          onBlur={(e) =>
+            Object.assign((e.target as HTMLElement).style, gameInput)
+          }
         />
       )}
       <Button
-        variant="primary"
+        variant="gold"
         size="md"
+        glow
         onClick={submit}
         disabled={loading || !loginName || !password}
-        style={{ width: "100%", marginTop: 4 }}
+        style={{ width: "100%", marginTop: 6 }}
       >
         {loading ? "请稍候…" : tab === "login" ? "登录" : "注册"}
       </Button>
     </Modal>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        flex: 1,
-        padding: "8px 0",
-        background: active ? "var(--color-surface-raised)" : "transparent",
-        color: active ? "var(--color-accent)" : "var(--color-text-dim)",
-        border: "none",
-        borderBottom: active
-          ? "2px solid var(--color-accent)"
-          : "2px solid transparent",
-        fontSize: 15,
-        cursor: "pointer",
-      }}
-    >
-      {children}
-    </button>
   );
 }

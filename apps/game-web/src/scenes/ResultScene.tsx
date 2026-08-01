@@ -16,10 +16,12 @@ const page: React.CSSProperties = {
 };
 
 const heading: React.CSSProperties = {
-  fontSize: 28,
-  fontWeight: 800,
-  color: "var(--color-accent)",
-  marginBottom: 32,
+  fontSize: 30,
+  fontWeight: 900,
+  letterSpacing: "0.1em",
+  color: "var(--color-gold-bright)",
+  textShadow: "0 0 20px var(--color-gold-dim)",
+  marginBottom: 36,
 };
 
 const placementsRow: React.CSSProperties = {
@@ -32,20 +34,23 @@ const placementsRow: React.CSSProperties = {
 
 const placementCard = (rank: number): React.CSSProperties => ({
   background: "var(--color-surface)",
-  borderRadius: "var(--radius)",
-  padding: "20px 28px",
+  padding: "24px 32px",
   minWidth: 160,
   textAlign: "center",
   border:
     rank === 1
-      ? "2px solid var(--color-accent)"
-      : "1px solid rgba(255,255,255,0.08)",
+      ? "2px solid var(--color-gold-bright)"
+      : "1px solid var(--color-border)",
+  boxShadow:
+    rank === 1
+      ? "0 0 20px var(--color-gold-dim)"
+      : "0 2px 8px rgba(0,0,0,0.4)",
 });
 
 const rankStyle: React.CSSProperties = {
-  fontSize: 32,
-  fontWeight: 800,
-  color: "var(--color-accent)",
+  fontSize: 36,
+  fontWeight: 900,
+  color: "var(--color-gold-bright)",
   marginBottom: 8,
 };
 
@@ -128,7 +133,7 @@ export default function ResultScene({ matchId }: ResultSceneProps) {
 
       <div style={{ display: "flex", gap: 12 }}>
         <Button
-          variant="primary"
+          variant="gold"
           size="lg"
           onClick={() => navigateTo({ kind: "lobby" })}
         >

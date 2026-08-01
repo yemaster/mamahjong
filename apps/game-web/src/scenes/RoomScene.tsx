@@ -4,24 +4,39 @@ import { Button } from "../components/Button";
 import { navigateTo } from "../routing";
 import { useAuthStore } from "../stores/authStore";
 
+/* ══════ Styles ══════ */
+
 const page: React.CSSProperties = {
-  padding: "32px 40px",
+  padding: "36px 44px",
   height: "100%",
   overflow: "auto",
 };
 
 const heading: React.CSSProperties = {
   fontSize: 22,
-  fontWeight: 700,
+  fontWeight: 800,
+  letterSpacing: "0.08em",
+  color: "var(--color-gold-bright)",
   marginBottom: 24,
 };
 
 const section: React.CSSProperties = {
   background: "var(--color-surface)",
-  borderRadius: "var(--radius)",
+  border: "1px solid var(--color-border)",
   padding: 20,
   marginBottom: 16,
-  maxWidth: 560,
+  maxWidth: 520,
+};
+
+const sectionTitle: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 700,
+  letterSpacing: "0.08em",
+  color: "var(--color-text-dim)",
+  textTransform: "uppercase",
+  marginBottom: 14,
+  paddingBottom: 8,
+  borderBottom: "1px solid var(--color-border)",
 };
 
 const memberRow: React.CSSProperties = {
@@ -30,25 +45,24 @@ const memberRow: React.CSSProperties = {
   alignItems: "center",
   padding: "8px 0",
   borderBottom: "1px solid rgba(255,255,255,0.04)",
+  fontSize: 14,
 };
 
-const statusDot: Record<string, React.CSSProperties> = {
-  ready: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    background: "var(--color-success)",
-    display: "inline-block",
-    marginRight: 8,
-  },
-  waiting: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    background: "var(--color-accent)",
-    display: "inline-block",
-    marginRight: 8,
-  },
+const readyDot = (ready: boolean): React.CSSProperties => ({
+  width: 8,
+  height: 8,
+  borderRadius: "50%",
+  background: ready ? "var(--color-success)" : "var(--color-gold-dim)",
+  boxShadow: ready
+    ? "0 0 6px var(--color-success)"
+    : "0 0 6px var(--color-gold-dim)",
+  display: "inline-block",
+  marginRight: 10,
+});
+
+const statusText: React.CSSProperties = {
+  fontSize: 12,
+  letterSpacing: "0.06em",
 };
 
 interface RoomSceneProps {
@@ -64,77 +78,38 @@ export default function RoomScene({ roomId }: RoomSceneProps) {
     refetchInterval: 2000,
   });
 
-  if (room.isLoading) {
-    return <div style={page}>加载中…</div>;
-  }
-  if (room.error) {
+  if (room.isLoading)
+    return <div style={{ padding: 40, color: "var(--color-text-dim)" }}>加载中…</div>;
+  if (room.error)
     return (
-      <div style={{ ...page, color: "var(--color-danger)" }}>
+      <div style={{ padding: 40, color: "#e88" }}>
         {apiFailure(room.error).message}
-        <br />
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigateTo({ kind: "lobby" })}
-          style={{ marginTop: 12 }}
-        >
-          返回大厅
-        </Button>
+        <div style={{ marginTop: 12 }}>
+          <Button variant="ghost" size="sm" onClick={() => navigateTo({ kind: "lobby" })}>
+            返回大厅
+          </Button>
+        </div>
       </div>
     );
-  }
   if (!room.data) return null;
 
   const data = room.data;
   const isOwner = data.owner_user_id === identity?.id;
   const isMember = data.members.some((m) => m.user_id === identity?.id);
+  const selfMember = data.members.find((m) => m.user_id === identity?.id);
   const allReady =
     data.members.length >= 2 && data.members.every((m) => m.ready);
 
-  /* Transition to game when match starts. */
   if (data.active_match_id) {
     navigateTo({ kind: "game", matchId: data.active_match_id });
     return null;
   }
 
-  const doJoin = async () => {
-    if (!token) return;
+  const call = (fn: () => Promise<unknown>) => async () => {
     try {
-      await gameApi.joinRoom(roomId, data.version, token);
+      await fn();
       room.refetch();
-    } catch {
-      /* error shown by refresh */
-    }
-  };
-
-  const doLeave = async () => {
-    if (!token) return;
-    try {
-      await gameApi.leaveRoom(roomId, data.version, token);
-      navigateTo({ kind: "lobby" });
-    } catch {
-      /* error shown by refresh */
-    }
-  };
-
-  const doReady = async (ready: boolean) => {
-    if (!token) return;
-    try {
-      await gameApi.setReady(roomId, data.version, ready, token);
-      room.refetch();
-    } catch {
-      /* error shown by refresh */
-    }
-  };
-
-  const doStart = async () => {
-    if (!token) return;
-    try {
-      await gameApi.startRoom(roomId, data.version, token);
-      room.refetch();
-    } catch {
-      /* error shown by refresh */
-    }
+    } catch { /* shown on next poll */ }
   };
 
   return (
@@ -142,60 +117,53 @@ export default function RoomScene({ roomId }: RoomSceneProps) {
       <h2 style={heading}>{data.name}</h2>
 
       <div style={section}>
-        <h3 style={{ fontSize: 15, marginBottom: 12 }}>成员</h3>
-        {data.members.map((member) => (
-          <div key={member.user_id} style={memberRow}>
+        <div style={sectionTitle}>成员</div>
+        {data.members.map((m) => (
+          <div key={m.user_id} style={memberRow}>
             <span style={{ display: "flex", alignItems: "center" }}>
-              <span
-                style={
-                  member.ready ? statusDot.ready : statusDot.waiting
-                }
-              />
-              {member.nickname}
-              {member.user_id === data.owner_user_id && " · 房主"}
+              <span style={readyDot(m.ready)} />
+              {m.nickname}
+              {m.user_id === data.owner_user_id && (
+                <span style={{ color: "var(--color-gold-dim)", marginLeft: 8, fontSize: 11 }}>
+                  房主
+                </span>
+              )}
             </span>
-            <span style={{ fontSize: 13, color: "var(--color-text-dim)" }}>
-              {member.ready ? "已准备" : "未准备"}
+            <span style={statusText}>
+              {m.ready ? "已准备" : "等待中"}
             </span>
           </div>
         ))}
-        {data.members.length < 4 && (
-          <div style={{ marginTop: 12, color: "var(--color-text-dim)" }}>
-            等待更多玩家加入…
-          </div>
-        )}
       </div>
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         {!isMember && (
-          <Button variant="primary" onClick={doJoin}>
+          <Button variant="gold" onClick={call(() => gameApi.joinRoom(roomId, data.version, token!))}>
             加入房间
           </Button>
         )}
         {isMember && (
-          <Button variant="primary" onClick={() => doReady(true)}>
-            {data.members.find((m) => m.user_id === identity?.id)?.ready
-              ? "取消准备"
-              : "准备"}
+          <Button
+            variant="gold"
+            onClick={call(() => gameApi.setReady(roomId, data.version, !selfMember?.ready, token!))}
+          >
+            {selfMember?.ready ? "取消准备" : "准备"}
           </Button>
         )}
         {isOwner && (
           <Button
-            variant="primary"
-            onClick={doStart}
+            variant="gold"
+            glow={allReady}
+            onClick={call(() => gameApi.startRoom(roomId, data.version, token!))}
             disabled={!allReady}
           >
             开始对局
           </Button>
         )}
-        <Button variant="ghost" onClick={doLeave}>
+        <Button variant="ghost" size="sm" onClick={call(() => gameApi.leaveRoom(roomId, data.version, token!).then(() => navigateTo({ kind: "lobby" })))}>
           离开
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => navigateTo({ kind: "lobby" })}
-        >
+        <Button variant="ghost" size="sm" onClick={() => navigateTo({ kind: "lobby" })}>
           返回大厅
         </Button>
       </div>

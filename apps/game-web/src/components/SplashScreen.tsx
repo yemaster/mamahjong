@@ -1,12 +1,6 @@
 import { useEffect, useState } from "react";
 
-/* ── Floating particles ─────────────────── */
-
-const PARTICLE_COUNT = 20;
-
-function randomBetween(min: number, max: number): number {
-  return Math.random() * (max - min) + min;
-}
+const PARTICLE_COUNT = 30;
 
 interface Particle {
   id: number;
@@ -17,20 +11,20 @@ interface Particle {
   opacity: number;
 }
 
-function generateParticles(): Particle[] {
+function genParticles(): Particle[] {
   return Array.from({ length: PARTICLE_COUNT }, (_, i) => ({
     id: i,
-    left: randomBetween(0, 100),
-    delay: randomBetween(0, 4),
-    duration: randomBetween(8, 16),
-    size: randomBetween(3, 8),
-    opacity: randomBetween(0.15, 0.4),
+    left: Math.random() * 100,
+    delay: Math.random() * 3,
+    duration: 6 + Math.random() * 10,
+    size: 3 + Math.random() * 7,
+    opacity: 0.15 + Math.random() * 0.35,
   }));
 }
 
-/* ── Styles ──────────────────────────────── */
+/* ══════ Styles ══════ */
 
-const container: React.CSSProperties = {
+const wrapper: React.CSSProperties = {
   position: "fixed",
   inset: 0,
   zIndex: 9999,
@@ -39,164 +33,164 @@ const container: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   background: `
-    radial-gradient(ellipse at 50% 40%, rgba(18,82,60,0.6) 0%, #0D2818 70%),
-    #0D2818
+    radial-gradient(ellipse at 50% 35%, rgba(20,60,40,0.5) 0%, #060f0c 65%),
+    #060f0c
   `,
   cursor: "pointer",
   userSelect: "none",
-  transition: "opacity 0.6s ease-out",
+  transition: "opacity 0.8s ease-out",
 };
 
-const bgImage: React.CSSProperties = {
+const bgImg: React.CSSProperties = {
   position: "absolute",
   inset: 0,
-  backgroundImage: "url('/assets/ui/bg_splash.jpg')",
   backgroundSize: "cover",
   backgroundPosition: "center",
   opacity: 0,
-  transition: "opacity 1.5s ease-in",
+  transition: "opacity 2s ease-in",
 };
 
-const particleStyle = (p: Particle): React.CSSProperties => ({
+const particle = (p: Particle): React.CSSProperties => ({
   position: "absolute",
   left: `${p.left}%`,
-  bottom: "-10px",
+  bottom: -10,
   width: p.size,
   height: p.size,
   borderRadius: "50%",
-  background: "rgba(212,168,83,0.3)",
-  opacity: 0,
+  background: `radial-gradient(circle, rgba(232,197,71,${p.opacity}) 0%, transparent 70%)`,
   animation: `splashFloat ${p.duration}s ${p.delay}s infinite linear`,
+  filter: "blur(0.5px)",
 });
 
-const logo: React.CSSProperties = {
+/* ── Logo ──────────────────────────── */
+
+const logoWrap: React.CSSProperties = {
   position: "relative",
   zIndex: 1,
-  textAlign: "center",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
 };
 
-const logoImg: React.CSSProperties = {
-  width: 320,
-  height: 120,
-  objectFit: "contain",
-  marginBottom: 8,
-  display: "block",
+const ornamentBar = (color: string): React.CSSProperties => ({
+  width: 200,
+  height: 1,
+  background: `linear-gradient(90deg, transparent, ${color}, transparent)`,
+  margin: "12px 0",
+});
+
+const ornamentDiamond: React.CSSProperties = {
+  width: 6,
+  height: 6,
+  background: "var(--color-gold-bright)",
+  transform: "rotate(45deg)",
+  margin: "0 auto",
 };
 
-const mainTitle: React.CSSProperties = {
-  fontSize: 52,
-  fontWeight: 800,
-  color: "var(--color-text)",
-  letterSpacing: "0.15em",
-  textShadow: "0 2px 12px rgba(0,0,0,0.6)",
-  lineHeight: 1.2,
+const title: React.CSSProperties = {
+  fontSize: 54,
+  fontWeight: 900,
+  letterSpacing: "0.2em",
+  color: "var(--color-gold-bright)",
+  textShadow:
+    "0 0 20px rgba(200,160,50,0.4), 0 2px 4px rgba(0,0,0,0.8)",
 };
 
-const subTitle: React.CSSProperties = {
-  fontSize: 18,
+const sub: React.CSSProperties = {
+  fontSize: 16,
   fontWeight: 400,
-  color: "var(--color-accent)",
-  letterSpacing: "0.3em",
-  marginTop: 4,
-  textShadow: "0 1px 6px rgba(0,0,0,0.5)",
+  letterSpacing: "0.45em",
+  color: "var(--color-gold-dim)",
+  textShadow: "0 1px 4px rgba(0,0,0,0.5)",
 };
 
-const bottom: React.CSSProperties = {
+/* ── Bottom ────────────────────────── */
+
+const bottomArea: React.CSSProperties = {
   position: "absolute",
-  bottom: 60,
+  bottom: 80,
   left: 0,
   right: 0,
   display: "flex",
   flexDirection: "column",
   alignItems: "center",
-  gap: 16,
+  gap: 18,
   zIndex: 1,
 };
 
-const progressTrack: React.CSSProperties = {
-  width: 260,
-  height: 3,
-  background: "rgba(255,255,255,0.1)",
-  borderRadius: 2,
-  overflow: "hidden",
-};
-
-const progressBar = (pct: number): React.CSSProperties => ({
-  width: `${pct}%`,
-  height: "100%",
-  background: "var(--color-accent)",
-  borderRadius: 2,
-  transition: "width 0.3s ease-out",
+const progressTrack = (): React.CSSProperties => ({
+  width: 280,
+  height: 2,
+  background: "rgba(255,255,255,0.06)",
+  position: "relative",
 });
 
-const loadingText: React.CSSProperties = {
-  fontSize: 13,
+const progressFill = (pct: number): React.CSSProperties => ({
+  width: `${pct}%`,
+  height: "100%",
+  background: `linear-gradient(90deg, var(--color-gold-dim), var(--color-gold-bright))`,
+  boxShadow: "0 0 6px var(--color-gold-dim)",
+  transition: "width 0.4s ease-out",
+});
+
+const loadLabel: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: "0.25em",
   color: "var(--color-text-dim)",
-  letterSpacing: "0.2em",
 };
 
-const tapText: React.CSSProperties = {
+const tapPrompt: React.CSSProperties = {
   fontSize: 14,
-  color: "var(--color-text)",
-  letterSpacing: "0.25em",
+  fontWeight: 600,
+  letterSpacing: "0.3em",
+  color: "var(--color-gold-bright)",
+  textShadow: "0 0 10px var(--color-gold-dim)",
   opacity: 0,
-  transition: "opacity 0.6s",
+  transition: "opacity 0.8s",
   animation: "splashPulse 2s ease-in-out infinite",
 };
 
-const version: React.CSSProperties = {
+/* ── Corners ───────────────────────── */
+
+const cornerText: React.CSSProperties = {
   position: "absolute",
-  bottom: 20,
-  right: 24,
-  fontSize: 11,
-  color: "rgba(255,255,255,0.2)",
-  letterSpacing: "0.1em",
+  bottom: 22,
+  fontSize: 10,
+  fontWeight: 500,
+  letterSpacing: "0.12em",
+  color: "rgba(255,255,255,0.12)",
   zIndex: 1,
 };
 
-const copyright: React.CSSProperties = {
-  position: "absolute",
-  bottom: 20,
-  left: 24,
-  fontSize: 11,
-  color: "rgba(255,255,255,0.15)",
-  zIndex: 1,
-};
-
-/* ── Component ───────────────────────────── */
+/* ══════ Component ══════ */
 
 interface SplashScreenProps {
   onEnter: () => void;
 }
 
 export function SplashScreen({ onEnter }: SplashScreenProps) {
-  const [particles] = useState(generateParticles);
+  const [particles] = useState(genParticles);
   const [progress, setProgress] = useState(0);
   const [bgLoaded, setBgLoaded] = useState(false);
   const [showTap, setShowTap] = useState(false);
   const [fading, setFading] = useState(false);
 
-  /* Simulate loading progress. */
+  /* Simulated loading. */
   useEffect(() => {
     const steps = [
-      { at: 200, to: 30 },
-      { at: 500, to: 60 },
+      { at: 200, to: 25 },
+      { at: 500, to: 55 },
       { at: 900, to: 85 },
       { at: 1400, to: 100 },
     ];
     const timers: ReturnType<typeof setTimeout>[] = [];
-    for (const step of steps) {
-      timers.push(setTimeout(() => setProgress(step.to), step.at));
-    }
-    timers.push(
-      setTimeout(() => {
-        setShowTap(true);
-      }, 1800),
-    );
+    for (const s of steps) timers.push(setTimeout(() => setProgress(s.to), s.at));
+    timers.push(setTimeout(() => setShowTap(true), 1800));
     return () => timers.forEach(clearTimeout);
   }, []);
 
-  /* Try to load background image. */
+  /* Optional background image. */
   useEffect(() => {
     const img = new Image();
     img.onload = () => setBgLoaded(true);
@@ -206,69 +200,63 @@ export function SplashScreen({ onEnter }: SplashScreenProps) {
   const handleClick = () => {
     if (!showTap) return;
     setFading(true);
-    setTimeout(onEnter, 600);
+    setTimeout(onEnter, 800);
   };
 
   return (
     <div
-      style={{ ...container, opacity: fading ? 0 : 1 }}
+      style={{ ...wrapper, opacity: fading ? 0 : 1 }}
       onClick={handleClick}
     >
-      {/* Background image fade-in */}
+      {/* Background image */}
       <div
         style={{
-          ...bgImage,
+          ...bgImg,
           backgroundImage: bgLoaded
             ? "url('/assets/ui/bg_splash.jpg')"
             : "none",
-          opacity: bgLoaded ? 0.35 : 0,
+          opacity: bgLoaded ? 0.3 : 0,
         }}
       />
 
-      {/* Floating particles */}
+      {/* Particles */}
       {particles.map((p) => (
-        <div key={p.id} style={particleStyle(p)} />
+        <div key={p.id} style={particle(p)} />
       ))}
 
-      {/* Logo */}
-      <div style={logo}>
-        <img
-          src="/assets/ui/logo.png"
-          alt=""
-          style={{
-            ...logoImg,
-            display: "none" as const,
-          }}
-          onError={(e) => {
-            /* Hide image element on load failure, show text fallback. */
-            (e.target as HTMLImageElement).style.display = "none";
-          }}
-        />
-        <div style={mainTitle}>麻麻的将</div>
-        <div style={subTitle}>マージャン</div>
+      {/* Logo region */}
+      <div style={logoWrap}>
+        <div style={ornamentBar("var(--color-gold-dim)")} />
+        <div style={ornamentDiamond} />
+        <div style={{ height: 12 }} />
+        <div style={title}>麻麻的将</div>
+        <div style={sub}>ＭＡＨＪＯＮＧ</div>
+        <div style={{ height: 12 }} />
+        <div style={ornamentDiamond} />
+        <div style={ornamentBar("var(--color-gold-dim)")} />
       </div>
 
-      {/* Bottom area */}
-      <div style={bottom}>
-        <div style={progressTrack}>
-          <div style={progressBar(progress)} />
+      {/* Bottom */}
+      <div style={bottomArea}>
+        <div style={progressTrack()}>
+          <div style={progressFill(progress)} />
         </div>
-        <div style={loadingText}>
-          {progress < 100 ? `加载中 ${progress}%` : "加载完成"}
+        <div style={loadLabel}>
+          {progress < 100 ? `LOADING ${progress}%` : "READY"}
         </div>
         <div
           style={{
-            ...tapText,
+            ...tapPrompt,
             opacity: showTap ? 1 : 0,
             cursor: showTap ? "pointer" : "default",
           }}
         >
-          点击屏幕开始
+          TOUCH TO START
         </div>
       </div>
 
-      <div style={copyright}>© mamahjong</div>
-      <div style={version}>ver 0.1.0</div>
+      <div style={{ ...cornerText, left: 24 }}>© mamahjong</div>
+      <div style={{ ...cornerText, right: 24 }}>ver 0.1.0</div>
     </div>
   );
 }
