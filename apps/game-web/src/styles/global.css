@@ -55,3 +55,27 @@ a {
   color: var(--color-accent);
   text-decoration: none;
 }
+
+/* ── Splash screen animations ──────────── */
+
+@keyframes splashFloat {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.4;
+  }
+  90% {
+    opacity: 0.2;
+  }
+  100% {
+    transform: translateY(-110vh) scale(0.4);
+    opacity: 0;
+  }
+}
+
+@keyframes splashPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
