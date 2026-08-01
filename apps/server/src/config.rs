@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -7,18 +7,51 @@ const BIND_ADDRESS_ENV: &str = "MAMAHJONG_BIND_ADDRESS";
 const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:8080";
 const DATA_DIR_ENV: &str = "MAMAHJONG_DATA_DIR";
 const DEFAULT_DATA_DIR: &str = "data";
+const ADMIN_WEB_DIR_ENV: &str = "MAMAHJONG_ADMIN_WEB_DIR";
+const DEFAULT_ADMIN_WEB_DIR: &str = "apps/admin-web/dist";
+const GAME_WEB_DIR_ENV: &str = "MAMAHJONG_GAME_WEB_DIR";
+const DEFAULT_GAME_WEB_DIR: &str = "apps/game-web/dist";
+const ADMIN_LOGIN_ENV: &str = "MAMAHJONG_ADMIN_LOGIN_NAME";
+const ADMIN_PASSWORD_ENV: &str = "MAMAHJONG_ADMIN_PASSWORD";
+const ADMIN_NICKNAME_ENV: &str = "MAMAHJONG_ADMIN_NICKNAME";
+const ADMIN_COOKIE_SECURE_ENV: &str = "MAMAHJONG_ADMIN_COOKIE_SECURE";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct ServerConfig {
     bind_address: SocketAddr,
     data_dir: PathBuf,
+    admin_web_dir: PathBuf,
+    game_web_dir: PathBuf,
+    administrator: Option<AdministratorBootstrap>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct AdministratorBootstrap {
+    login_name: String,
+    password: String,
+    nickname: String,
+    cookie_secure: bool,
 }
 
 impl ServerConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         let bind_address = read_optional_env(BIND_ADDRESS_ENV)?;
         let data_dir = read_optional_env(DATA_DIR_ENV)?;
-        Self::from_values(bind_address.as_deref(), data_dir.as_deref())
+        let admin_web_dir = read_optional_env(ADMIN_WEB_DIR_ENV)?;
+        let game_web_dir = read_optional_env(GAME_WEB_DIR_ENV)?;
+        let mut config = Self::from_values_with_web(
+            bind_address.as_deref(),
+            data_dir.as_deref(),
+            admin_web_dir.as_deref(),
+            game_web_dir.as_deref(),
+        )?;
+        config.administrator = administrator_from_values(
+            read_optional_env(ADMIN_LOGIN_ENV)?.as_deref(),
+            read_optional_env(ADMIN_PASSWORD_ENV)?.as_deref(),
+            read_optional_env(ADMIN_NICKNAME_ENV)?.as_deref(),
+            read_optional_env(ADMIN_COOKIE_SECURE_ENV)?.as_deref(),
+        )?;
+        Ok(config)
     }
 
     pub fn from_bind_address(value: Option<&str>) -> Result<Self, ConfigError> {
@@ -28,6 +61,15 @@ impl ServerConfig {
     pub fn from_values(
         bind_address: Option<&str>,
         data_dir: Option<&str>,
+    ) -> Result<Self, ConfigError> {
+        Self::from_values_with_web(bind_address, data_dir, None, None)
+    }
+
+    fn from_values_with_web(
+        bind_address: Option<&str>,
+        data_dir: Option<&str>,
+        admin_web_dir: Option<&str>,
+        game_web_dir: Option<&str>,
     ) -> Result<Self, ConfigError> {
         let value = bind_address.unwrap_or(DEFAULT_BIND_ADDRESS);
         let bind_address = value.parse().map_err(|_| ConfigError::InvalidAddress {
@@ -40,9 +82,24 @@ impl ServerConfig {
                 variable: DATA_DIR_ENV,
             });
         }
+        let admin_web_dir = PathBuf::from(admin_web_dir.unwrap_or(DEFAULT_ADMIN_WEB_DIR));
+        if admin_web_dir.as_os_str().is_empty() {
+            return Err(ConfigError::EmptyPath {
+                variable: ADMIN_WEB_DIR_ENV,
+            });
+        }
+        let game_web_dir = PathBuf::from(game_web_dir.unwrap_or(DEFAULT_GAME_WEB_DIR));
+        if game_web_dir.as_os_str().is_empty() {
+            return Err(ConfigError::EmptyPath {
+                variable: GAME_WEB_DIR_ENV,
+            });
+        }
         Ok(Self {
             bind_address,
             data_dir,
+            admin_web_dir,
+            game_web_dir,
+            administrator: None,
         })
     }
 
@@ -54,6 +111,73 @@ impl ServerConfig {
     #[must_use]
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
+    }
+
+    #[must_use]
+    pub fn logs_dir(&self) -> PathBuf {
+        self.data_dir.join("logs")
+    }
+
+    #[must_use]
+    pub fn admin_web_dir(&self) -> &Path {
+        &self.admin_web_dir
+    }
+
+    #[must_use]
+    pub fn game_web_dir(&self) -> &Path {
+        &self.game_web_dir
+    }
+
+    #[must_use]
+    pub const fn administrator(&self) -> Option<&AdministratorBootstrap> {
+        self.administrator.as_ref()
+    }
+}
+
+impl AdministratorBootstrap {
+    #[must_use]
+    pub fn login_name(&self) -> &str {
+        &self.login_name
+    }
+
+    #[must_use]
+    pub fn password(&self) -> &str {
+        &self.password
+    }
+
+    #[must_use]
+    pub fn nickname(&self) -> &str {
+        &self.nickname
+    }
+
+    #[must_use]
+    pub const fn cookie_secure(&self) -> bool {
+        self.cookie_secure
+    }
+}
+
+impl Debug for ServerConfig {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ServerConfig")
+            .field("bind_address", &self.bind_address)
+            .field("data_dir", &self.data_dir)
+            .field("admin_web_dir", &self.admin_web_dir)
+            .field("game_web_dir", &self.game_web_dir)
+            .field("administrator_enabled", &self.administrator.is_some())
+            .finish()
+    }
+}
+
+impl Debug for AdministratorBootstrap {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AdministratorBootstrap")
+            .field("login_name", &self.login_name)
+            .field("password", &"[REDACTED]")
+            .field("nickname", &self.nickname)
+            .field("cookie_secure", &self.cookie_secure)
+            .finish()
     }
 }
 
@@ -68,6 +192,11 @@ pub enum ConfigError {
     },
     EmptyPath {
         variable: &'static str,
+    },
+    InvalidAdminPassword,
+    InvalidBoolean {
+        variable: &'static str,
+        value: String,
     },
 }
 
@@ -84,8 +213,44 @@ impl Display for ConfigError {
                 write!(formatter, "{variable} is not valid Unicode")
             }
             Self::EmptyPath { variable } => write!(formatter, "{variable} cannot be empty"),
+            Self::InvalidAdminPassword => {
+                formatter.write_str("MAMAHJONG_ADMIN_PASSWORD must contain 12 to 128 bytes")
+            }
+            Self::InvalidBoolean { variable, value } => {
+                write!(formatter, "{variable} must be true or false, got {value}")
+            }
         }
     }
+}
+
+fn administrator_from_values(
+    login_name: Option<&str>,
+    password: Option<&str>,
+    nickname: Option<&str>,
+    cookie_secure: Option<&str>,
+) -> Result<Option<AdministratorBootstrap>, ConfigError> {
+    let Some(password) = password.filter(|password| !password.is_empty()) else {
+        return Ok(None);
+    };
+    if !(12..=128).contains(&password.len()) {
+        return Err(ConfigError::InvalidAdminPassword);
+    }
+    let cookie_secure = match cookie_secure.unwrap_or("false") {
+        "true" => true,
+        "false" => false,
+        value => {
+            return Err(ConfigError::InvalidBoolean {
+                variable: ADMIN_COOKIE_SECURE_ENV,
+                value: value.to_owned(),
+            });
+        }
+    };
+    Ok(Some(AdministratorBootstrap {
+        login_name: login_name.unwrap_or("admin").to_owned(),
+        password: password.to_owned(),
+        nickname: nickname.unwrap_or("管理员").to_owned(),
+        cookie_secure,
+    }))
 }
 
 fn read_optional_env(variable: &'static str) -> Result<Option<String>, ConfigError> {
@@ -102,7 +267,7 @@ impl Error for ConfigError {}
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-    use super::{ConfigError, ServerConfig};
+    use super::{ConfigError, ServerConfig, administrator_from_values};
 
     #[test]
     fn uses_loopback_default() {
@@ -140,5 +305,32 @@ mod tests {
             ServerConfig::from_bind_address(Some("127.0.0.1")).expect_err("port is required");
 
         assert!(matches!(error, ConfigError::InvalidAddress { .. }));
+    }
+
+    #[test]
+    fn administrator_is_disabled_without_password() {
+        assert!(
+            administrator_from_values(Some("admin"), None, Some("管理员"), None)
+                .expect("configuration")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn administrator_password_and_secure_cookie_are_validated() {
+        let administrator = administrator_from_values(
+            Some("operator"),
+            Some("long-admin-password"),
+            Some("运营人员"),
+            Some("true"),
+        )
+        .expect("configuration")
+        .expect("administrator");
+        assert_eq!(administrator.login_name(), "operator");
+        assert!(administrator.cookie_secure());
+        assert!(matches!(
+            administrator_from_values(None, Some("short"), None, None),
+            Err(ConfigError::InvalidAdminPassword)
+        ));
     }
 }
