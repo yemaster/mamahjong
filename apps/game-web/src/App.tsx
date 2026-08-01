@@ -1,4 +1,5 @@
 import { Suspense, lazy, useEffect, useState } from "react";
+import { gameApi } from "./api";
 import { Layout } from "./components/Layout";
 import { LoginModal } from "./components/LoginModal";
 import { useGameScene } from "./routing";
@@ -23,14 +24,38 @@ const fallback: React.CSSProperties = {
 
 export function App() {
   const scene = useGameScene();
-  const { isAuthenticated, token } = useAuthStore();
+  const { isAuthenticated, token, setIdentity, logout } = useAuthStore();
   const [loginOpen, setLoginOpen] = useState(false);
+  const [restoring, setRestoring] = useState(!!token);
+
+  /* Restore identity from stored token on mount. */
+  useEffect(() => {
+    if (!token) {
+      setRestoring(false);
+      return;
+    }
+    gameApi
+      .me(token)
+      .then((identity) => setIdentity(identity))
+      .catch(() => logout())
+      .finally(() => setRestoring(false));
+    // Run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated && !restoring) {
       setLoginOpen(true);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, restoring]);
+
+  if (restoring) {
+    return (
+      <Layout>
+        <div style={fallback}>加载中…</div>
+      </Layout>
+    );
+  }
 
   const renderScene = () => {
     switch (scene.kind) {
