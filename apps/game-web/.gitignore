@@ -1,0 +1,13 @@
+node_modules
+dist
+
+# Real assets — not committed (copyright, size)
+public/assets/tiles/*
+public/assets/characters/*
+public/assets/table/*
+public/assets/effects/*
+public/assets/sounds/*
+
+# Keep placeholder assets
+!public/assets/placeholder/
+!public/assets/.gitkeep
