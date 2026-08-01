@@ -1,5 +1,26 @@
 # syntax=docker/dockerfile:1.7
 
+FROM node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c AS admin-web-builder
+
+WORKDIR /web
+
+COPY apps/admin-web/package.json apps/admin-web/package-lock.json ./
+RUN --mount=type=cache,id=mamahjong-npm,target=/root/.npm,sharing=locked \
+    npm ci
+COPY apps/admin-web ./
+RUN npm run build
+
+FROM node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c AS game-web-builder
+
+WORKDIR /web
+
+COPY apps/game-web/package.json ./
+# no package-lock.json committed yet for game-web
+RUN --mount=type=cache,id=mamahjong-npm-game,target=/root/.npm,sharing=locked \
+    npm install
+COPY apps/game-web ./
+RUN npm run build
+
 FROM rust:1.85.1-bookworm@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4 AS builder
 
 WORKDIR /build
@@ -28,8 +49,16 @@ COPY --from=builder --chown=65532:65532 \
 COPY --from=builder --chown=65532:65532 \
     /artifacts/data/ \
     /var/lib/mamahjong/
+COPY --from=admin-web-builder --chown=65532:65532 \
+    /web/dist/ \
+    /usr/share/mamahjong/admin/
+COPY --from=game-web-builder --chown=65532:65532 \
+    /web/dist/ \
+    /usr/share/mamahjong/game/
 
 ENV MAMAHJONG_BIND_ADDRESS=0.0.0.0:8080 \
+    MAMAHJONG_ADMIN_WEB_DIR=/usr/share/mamahjong/admin \
+    MAMAHJONG_GAME_WEB_DIR=/usr/share/mamahjong/game \
     RUST_LOG=info
 
 EXPOSE 8080
