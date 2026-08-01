@@ -3,22 +3,10 @@ import type { WsSeatCountdown, WsSeatPresence } from "./types";
 
 const PROTOCOL = "mamahjong.v1";
 
-export interface SeatCountdown {
-  seat: number;
-  remainingMs: number;
-  baseMs: number;
-  reserveMs: number;
-}
-
-export interface SeatPresence {
-  seat: number;
-  online: boolean;
-}
-
 export type StreamEvent =
   | { kind: "events_arrived" }
-  | { kind: "clock"; seats: SeatCountdown[] }
-  | { kind: "presence"; seats: SeatPresence[] }
+  | { kind: "clock"; seats: WsSeatCountdown[] }
+  | { kind: "presence"; seats: WsSeatPresence[] }
   | { kind: "disconnected" }
   | { kind: "reconnected"; afterSeq: number };
 
@@ -152,12 +140,7 @@ export class MatchStream {
               if (clock.seats) {
                 this.callbacks.onEvent({
                   kind: "clock",
-                  seats: clock.seats.map((s) => ({
-                    seat: s.seat,
-                    remainingMs: s.remaining_ms,
-                    baseMs: s.base_ms,
-                    reserveMs: s.reserve_ms,
-                  })),
+                  seats: clock.seats,
                 });
               }
               break;
@@ -169,10 +152,7 @@ export class MatchStream {
               if (presence.seats) {
                 this.callbacks.onEvent({
                   kind: "presence",
-                  seats: presence.seats.map((s) => ({
-                    seat: s.seat,
-                    online: s.online,
-                  })),
+                  seats: presence.seats,
                 });
               }
               break;

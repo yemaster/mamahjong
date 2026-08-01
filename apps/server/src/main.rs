@@ -30,11 +30,7 @@ async fn main() -> Result<(), AnyError> {
         }
         None => AppState::persistent(config.data_dir())?,
     };
-    let app = build_router_with_web(
-        state.clone(),
-        config.admin_web_dir(),
-        config.game_web_dir(),
-    );
+    let app = build_router_with_web(state.clone(), config.admin_web_dir(), config.game_web_dir());
     let listener = TcpListener::bind(config.bind_address()).await?;
     let sweeper = spawn_sweeper(state.clone());
 

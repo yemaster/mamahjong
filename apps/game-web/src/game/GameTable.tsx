@@ -80,13 +80,12 @@ export function GameTable({ view }: GameTableProps) {
 
   useEffect(() => {
     const stage = stageRef.current;
-    const layout = layoutRef.current;
     const factory = factoryRef.current;
-    if (!stage || !layout || !factory) return;
+    if (!stage || !factory) return;
 
     /* Resize layout to current canvas size. */
     const app = appRef.current!;
-    layout = new TableLayout(view.players.length, {
+    const layout = new TableLayout(view.players.length, {
       width: app.screen.width,
       height: app.screen.height,
     });

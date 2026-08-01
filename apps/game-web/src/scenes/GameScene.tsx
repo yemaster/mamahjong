@@ -69,13 +69,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
                 fetchView();
                 break;
               case "clock":
-                updateClocks(
-                  event.seats.map((s) => ({
-                    ...s,
-                    base_ms: s.baseMs,
-                    reserve_ms: s.reserveMs,
-                  })),
-                );
+                updateClocks(event.seats);
                 break;
               case "presence":
                 updatePresence(event.seats);
