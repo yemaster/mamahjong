@@ -1,7 +1,18 @@
 /target/
+**/node_modules/
+**/dist/
 /.idea/
 /.vscode/
 .DS_Store
 *.log
 .env
 /data/
+
+# 本机使用的第三方角色素材，不进入版本库
+/apps/game-web/public/assets/local-characters/
+
+# 本机使用的第三方游戏素材，不进入版本库
+/apps/game-web/public/assets/local-game-assets/
+
+# 本机使用的第三方音效素材，不进入版本库
+/apps/game-web/public/assets/sfx/
