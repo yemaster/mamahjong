@@ -7,6 +7,8 @@ use crate::api::ApiClient;
 use crate::model::{
     MatchPhase, MatchView, MatchmakingTicketView, ReactionOptionView, RoomView, UserView,
 };
+use crate::rules::{CreateRoomForm, RuleSetCatalog};
+use crate::stream::{MatchStream, SeatCountdown, StreamEvent};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -32,14 +34,18 @@ pub struct RoomBrowser {
 }
 
 #[derive(Debug)]
-pub struct CreateRoomForm {
-    pub active_field: usize,
-    pub name: String,
-    pub variant: String,
-    pub initial_points: String,
-    pub noten_payment: String,
-    pub head_bump: bool,
-    pub tobi: bool,
+pub struct RoomScreen {
+    pub room: RoomView,
+    pub rules_scroll: u16,
+}
+
+impl RoomScreen {
+    pub fn new(room: RoomView) -> Self {
+        Self {
+            room,
+            rules_scroll: 0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -47,15 +53,18 @@ pub struct GameScreen {
     pub view: MatchView,
     pub selected_tile: usize,
     pub marked_tile_ids: Vec<u16>,
+    pub countdowns: Vec<SeatCountdown>,
+    pub online: Vec<bool>,
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum Screen {
     Auth(AuthForm),
     Rooms(RoomBrowser),
-    CreateRoom(CreateRoomForm),
+    CreateRoom(Box<CreateRoomForm>),
     Matchmaking(MatchmakingTicketView),
-    Room(RoomView),
+    Room(RoomScreen),
     Game(GameScreen),
 }
 
@@ -65,11 +74,13 @@ pub struct App {
     pub status: String,
     pub quit: bool,
     api: ApiClient,
+    rule_catalog: Option<RuleSetCatalog>,
     last_poll: Instant,
+    stream: Option<MatchStream>,
 }
 
 enum Action {
-    ShowStatus(&'static str),
+    ShowStatus(String),
     Authenticate {
         mode: AuthMode,
         login_name: String,
@@ -85,12 +96,7 @@ enum Action {
     CancelMatchmaking,
     BackToRooms,
     CreateRoom {
-        name: String,
-        variant: String,
-        initial_points: String,
-        noten_payment: String,
-        head_bump: bool,
-        tobi: bool,
+        payload: Value,
     },
     JoinRoom {
         id: String,
@@ -122,7 +128,9 @@ impl App {
             status: "未登录".to_owned(),
             quit: false,
             api: ApiClient::new(base_url)?,
+            rule_catalog: None,
             last_poll: Instant::now(),
+            stream: None,
         })
     }
 
@@ -138,6 +146,53 @@ impl App {
     }
 
     pub async fn poll_if_due(&mut self) -> bool {
+        // Drain stream events without waiting — they arrive between frames.
+        if let Screen::Game(_) = &self.screen {
+            let mut dirty = false;
+            if let Some(stream) = &mut self.stream {
+                for event in stream.drain() {
+                    dirty = true;
+                    match event {
+                        StreamEvent::EventsArrived => {
+                            self.last_poll = Instant::now();
+                            self.perform(Action::RefreshGame).await;
+                        }
+                        StreamEvent::Clock { seats } => {
+                            if let Screen::Game(ref mut game) = self.screen {
+                                game.countdowns = seats;
+                            }
+                        }
+                        StreamEvent::Presence { seats } => {
+                            if let Screen::Game(ref mut game) = self.screen {
+                                game.online = seats.iter().map(|s| s.online).collect();
+                            }
+                        }
+                        StreamEvent::Disconnected => {
+                            self.status = "WebSocket 已断开，退回轮询".to_owned();
+                        }
+                        StreamEvent::Reconnected { .. } => {
+                            self.status = "WebSocket 已重连".to_owned();
+                            // Refresh immediately to catch up.
+                            self.last_poll = Instant::now();
+                            self.perform(Action::RefreshGame).await;
+                        }
+                    }
+                }
+            }
+            // Fall back to HTTP polling when the stream is disconnected or
+            // no events have arrived recently.
+            let connected = self
+                .stream
+                .as_ref()
+                .is_some_and(|stream| stream.is_connected());
+            if !connected && self.last_poll.elapsed() >= POLL_INTERVAL {
+                self.last_poll = Instant::now();
+                self.perform(Action::RefreshGame).await;
+                return true;
+            }
+            return dirty;
+        }
+
         if self.last_poll.elapsed() < POLL_INTERVAL {
             return false;
         }
@@ -145,7 +200,6 @@ impl App {
         let action = match self.screen {
             Screen::Room(_) => Some(Action::RefreshRoom),
             Screen::Matchmaking(_) => Some(Action::RefreshMatchmaking),
-            Screen::Game(_) => Some(Action::RefreshGame),
             _ => None,
         };
         if let Some(action) = action {
@@ -162,7 +216,7 @@ impl App {
             Screen::Rooms(browser) => rooms_key(browser, key, &mut self.quit),
             Screen::CreateRoom(form) => create_room_key(form, key),
             Screen::Matchmaking(ticket) => matchmaking_key(ticket, key),
-            Screen::Room(room) => room_key(room, key),
+            Screen::Room(screen) => room_key(screen, key),
             Screen::Game(game) => game_key(game, key, &mut self.quit),
         }
     }
@@ -170,7 +224,7 @@ impl App {
     async fn perform(&mut self, action: Action) {
         let result = match action {
             Action::ShowStatus(message) => {
-                self.status = message.to_owned();
+                self.status = message;
                 Ok(())
             }
             Action::Authenticate {
@@ -190,24 +244,31 @@ impl App {
                         self.api.set_token(response.session.token);
                         self.status = format!("欢迎，{}", response.user.profile.nickname);
                         self.user = Some(response.user);
-                        self.load_rooms().await
+                        match self.api.rule_sets().await {
+                            Ok(catalog) => {
+                                self.rule_catalog = Some(catalog);
+                                self.load_rooms().await
+                            }
+                            Err(error) => Err(error),
+                        }
                     }
                     Err(error) => Err(error),
                 }
             }
             Action::RefreshRooms => self.load_rooms().await,
-            Action::OpenCreateRoom => {
-                self.screen = Screen::CreateRoom(CreateRoomForm {
-                    active_field: 0,
-                    name: "日麻房间".to_owned(),
-                    variant: "yonma".to_owned(),
-                    initial_points: "25000".to_owned(),
-                    noten_payment: "3000".to_owned(),
-                    head_bump: false,
-                    tobi: true,
-                });
-                Ok(())
-            }
+            Action::OpenCreateRoom => match self.rule_catalog.clone() {
+                Some(catalog) => match CreateRoomForm::new(catalog) {
+                    Ok(form) => {
+                        self.screen = Screen::CreateRoom(Box::new(form));
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                },
+                None => Err(crate::model::ApiFailure {
+                    code: "client.invalid_response".to_owned(),
+                    message: "规则目录尚未载入".to_owned(),
+                }),
+            },
             Action::EnterMatchmaking { variant } => match self.api.enter_matchmaking(variant).await
             {
                 Ok(ticket) => self.open_matchmaking(ticket).await,
@@ -227,40 +288,14 @@ impl App {
                 }
             }
             Action::BackToRooms => self.load_rooms().await,
-            Action::CreateRoom {
-                name,
-                variant,
-                initial_points,
-                noten_payment,
-                head_bump,
-                tobi,
-            } => {
-                match (
-                    parse_number(&initial_points, "初始点数"),
-                    parse_number(&noten_payment, "流局罚点"),
-                ) {
-                    (Ok(initial_points), Ok(noten_payment)) => self
-                        .api
-                        .create_room(
-                            &name,
-                            &variant,
-                            initial_points,
-                            tobi,
-                            noten_payment,
-                            head_bump,
-                        )
-                        .await
-                        .map(|room| {
-                            self.status = "房间已创建".to_owned();
-                            self.screen = Screen::Room(room);
-                        }),
-                    (Err(error), _) | (_, Err(error)) => Err(error),
-                }
-            }
+            Action::CreateRoom { payload } => self.api.create_room(payload).await.map(|room| {
+                self.status = "房间已创建".to_owned();
+                self.screen = Screen::Room(RoomScreen::new(room));
+            }),
             Action::JoinRoom { id, version } => {
                 self.api.join_room(&id, version).await.map(|room| {
                     self.status = "已加入房间".to_owned();
-                    self.screen = Screen::Room(room);
+                    self.screen = Screen::Room(RoomScreen::new(room));
                 })
             }
             Action::RefreshRoom => self.refresh_room().await,
@@ -274,7 +309,7 @@ impl App {
                 match self.api.room(&game.view.room_id).await {
                     Ok(room) => {
                         self.status = "已返回房间".to_owned();
-                        self.screen = Screen::Room(room);
+                        self.screen = Screen::Room(RoomScreen::new(room));
                         Ok(())
                     }
                     Err(error) => Err(error),
@@ -288,7 +323,52 @@ impl App {
         }
     }
 
+    fn connect_stream(&mut self, match_id: &str) {
+        let Some(token) = self.api.token() else {
+            return;
+        };
+        let after_seq = self.stream.as_ref().map_or(0, |stream| stream.last_seq());
+        self.stream = Some(MatchStream::connect(
+            self.api.base_url().to_owned(),
+            token.to_string(),
+            match_id.to_owned(),
+            after_seq,
+        ));
+    }
+
+    async fn entering_game(
+        &mut self,
+        match_id: &str,
+        view: MatchView,
+    ) -> Result<GameScreen, crate::model::ApiFailure> {
+        // Preserve countdowns and online if already in a game for the same match.
+        let (countdowns, online) = match &self.screen {
+            Screen::Game(game) if game.view.id == match_id => {
+                (game.countdowns.clone(), game.online.clone())
+            }
+            _ => (Vec::new(), vec![true; view.players.len()]),
+        };
+        self.connect_stream(match_id);
+        // 终端客户端没有素材要load，但这一步必须报到：全场报到之前服务端一条
+        // 命令都不收，一直不报到整局会被判超时作废。
+        let view = if view.needs_assets_ready() {
+            self.api
+                .game_command(match_id, view.version, "game.assets_ready", None)
+                .await?
+        } else {
+            view
+        };
+        Ok(GameScreen {
+            view,
+            selected_tile: 0,
+            marked_tile_ids: Vec::new(),
+            countdowns,
+            online,
+        })
+    }
+
     async fn load_rooms(&mut self) -> Result<(), crate::model::ApiFailure> {
+        self.stream = None;
         let response = self.api.rooms().await?;
         self.screen = Screen::Rooms(RoomBrowser {
             rooms: response.rooms,
@@ -301,16 +381,14 @@ impl App {
         let Screen::Room(current) = &self.screen else {
             return Ok(());
         };
-        let room = self.api.room(&current.id).await?;
-        if let Some(match_id) = &room.active_match_id {
+        let rules_scroll = current.rules_scroll;
+        let room = self.api.room(&current.room.id).await?;
+        if let Some(match_id) = &room.active_match_id.clone() {
             let view = self.api.match_view(match_id).await?;
-            self.screen = Screen::Game(GameScreen {
-                view,
-                selected_tile: 0,
-                marked_tile_ids: Vec::new(),
-            });
+            let screen = self.entering_game(match_id, view).await?;
+            self.screen = Screen::Game(screen);
         } else {
-            self.screen = Screen::Room(room);
+            self.screen = Screen::Room(RoomScreen { room, rules_scroll });
         }
         Ok(())
     }
@@ -327,14 +405,11 @@ impl App {
         &mut self,
         ticket: MatchmakingTicketView,
     ) -> Result<(), crate::model::ApiFailure> {
-        if let Some(match_id) = &ticket.match_id {
+        if let Some(match_id) = &ticket.match_id.clone() {
             let view = self.api.match_view(match_id).await?;
             self.status = "匹配成功，对局开始".to_owned();
-            self.screen = Screen::Game(GameScreen {
-                view,
-                selected_tile: 0,
-                marked_tile_ids: Vec::new(),
-            });
+            let screen = self.entering_game(match_id, view).await?;
+            self.screen = Screen::Game(screen);
         } else {
             self.status = "正在匹配".to_owned();
             self.screen = Screen::Matchmaking(ticket);
@@ -343,12 +418,14 @@ impl App {
     }
 
     async fn toggle_ready(&mut self) -> Result<(), crate::model::ApiFailure> {
-        let Screen::Room(room) = &self.screen else {
+        let Screen::Room(screen) = &self.screen else {
             return Ok(());
         };
         let Some(user) = &self.user else {
             return Ok(());
         };
+        let rules_scroll = screen.rules_scroll;
+        let room = &screen.room;
         let ready = room
             .members
             .iter()
@@ -360,29 +437,28 @@ impl App {
         } else {
             "已准备".to_owned()
         };
-        self.screen = Screen::Room(room);
+        self.screen = Screen::Room(RoomScreen { room, rules_scroll });
         Ok(())
     }
 
     async fn start_room(&mut self) -> Result<(), crate::model::ApiFailure> {
-        let Screen::Room(room) = &self.screen else {
+        let Screen::Room(screen) = &self.screen else {
             return Ok(());
         };
+        let room = &screen.room;
         let started = self.api.start_room(&room.id, room.version).await?;
         let view = self.api.match_view(&started.match_id).await?;
         self.status = "对局开始".to_owned();
-        self.screen = Screen::Game(GameScreen {
-            view,
-            selected_tile: 0,
-            marked_tile_ids: Vec::new(),
-        });
+        let screen = self.entering_game(&started.match_id, view).await?;
+        self.screen = Screen::Game(screen);
         Ok(())
     }
 
     async fn leave_room(&mut self) -> Result<(), crate::model::ApiFailure> {
-        let Screen::Room(room) = &self.screen else {
+        let Screen::Room(screen) = &self.screen else {
             return Ok(());
         };
+        let room = &screen.room;
         self.api.leave_room(&room.id, room.version).await?;
         self.load_rooms().await
     }
@@ -392,13 +468,25 @@ impl App {
             return Ok(());
         };
         let old_hand = game.view.hand_index;
+        let countdowns = game.countdowns.clone();
+        let online = game.online.clone();
         let view = self.api.match_view(&game.view.id).await?;
+        if view.terminated_by_asset_timeout {
+            self.stream = None;
+            self.status = "有玩家出现网络问题，对局已终止".to_owned();
+            return self.load_rooms().await;
+        }
         let selected = clamp_selection(game.selected_tile, &view);
         let marked_tile_ids = retained_marks(&game.marked_tile_ids, &view, old_hand);
+        if let Some(stream) = &mut self.stream {
+            stream.set_last_seq(view.event_sequence);
+        }
         self.screen = Screen::Game(GameScreen {
             view,
             selected_tile: selected,
             marked_tile_ids,
+            countdowns,
+            online,
         });
         Ok(())
     }
@@ -411,22 +499,51 @@ impl App {
         let Screen::Game(game) = &self.screen else {
             return Ok(());
         };
-        let mut view = self
-            .api
-            .game_command(&game.view.id, game.view.version, name, payload)
-            .await?;
+        let (match_id, version) = (game.view.id.clone(), game.view.version);
+
+        // Send via WebSocket when connected, then refresh via HTTP for the
+        // authoritative state; fall back to the HTTP command endpoint otherwise.
+        if let Some(stream) = &self.stream {
+            if stream.is_connected() {
+                let ws_frame = serde_json::to_string(&json!({
+                    "kind": "command",
+                    "command_id": command_id(),
+                    "stream": format!("match_{match_id}"),
+                    "expected_version": version,
+                    "name": name,
+                    "payload": payload
+                }))
+                .expect("command json");
+                stream.send_command(ws_frame);
+            }
+        }
+        // Always refresh via HTTP so the display updates before the next
+        // event-driven refresh arrives.
+        let view = if self.stream.as_ref().is_some_and(|s| s.is_connected()) {
+            self.api.match_view(&match_id).await?
+        } else {
+            self.api
+                .game_command(&match_id, version, name, payload)
+                .await?
+        };
+
         let selected = clamp_selection(game.selected_tile, &view);
+        let countdowns = game.countdowns.clone();
+        let online = game.online.clone();
         if view.result.is_some() {
             self.status = "整场结束".to_owned();
         } else {
             self.status = command_status(name).to_owned();
         }
-        // Keep the latest observer projection only.
-        view.players.shrink_to_fit();
+        if let Some(stream) = &mut self.stream {
+            stream.set_last_seq(view.event_sequence);
+        }
         self.screen = Screen::Game(GameScreen {
             view,
             selected_tile: selected,
             marked_tile_ids: Vec::new(),
+            countdowns,
+            online,
         });
         Ok(())
     }
@@ -514,81 +631,40 @@ fn matchmaking_key(_ticket: &MatchmakingTicketView, key: KeyEvent) -> Option<Act
 }
 
 fn create_room_key(form: &mut CreateRoomForm, key: KeyEvent) -> Option<Action> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('s') {
+        return Some(match form.create_payload() {
+            Ok(payload) => Action::CreateRoom { payload },
+            Err(error) => return Some(Action::ShowStatus(error.to_string())),
+        });
+    }
     match key.code {
         KeyCode::Esc => return Some(Action::BackToRooms),
-        KeyCode::Tab | KeyCode::Down => form.active_field = (form.active_field + 1) % 6,
-        KeyCode::BackTab | KeyCode::Up => {
-            form.active_field = (form.active_field + 5) % 6;
-        }
-        KeyCode::F(3) => toggle_create_option(form, 3),
-        KeyCode::F(4) => toggle_create_option(form, 4),
-        KeyCode::F(5) => toggle_create_option(form, 5),
-        KeyCode::Left | KeyCode::Right if form.active_field >= 3 => {
-            toggle_create_option(form, form.active_field);
-        }
-        KeyCode::Backspace => {
-            if let Some(text) = active_create_text(form) {
-                text.pop();
-            }
-        }
-        KeyCode::Char(' ') if form.active_field >= 3 => {
-            toggle_create_option(form, form.active_field);
-        }
-        KeyCode::Char(character) => {
-            if let Some(text) = active_create_text(form) {
-                text.push(character);
-            }
-        }
-        KeyCode::Enter => {
-            return Some(Action::CreateRoom {
-                name: form.name.clone(),
-                variant: form.variant.clone(),
-                initial_points: form.initial_points.clone(),
-                noten_payment: form.noten_payment.clone(),
-                head_bump: form.head_bump,
-                tobi: form.tobi,
-            });
-        }
+        KeyCode::Tab | KeyCode::Down => form.next_field(),
+        KeyCode::BackTab | KeyCode::Up => form.previous_field(),
+        KeyCode::Char('[') => form.change_page(-1),
+        KeyCode::Char(']') => form.change_page(1),
+        KeyCode::Left => form.change_active(-1),
+        KeyCode::Right => form.change_active(1),
+        KeyCode::Backspace => form.backspace(),
+        KeyCode::Char(' ') if !form.active_accepts_text() => form.change_active(1),
+        KeyCode::Enter if !form.active_accepts_text() => form.change_active(1),
+        KeyCode::Char(character) => form.push_character(character),
         _ => {}
     }
     None
 }
 
-fn active_create_text(form: &mut CreateRoomForm) -> Option<&mut String> {
-    match form.active_field {
-        0 => Some(&mut form.name),
-        1 => Some(&mut form.initial_points),
-        2 => Some(&mut form.noten_payment),
-        _ => None,
-    }
-}
-
-fn toggle_create_option(form: &mut CreateRoomForm, field: usize) {
-    match field {
-        3 => {
-            form.variant = if form.variant == "yonma" {
-                "sanma".to_owned()
-            } else {
-                "yonma".to_owned()
-            };
-        }
-        4 => form.head_bump = !form.head_bump,
-        5 => form.tobi = !form.tobi,
+fn room_key(screen: &mut RoomScreen, key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Char(' ') => return Some(Action::Ready),
+        KeyCode::Char('s') => return Some(Action::StartRoom),
+        KeyCode::Char('r') => return Some(Action::RefreshRoom),
+        KeyCode::Char('l') | KeyCode::Esc => return Some(Action::LeaveRoom),
+        KeyCode::Up => screen.rules_scroll = screen.rules_scroll.saturating_sub(1),
+        KeyCode::Down => screen.rules_scroll = screen.rules_scroll.saturating_add(1),
         _ => {}
     }
-}
-
-fn room_key(room: &RoomView, key: KeyEvent) -> Option<Action> {
-    match key.code {
-        KeyCode::Char(' ') => Some(Action::Ready),
-        KeyCode::Char('s') => Some(Action::StartRoom),
-        KeyCode::Char('r') => Some(Action::RefreshRoom),
-        KeyCode::Char('l') | KeyCode::Esc => Some(Action::LeaveRoom),
-        _ => {
-            let _ = room;
-            None
-        }
-    }
+    None
 }
 
 fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Action> {
@@ -614,7 +690,7 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
                 .riichi_discard_tile_ids
                 .contains(&tile.id)
             {
-                return Some(Action::ShowStatus("所选牌不能立直"));
+                return Some(Action::ShowStatus("所选牌不能立直".to_owned()));
             }
             return selected_tile_command(game, "riichi.riichi_discard");
         }
@@ -657,7 +733,7 @@ fn game_key(game: &mut GameScreen, key: KeyEvent, quit: &mut bool) -> Option<Act
         KeyCode::Char('k') => {
             if matches!(game.view.phase, MatchPhase::AwaitingResponses { .. }) {
                 if !has_reaction(&game.view, ReactionKind::OpenKan) {
-                    return Some(Action::ShowStatus("当前不能杠"));
+                    return Some(Action::ShowStatus("当前不能杠".to_owned()));
                 }
                 return Some(reaction_tiles_command(
                     game,
@@ -714,12 +790,12 @@ fn marked_tiles_command(
     invalid_selection: &'static str,
 ) -> Action {
     if game.marked_tile_ids.len() != expected_count {
-        return Action::ShowStatus(invalid_selection);
+        return Action::ShowStatus(invalid_selection.to_owned());
     }
     if let Some(kind) = reaction_kind_for_command(name)
         && !reaction_selection_allowed(&game.view, kind, &game.marked_tile_ids)
     {
-        return Action::ShowStatus("所选牌不能执行该操作");
+        return Action::ShowStatus("所选牌不能执行该操作".to_owned());
     }
     Action::GameCommand {
         name,
@@ -746,7 +822,7 @@ fn reaction_tiles_command(
 
 fn added_kan_command(game: &GameScreen) -> Action {
     let Some(tile) = own_tiles(&game.view).and_then(|tiles| tiles.get(game.selected_tile)) else {
-        return Action::ShowStatus("请先选择要加杠的牌");
+        return Action::ShowStatus("请先选择要加杠的牌".to_owned());
     };
     let Some(option) = game
         .view
@@ -755,7 +831,7 @@ fn added_kan_command(game: &GameScreen) -> Action {
         .iter()
         .find(|option| option.tile_id == tile.id)
     else {
-        return Action::ShowStatus("所选牌不能加杠");
+        return Action::ShowStatus("所选牌不能加杠".to_owned());
     };
     Action::GameCommand {
         name: "riichi.added_kan",
@@ -776,7 +852,7 @@ fn concealed_kan_command(game: &GameScreen) -> Action {
         })
         .or_else(|| (candidates.len() == 1).then(|| &candidates[0]));
     let Some(candidate) = candidate else {
-        return Action::ShowStatus("请选择要暗杠的牌");
+        return Action::ShowStatus("请选择要暗杠的牌".to_owned());
     };
     Action::GameCommand {
         name: "riichi.concealed_kan",
@@ -864,11 +940,13 @@ fn retained_marks(marked: &[u16], view: &MatchView, old_hand: u32) -> Vec<u16> {
         .collect()
 }
 
-fn parse_number(value: &str, label: &str) -> Result<u32, crate::model::ApiFailure> {
-    value.parse().map_err(|_| crate::model::ApiFailure {
-        code: "client.invalid_input".to_owned(),
-        message: format!("{label}必须是非负整数"),
-    })
+fn command_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("c{millis:016x}")
 }
 
 fn command_status(name: &str) -> &'static str {
@@ -888,40 +966,11 @@ fn command_status(name: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-    use super::{CreateRoomForm, command_status, create_room_key};
+    use super::command_status;
 
     #[test]
     fn protocol_command_names_do_not_leak_into_game_copy() {
         assert_eq!(command_status("riichi.discard"), "已打牌");
         assert_eq!(command_status("riichi.concealed_kan"), "已杠牌");
-    }
-
-    #[test]
-    fn room_rule_shortcuts_do_not_consume_text_characters() {
-        let mut form = CreateRoomForm {
-            active_field: 0,
-            name: String::new(),
-            variant: "yonma".to_owned(),
-            initial_points: "25000".to_owned(),
-            noten_payment: "3000".to_owned(),
-            head_bump: false,
-            tobi: true,
-        };
-
-        create_room_key(
-            &mut form,
-            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-        );
-        assert_eq!(form.name, "v");
-        assert_eq!(form.variant, "yonma");
-
-        form.active_field = 3;
-        create_room_key(
-            &mut form,
-            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        );
-        assert_eq!(form.variant, "sanma");
     }
 }

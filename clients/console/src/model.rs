@@ -66,6 +66,7 @@ pub struct MatchView {
     pub id: String,
     pub room_id: String,
     pub version: u64,
+    pub event_sequence: u64,
     pub hand_index: u32,
     pub observer_seat: u8,
     pub progress: ProgressView,
@@ -75,7 +76,25 @@ pub struct MatchView {
     pub players: Vec<MatchPlayerView>,
     pub available_reactions: Vec<ReactionOptionView>,
     pub turn_actions: TurnActionsView,
+    /// 已经把对局素材load完的座位。全场报到之前服务端一条命令都不收。
+    #[serde(default)]
+    pub assets_ready_seats: Vec<u8>,
+    /// 有人一直没load完，这局已经作废。
+    #[serde(default)]
+    pub terminated_by_asset_timeout: bool,
     pub result: Option<MatchResultView>,
+}
+
+impl MatchView {
+    /// 本座还欠服务端一次素材load完的报告。
+    pub fn needs_assets_ready(&self) -> bool {
+        !self.assets_ready_seats.contains(&self.observer_seat)
+    }
+
+    /// 还有人没load完，桌面是冻着的。
+    pub fn assets_loading(&self) -> bool {
+        self.assets_ready_seats.len() < self.players.len()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]

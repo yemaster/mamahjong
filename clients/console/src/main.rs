@@ -1,6 +1,11 @@
 mod api;
 mod app;
+#[cfg(test)]
+mod fixtures;
+mod layout;
 mod model;
+mod rules;
+mod stream;
 mod ui;
 
 use std::error::Error;

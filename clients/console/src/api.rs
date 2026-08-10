@@ -7,6 +7,7 @@ use crate::model::{
     ApiFailure, AuthResponse, MatchView, MatchmakingTicketView, RoomList, RoomView,
     StartMatchResponse,
 };
+use crate::rules::RuleSetCatalog;
 
 #[derive(Clone)]
 pub struct ApiClient {
@@ -32,6 +33,16 @@ impl ApiClient {
 
     pub fn set_token(&mut self, token: String) {
         self.token = Some(token);
+    }
+
+    #[must_use]
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    #[must_use]
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_deref()
     }
 
     pub async fn register(
@@ -67,6 +78,10 @@ impl ApiClient {
 
     pub async fn rooms(&self) -> Result<RoomList, ApiFailure> {
         self.send(Method::GET, "/api/v1/rooms", None).await
+    }
+
+    pub async fn rule_sets(&self) -> Result<RuleSetCatalog, ApiFailure> {
+        self.send(Method::GET, "/api/v1/rule-sets", None).await
     }
 
     pub async fn enter_matchmaking(
@@ -105,44 +120,9 @@ impl ApiClient {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn create_room(
-        &self,
-        name: &str,
-        variant: &str,
-        initial_points: u32,
-        tobi: bool,
-        noten_payment: u32,
-        head_bump: bool,
-    ) -> Result<RoomView, ApiFailure> {
-        self.send(
-            Method::POST,
-            "/api/v1/rooms",
-            Some(json!({
-                "name": name,
-                "visibility": "public",
-                "rules": {
-                    "rule_set_id": format!("riichi/{variant}"),
-                    "config": {
-                        "overrides": {
-                            "match_rules": {
-                                "initial_points": initial_points,
-                                "tobi": tobi
-                            },
-                            "settlement": {
-                                "noten_payment": noten_payment,
-                                "ron_resolution": if head_bump {
-                                    "head_bump"
-                                } else {
-                                    "multiple"
-                                }
-                            }
-                        }
-                    }
-                }
-            })),
-        )
-        .await
+    pub async fn create_room(&self, payload: Value) -> Result<RoomView, ApiFailure> {
+        self.send(Method::POST, "/api/v1/rooms", Some(payload))
+            .await
     }
 
     pub async fn room(&self, room_id: &str) -> Result<RoomView, ApiFailure> {
