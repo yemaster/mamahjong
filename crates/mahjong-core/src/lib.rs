@@ -8,7 +8,8 @@ pub use identifier::{
     CommandId, ConnectionId, IdParseError, MatchId, RoomId, SessionId, TicketId, UserId,
 };
 pub use rules::{
-    EngineVersion, EngineVersionParseError, PresetId, PresetRef, RuleConfig, RuleDefinition,
-    RuleDescriptor, RuleMetadataError, RuleSetId, RuleSnapshot, SeatCount,
+    EngineVersion, EngineVersionParseError, PresetId, PresetRef, RULE_SNAPSHOT_SCHEMA_VERSION,
+    RuleConfig, RuleDefinition, RuleDescriptor, RuleMetadataError, RuleSetId, RuleSnapshot,
+    SeatCount,
 };
 pub use version::{AggregateVersion, VersionOverflow};

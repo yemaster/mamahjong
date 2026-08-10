@@ -3,8 +3,8 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::{
     Discard, DrawSource, EndReason, HandEvent, HandJudge, HandPhase, HandTransition, PlayerHand,
-    Reaction, RiichiRules, RiichiVariant, Seat, TableProgress, TileId, TileKind, TileSet,
-    TileSetError, ValidationErrors, Wall, WallSeed,
+    Reaction, RiichiRules, RiichiScorer, RiichiVariant, Seat, TableProgress, Tile, TileId,
+    TileKind, TileSet, TileSetError, ValidationErrors, Wall, WallSeed, WinQuery, WinSource,
 };
 
 const INITIAL_CONCEALED_TILES: usize = 13;
@@ -185,9 +185,22 @@ impl RiichiHand {
         self.wall.remaining_live_draws()
     }
 
+    /// 本局牌山洗好之后的完整顺序，以及活牌区末尾（王牌起点）的下标。
+    ///
+    /// 只给牌谱用，且只有对局结束之后才允许下发，详见 `Wall::ordered_tiles`。
+    #[must_use]
+    pub fn wall_order(&self) -> (&[crate::Tile], usize) {
+        (self.wall.ordered_tiles(), self.wall.live_end())
+    }
+
     #[must_use]
     pub fn current_dora_indicators(&self) -> impl ExactSizeIterator<Item = crate::Tile> + '_ {
         self.wall.current_dora_indicators()
+    }
+
+    #[must_use]
+    pub fn matching_ura_dora_indicators(&self) -> impl ExactSizeIterator<Item = crate::Tile> + '_ {
+        self.wall.matching_ura_dora_indicators()
     }
 
     #[must_use]
@@ -208,6 +221,54 @@ impl RiichiHand {
     pub fn player(&self, seat: Seat) -> Result<&PlayerHand, HandError> {
         self.validate_seat(seat)?;
         Ok(&self.players[usize::from(seat.index())])
+    }
+
+    pub fn waiting_tile_hints(&self, seat: Seat) -> Result<Box<[(TileKind, bool)]>, HandError> {
+        let player = self.player(seat)?;
+        let scorer = RiichiScorer;
+        let source = WinSource::Discard {
+            from: seat_at_offset(self.rules.variant, seat, 1),
+        };
+        Ok(scorer
+            .waiting_tiles(player)
+            .kinds()
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, kind)| {
+                let tile = Tile::new(
+                    TileId::new(60_000 + u16::try_from(index).expect("wait index fits u16")),
+                    kind,
+                    false,
+                )
+                .expect("non-red waiting tile is valid");
+                let has_yaku = scorer
+                    .evaluate(WinQuery::new(
+                        &self.rules,
+                        self.progress,
+                        seat,
+                        player,
+                        tile,
+                        source,
+                        &self.wall,
+                        self.calls_occurred,
+                    ))
+                    .is_some();
+                (kind, has_yaku)
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice())
+    }
+
+    pub fn is_furiten(&self, seat: Seat) -> Result<bool, HandError> {
+        let player = self.player(seat)?;
+        let waits = RiichiScorer.waiting_tiles(player);
+        let discard_furiten = player
+            .discards()
+            .iter()
+            .any(|discard| waits.contains(discard.tile().kind()));
+        Ok(!waits.is_empty()
+            && (discard_furiten || player.is_temporary_furiten() || player.is_riichi_furiten()))
     }
 
     pub fn discard(&mut self, actor: Seat, tile_id: TileId) -> Result<HandTransition, HandError> {
@@ -260,10 +321,14 @@ impl RiichiHand {
         if declare_riichi {
             player.riichi = crate::RiichiStatus::Pending;
         }
+        let forced_sideways =
+            matches!(player.riichi, crate::RiichiStatus::Pending) && !declare_riichi && !tsumogiri;
         let discard_index = player.discards.len();
-        player
-            .discards
-            .push(Discard::new(tile, tsumogiri, declare_riichi));
+        player.discards.push(Discard::new(
+            tile,
+            tsumogiri,
+            declare_riichi || forced_sideways,
+        ));
         let mut responses =
             vec![None; usize::from(self.rules.variant.seat_count().value())].into_boxed_slice();
         responses[usize::from(actor.index())] = Some(Reaction::Pass);

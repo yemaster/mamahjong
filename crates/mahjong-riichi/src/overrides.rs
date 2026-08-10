@@ -5,8 +5,8 @@ use mahjong_core::{PresetId, PresetRef};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DealerContinuation, MatchLength, PlacementUma, RedFives, RiichiPreset, RiichiRules,
-    RiichiVariant, RonResolution, ScoringRules, ValidationErrors, YakumanValue,
+    DealerContinuation, KuikaeRule, MatchLength, PlacementUma, RedFives, RiichiPreset, RiichiRules,
+    RiichiVariant, RonResolution, ScoringRules, ThinkingTimeRules, ValidationErrors, YakumanValue,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -34,6 +34,8 @@ pub struct RiichiRuleOverrides {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scoring: Option<ScoringRuleOverrides>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calls: Option<CallRuleOverrides>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bonuses: Option<BonusRuleOverrides>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub abortive_draws: Option<AbortiveDrawRuleOverrides>,
@@ -47,6 +49,8 @@ pub struct MatchRuleOverrides {
     pub length: Option<MatchLength>,
     pub initial_points: Option<u32>,
     pub return_points: Option<u32>,
+    pub first_place_required_points: Option<u32>,
+    pub thinking_time: Option<ThinkingTimeRules>,
     pub tobi: Option<bool>,
     pub dealer_continuation: Option<DealerContinuation>,
     pub agari_yame: Option<bool>,
@@ -61,6 +65,13 @@ pub struct ScoringRuleOverrides {
     pub nagashi_mangan: Option<bool>,
     pub kazoe_yakuman: Option<bool>,
     pub kokushi_ankan_chankan: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CallRuleOverrides {
+    pub kuitan: Option<bool>,
+    pub kuikae: Option<KuikaeRule>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -149,6 +160,14 @@ impl RiichiRuleOverrides {
                 &mut rules.match_rules.return_points,
                 overrides.return_points,
             );
+            apply_if_some(
+                &mut rules.match_rules.first_place_required_points,
+                overrides.first_place_required_points,
+            );
+            apply_if_some(
+                &mut rules.match_rules.thinking_time,
+                overrides.thinking_time,
+            );
             apply_if_some(&mut rules.match_rules.tobi, overrides.tobi);
             apply_if_some(
                 &mut rules.match_rules.dealer_continuation,
@@ -159,6 +178,11 @@ impl RiichiRuleOverrides {
 
         if let Some(overrides) = self.scoring {
             apply_scoring_overrides(&mut rules.scoring, overrides);
+        }
+
+        if let Some(overrides) = self.calls {
+            apply_if_some(&mut rules.calls.kuitan, overrides.kuitan);
+            apply_if_some(&mut rules.calls.kuikae, overrides.kuikae);
         }
 
         if let Some(overrides) = self.bonuses {

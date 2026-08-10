@@ -169,7 +169,8 @@ pub enum Payment {
 }
 
 impl Payment {
-    pub(super) const fn total_received(self, player_count: u8, winner_is_dealer: bool) -> u32 {
+    #[must_use]
+    pub const fn total_received(self, player_count: u8, winner_is_dealer: bool) -> u32 {
         match self {
             Self::Ron { points } => points,
             Self::Tsumo {

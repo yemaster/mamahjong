@@ -3,9 +3,9 @@ use std::num::NonZeroU32;
 use mahjong_core::{PresetId, PresetRef};
 
 use crate::{
-    AbortiveDrawRules, BonusRules, DealerContinuation, MatchLength, MatchRules, PlacementUma,
-    RedFives, RiichiRules, RiichiVariant, RonResolution, ScoringRules, SettlementRules,
-    YakumanValue,
+    AbortiveDrawRules, BonusRules, CallRules, DealerContinuation, KuikaeRule, MatchLength,
+    MatchRules, PlacementUma, RedFives, RiichiRules, RiichiVariant, RonResolution, ScoringRules,
+    SettlementRules, ThinkingTimeRules, YakumanValue,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -33,6 +33,19 @@ impl RiichiPreset {
             Self::JpmlA => "日本职业麻将联盟 A 规则",
             Self::Saikouisen => "最高位战规则",
             Self::MLeague => "M League 规则",
+        }
+    }
+
+    /// 一眼能认的短名，给标题这种一行写不下全称的地方用。
+    ///
+    /// 牌谱标题上「四人南」后面还要跟规则名，全称一挂上去整行就散了；牌桌上大家
+    /// 平时也是这么叫的。
+    #[must_use]
+    pub const fn short_name(self) -> &'static str {
+        match self {
+            Self::JpmlA => "A规",
+            Self::Saikouisen => "最高位战",
+            Self::MLeague => "ML规则",
         }
     }
 
@@ -76,14 +89,14 @@ impl RiichiPreset {
             }
             Self::MLeague => {
                 rules.match_rules.initial_points = 25_000;
-                rules.match_rules.return_points = 30_000;
+                rules.match_rules.return_points = 25_000;
                 rules.bonuses.red_fives =
                     RedFives::new(1, 1, 1).expect("built-in red fives are valid");
                 rules.bonuses.ippatsu = true;
                 rules.bonuses.ura_dora = true;
                 rules.bonuses.kan_dora = true;
                 rules.settlement.uma = PlacementUma::Fixed {
-                    values: vec![30, 10, -10, -30],
+                    values: vec![45, 5, -15, -35],
                 };
             }
         }
@@ -102,6 +115,8 @@ fn competition_base() -> RiichiRules {
             length: MatchLength::Hanchan,
             initial_points: 30_000,
             return_points: 30_000,
+            first_place_required_points: 30_000,
+            thinking_time: ThinkingTimeRules::default(),
             tobi: false,
             dealer_continuation: DealerContinuation::WinOrTenpai,
             agari_yame: false,
@@ -113,6 +128,10 @@ fn competition_base() -> RiichiRules {
             nagashi_mangan: false,
             kazoe_yakuman: false,
             kokushi_ankan_chankan: false,
+        },
+        calls: CallRules {
+            kuitan: true,
+            kuikae: KuikaeRule::Forbidden,
         },
         bonuses: BonusRules {
             red_fives: RedFives::new(0, 0, 0).expect("zero red fives are valid"),
@@ -196,13 +215,19 @@ mod tests {
         let rules = RiichiPreset::MLeague.rules();
 
         assert_eq!(rules.match_rules.initial_points, 25_000);
-        assert_eq!(rules.match_rules.return_points, 30_000);
+        assert_eq!(rules.match_rules.return_points, 25_000);
         assert_eq!(rules.bonuses.red_fives.for_suit(Suit::Man), 1);
         assert_eq!(rules.bonuses.red_fives.for_suit(Suit::Pin), 1);
         assert_eq!(rules.bonuses.red_fives.for_suit(Suit::Sou), 1);
         assert!(rules.bonuses.ippatsu);
         assert!(rules.bonuses.ura_dora);
         assert!(rules.bonuses.kan_dora);
+        assert_eq!(
+            rules.settlement.uma,
+            PlacementUma::Fixed {
+                values: vec![45, 5, -15, -35]
+            }
+        );
     }
 
     #[test]

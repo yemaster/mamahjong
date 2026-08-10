@@ -102,7 +102,10 @@ pub(super) fn yakuman(query: WinQuery<'_>, interpretation: &Interpretation) -> V
             .filter(|group| group_kind(group).is_some_and(is_wind))
             .count();
         if wind_triplets == 4 {
-            values.push(YakuValue::yakuman(Yaku::Daisuushi, 1));
+            values.push(YakuValue::yakuman(
+                Yaku::Daisuushi,
+                if double_variants { 2 } else { 1 },
+            ));
         } else if wind_triplets == 3 && interpretation.pair.is_some_and(is_wind) {
             values.push(YakuValue::yakuman(Yaku::Shousuushi, 1));
         }
@@ -153,10 +156,11 @@ pub(super) fn regular_yaku(query: WinQuery<'_>, interpretation: &Interpretation)
     let closed = is_closed(query);
     add_context_yaku(&mut values, query, closed);
 
-    if interpretation
-        .all_tiles
-        .iter()
-        .all(|tile| !tile.kind().is_terminal_or_honor())
+    if (closed || query.rules().calls.kuitan)
+        && interpretation
+            .all_tiles
+            .iter()
+            .all(|tile| !tile.kind().is_terminal_or_honor())
     {
         values.push(YakuValue::han(Yaku::Tanyao, 1));
     }

@@ -177,9 +177,26 @@ impl Wall {
         self.tiles[self.live_end + offset]
     }
 
+    /// 洗好之后整副牌的顺序，摸牌不会改动它。
+    ///
+    /// `[..live_end()]` 是活牌区，按摸牌先后排；`[live_end()..]` 是王牌。
+    ///
+    /// 这是牌谱要用的东西：一局打完之后把它存下来，重演时才能画出没人摸到的那些牌。
+    /// **对局还没结束就不许把它交给任何客户端**，那等于直接发一份作弊器出去。
+    #[must_use]
+    pub fn ordered_tiles(&self) -> &[Tile] {
+        &self.tiles
+    }
+
+    /// 活牌区的末尾下标，也就是王牌的起点。
+    #[must_use]
+    pub const fn live_end(&self) -> usize {
+        self.live_end
+    }
+
     #[cfg(test)]
     fn secret_order(&self) -> &[Tile] {
-        &self.tiles
+        self.ordered_tiles()
     }
 }
 

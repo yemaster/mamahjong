@@ -233,6 +233,19 @@ impl PlayerHand {
     pub(crate) fn add_scoring_fixture_discard(&mut self, tile: Tile) {
         self.discards.push(Discard::new(tile, false, false));
     }
+
+    #[cfg(test)]
+    pub(crate) fn add_scoring_fixture_meld(
+        &mut self,
+        kind: MeldKind,
+        tiles: Vec<Tile>,
+        called_from: Option<Seat>,
+    ) {
+        let id = MeldId::new(u8::try_from(self.melds.len()).expect("meld index fits u8"));
+        let called_tile = tiles.last().map(|tile| tile.id());
+        self.melds
+            .push(Meld::new(id, kind, tiles, called_from, called_tile));
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

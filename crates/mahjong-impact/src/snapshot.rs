@@ -1,3 +1,7 @@
+//! 开局快照：把展开后的完整配置连同 schema 版本、规则集 ID、引擎版本、预设引用一起固化。
+//!
+//! 序列化形状与立直麻将的快照一致，归档里两套规则可以走同一条读写路径。
+
 use std::num::NonZeroU32;
 
 use mahjong_core::{
@@ -6,19 +10,19 @@ use mahjong_core::{
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{
-    RIICHI_ENGINE_VERSION, ResolvedRiichiRules, RiichiRules, RiichiVariant, RoomRuleRequest,
-    RuleResolutionError, ValidationErrors,
-};
+use crate::config::ImpactRules;
+use crate::definition::{IMPACT_ENGINE_VERSION, IMPACT_RULE_SET_ID};
+use crate::overrides::{ImpactRoomRuleRequest, ResolvedImpactRules, RuleResolutionError};
+use crate::validation::{RuleViolation, ValidationErrors};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiichiRuleSnapshot {
-    inner: RuleSnapshot<RiichiRules>,
+pub struct ImpactRuleSnapshot {
+    inner: RuleSnapshot<ImpactRules>,
 }
 
-impl RiichiRuleSnapshot {
+impl ImpactRuleSnapshot {
     pub fn try_new(
-        rules: RiichiRules,
+        rules: ImpactRules,
         preset: Option<PresetRef>,
     ) -> Result<Self, ValidationErrors> {
         rules.validate()?;
@@ -26,16 +30,16 @@ impl RiichiRuleSnapshot {
     }
 
     #[must_use]
-    pub fn from_resolved(resolved: ResolvedRiichiRules) -> Self {
+    pub fn from_resolved(resolved: ResolvedImpactRules) -> Self {
         let (rules, preset) = resolved.into_parts();
         Self::new_validated(rules, preset)
     }
 
-    fn new_validated(rules: RiichiRules, preset: Option<PresetRef>) -> Self {
+    fn new_validated(rules: ImpactRules, preset: Option<PresetRef>) -> Self {
         let rule_set_id =
-            RuleSetId::parse(rules.variant.rule_set_id()).expect("built-in rule set ID is valid");
+            RuleSetId::parse(IMPACT_RULE_SET_ID).expect("built-in rule set ID is valid");
         Self {
-            inner: RuleSnapshot::new(rule_set_id, RIICHI_ENGINE_VERSION, preset, rules),
+            inner: RuleSnapshot::new(rule_set_id, IMPACT_ENGINE_VERSION, preset, rules),
         }
     }
 
@@ -60,22 +64,19 @@ impl RiichiRuleSnapshot {
     }
 
     #[must_use]
-    pub const fn rules(&self) -> &RiichiRules {
+    pub const fn rules(&self) -> &ImpactRules {
         self.inner.config()
     }
 
     #[must_use]
-    pub fn into_rules(self) -> RiichiRules {
+    pub fn into_rules(self) -> ImpactRules {
         self.inner.into_config()
     }
 }
 
-impl RoomRuleRequest {
-    pub fn resolve_snapshot(
-        self,
-        variant: RiichiVariant,
-    ) -> Result<RiichiRuleSnapshot, RuleResolutionError> {
-        self.resolve(variant).map(RiichiRuleSnapshot::from_resolved)
+impl ImpactRoomRuleRequest {
+    pub fn resolve_snapshot(self) -> Result<ImpactRuleSnapshot, RuleResolutionError> {
+        self.resolve().map(ImpactRuleSnapshot::from_resolved)
     }
 }
 
@@ -86,7 +87,7 @@ struct SnapshotWrite<'a> {
     engine_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     preset: Option<PresetWrite<'a>>,
-    config: &'a RiichiRules,
+    config: &'a ImpactRules,
 }
 
 #[derive(Serialize)]
@@ -95,7 +96,7 @@ struct PresetWrite<'a> {
     revision: u32,
 }
 
-impl Serialize for RiichiRuleSnapshot {
+impl Serialize for ImpactRuleSnapshot {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -123,7 +124,7 @@ struct SnapshotRead {
     engine_version: String,
     #[serde(default)]
     preset: Option<PresetRead>,
-    config: RiichiRules,
+    config: ImpactRules,
 }
 
 #[derive(Deserialize)]
@@ -133,7 +134,7 @@ struct PresetRead {
     revision: u32,
 }
 
-impl<'de> Deserialize<'de> for RiichiRuleSnapshot {
+impl<'de> Deserialize<'de> for ImpactRuleSnapshot {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -147,11 +148,9 @@ impl<'de> Deserialize<'de> for RiichiRuleSnapshot {
         }
 
         let rule_set_id = RuleSetId::parse(value.rule_set_id).map_err(D::Error::custom)?;
-        let expected_rule_set_id = value.config.variant.rule_set_id();
-        if rule_set_id.as_str() != expected_rule_set_id {
+        if rule_set_id.as_str() != IMPACT_RULE_SET_ID {
             return Err(D::Error::custom(format_args!(
-                "rule_set_id must be {expected_rule_set_id} for {:?}",
-                value.config.variant
+                "rule_set_id must be {IMPACT_RULE_SET_ID} for impact rules"
             )));
         }
 
@@ -173,7 +172,7 @@ impl<'de> Deserialize<'de> for RiichiRuleSnapshot {
             let codes = errors
                 .violations()
                 .iter()
-                .map(crate::RuleViolation::code)
+                .map(RuleViolation::code)
                 .collect::<Vec<_>>()
                 .join(", ");
             D::Error::custom(format_args!("invalid rule config: {codes}"))
@@ -189,89 +188,88 @@ impl<'de> Deserialize<'de> for RiichiRuleSnapshot {
 mod tests {
     use serde_json::json;
 
-    use crate::{
-        PresetRequest, RiichiPreset, RiichiRuleOverrides, RiichiRuleSnapshot, RiichiRules,
-        RiichiVariant, RoomRuleRequest,
-    };
+    use super::ImpactRuleSnapshot;
+    use crate::config::ImpactRules;
+    use crate::overrides::{ImpactRoomRuleRequest, PresetRequest};
 
-    const M_LEAGUE_FIXTURE: &str = include_str!("../fixtures/rule-snapshots/m-league-v1.json");
-
-    #[test]
-    fn m_league_snapshot_matches_stable_fixture() {
-        let snapshot = RoomRuleRequest {
+    fn standard_snapshot() -> ImpactRuleSnapshot {
+        ImpactRoomRuleRequest {
             preset: Some(PresetRequest {
-                id: RiichiPreset::MLeague.id().to_owned(),
+                id: "standard".to_owned(),
                 revision: Some(1),
             }),
-            overrides: RiichiRuleOverrides::default(),
+            overrides: Default::default(),
         }
-        .resolve_snapshot(RiichiVariant::Yonma)
-        .expect("valid snapshot");
+        .resolve_snapshot()
+        .expect("valid snapshot")
+    }
 
-        let encoded = serde_json::to_string_pretty(&snapshot).expect("serialize snapshot");
+    #[test]
+    fn snapshot_records_rule_set_engine_and_preset() {
+        let snapshot = standard_snapshot();
 
-        assert_eq!(format!("{encoded}\n"), M_LEAGUE_FIXTURE);
-        let decoded: RiichiRuleSnapshot =
-            serde_json::from_str(M_LEAGUE_FIXTURE).expect("read snapshot fixture");
+        assert_eq!(snapshot.schema_version(), 2);
+        assert_eq!(snapshot.rule_set_id().as_str(), "impact/yonma");
+        assert_eq!(snapshot.engine_version().to_string(), "0.1.0");
+        assert_eq!(snapshot.preset().expect("preset").id().as_str(), "standard");
+        assert_eq!(snapshot.rules(), &ImpactRules::standard());
+    }
+
+    #[test]
+    fn snapshot_round_trips_through_json() {
+        let snapshot = standard_snapshot();
+        let encoded = serde_json::to_string(&snapshot).expect("serialize");
+        let decoded: ImpactRuleSnapshot = serde_json::from_str(&encoded).expect("deserialize");
+
         assert_eq!(decoded, snapshot);
     }
 
     #[test]
-    fn sanma_snapshot_uses_matching_rule_set_id() {
-        let snapshot =
-            RiichiRuleSnapshot::try_new(RiichiRules::standard(RiichiVariant::Sanma), None)
-                .expect("valid sanma");
-
-        assert_eq!(snapshot.rule_set_id().as_str(), "riichi/sanma");
-        assert_eq!(snapshot.engine_version().to_string(), "0.1.0");
-        assert!(snapshot.preset().is_none());
-    }
-
-    #[test]
     fn rejects_unknown_snapshot_fields() {
-        let mut value: serde_json::Value =
-            serde_json::from_str(M_LEAGUE_FIXTURE).expect("fixture JSON");
-        value["created_at"] = json!("2026-07-30T00:00:00Z");
+        let mut value =
+            serde_json::to_value(standard_snapshot()).expect("snapshot serializes to JSON");
+        value["created_at"] = json!("2026-08-08T00:00:00Z");
 
-        assert!(serde_json::from_value::<RiichiRuleSnapshot>(value).is_err());
+        assert!(serde_json::from_value::<ImpactRuleSnapshot>(value).is_err());
     }
 
     #[test]
-    fn rejects_rule_set_and_config_variant_mismatch() {
-        let mut value: serde_json::Value =
-            serde_json::from_str(M_LEAGUE_FIXTURE).expect("fixture JSON");
-        value["rule_set_id"] = json!("riichi/sanma");
+    fn rejects_a_foreign_rule_set_id() {
+        let mut value = serde_json::to_value(standard_snapshot()).expect("snapshot JSON");
+        value["rule_set_id"] = json!("riichi/yonma");
 
         let error =
-            serde_json::from_value::<RiichiRuleSnapshot>(value).expect_err("mismatched rule set");
+            serde_json::from_value::<ImpactRuleSnapshot>(value).expect_err("mismatched rule set");
 
         assert!(
             error
                 .to_string()
-                .contains("rule_set_id must be riichi/yonma")
+                .contains("rule_set_id must be impact/yonma")
         );
     }
 
     #[test]
     fn validates_full_config_when_reading_from_storage() {
-        let mut value: serde_json::Value =
-            serde_json::from_str(M_LEAGUE_FIXTURE).expect("fixture JSON");
-        value["config"]["bonuses"]["red_fives"]["man"] = json!(9);
+        let mut value = serde_json::to_value(standard_snapshot()).expect("snapshot JSON");
+        value["config"]["match_rules"]["thinking_time"]["base_seconds"] = json!(3);
 
-        let error =
-            serde_json::from_value::<RiichiRuleSnapshot>(value).expect_err("invalid red count");
+        let error = serde_json::from_value::<ImpactRuleSnapshot>(value)
+            .expect_err("unsupported thinking time");
 
-        assert!(error.to_string().contains("rules.red_fives.too_many"));
+        assert!(
+            error
+                .to_string()
+                .contains("rules.thinking_time.unsupported")
+        );
     }
 
     #[test]
-    fn full_snapshot_does_not_depend_on_current_preset_catalog() {
-        let mut value: serde_json::Value =
-            serde_json::from_str(M_LEAGUE_FIXTURE).expect("fixture JSON");
+    fn historical_snapshots_do_not_depend_on_the_current_preset_catalog() {
+        let mut value = serde_json::to_value(standard_snapshot()).expect("snapshot JSON");
         value["preset"]["id"] = json!("retired-preset");
         value["preset"]["revision"] = json!(37);
 
-        let snapshot: RiichiRuleSnapshot =
+        let snapshot: ImpactRuleSnapshot =
             serde_json::from_value(value).expect("complete historical snapshot");
 
         assert_eq!(
@@ -282,6 +280,6 @@ mod tests {
             snapshot.preset().expect("preset metadata").revision().get(),
             37
         );
-        assert_eq!(snapshot.rules(), &RiichiPreset::MLeague.rules());
+        assert_eq!(snapshot.rules(), &ImpactRules::standard());
     }
 }

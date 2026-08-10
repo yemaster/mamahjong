@@ -126,11 +126,58 @@ macro_rules! define_entity_id {
 
 define_entity_id!(UserId, "user_", "user ID");
 define_entity_id!(SessionId, "session_", "session ID");
-define_entity_id!(RoomId, "room_", "room ID");
 define_entity_id!(MatchId, "match_", "match ID");
 define_entity_id!(CommandId, "cmd_", "command ID");
 define_entity_id!(TicketId, "ticket_", "ticket ID");
 define_entity_id!(ConnectionId, "connection_", "connection ID");
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RoomId(String);
+
+impl RoomId {
+    #[must_use]
+    pub fn new() -> Self {
+        let bytes = uuid::Uuid::now_v7().into_bytes();
+        let random = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+        Self(format!("{:06}", random % 1_000_000))
+    }
+
+    pub fn parse(value: impl Into<String>) -> Result<Self, IdParseError> {
+        let value = value.into();
+        if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(IdParseError {
+                kind: "room ID",
+                reason: "expected exactly six digits",
+            });
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Display for RoomId {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl FromStr for RoomId {
+    type Err = IdParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::parse(value)
+    }
+}
+
+impl Default for RoomId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -139,9 +186,9 @@ mod tests {
     const UUID_V7: &str = "018f22e2-7c30-7cc4-98c4-dc0c0c07398f";
 
     #[test]
-    fn accepts_matching_prefixed_uuid_v7() {
-        let value = format!("room_{UUID_V7}");
-        let id = RoomId::parse(&value).expect("valid room ID");
+    fn accepts_six_digit_room_codes() {
+        let value = "042861";
+        let id = RoomId::parse(value).expect("valid room ID");
 
         assert_eq!(id.as_str(), value);
         assert_eq!(id.to_string(), value);
@@ -165,18 +212,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_v7_uuid() {
-        let error = RoomId::parse("room_550e8400-e29b-41d4-a716-446655440000")
-            .expect_err("UUIDv4 must be rejected");
-
-        assert_eq!(error.reason(), "UUID version must be 7");
+    fn generates_six_digit_room_codes() {
+        let room_id = RoomId::new();
+        assert_eq!(room_id.as_str().len(), 6);
+        assert!(room_id.as_str().bytes().all(|byte| byte.is_ascii_digit()));
     }
 
     #[test]
-    fn rejects_uppercase_uuid() {
-        let error = RoomId::parse("room_018F22E2-7C30-7CC4-98C4-DC0C0C07398F")
-            .expect_err("uppercase text must be rejected");
-
-        assert_eq!(error.reason(), "expected a lowercase UUIDv7");
+    fn rejects_non_numeric_room_codes() {
+        let error = RoomId::parse("12A456").expect_err("letters must be rejected");
+        assert_eq!(error.reason(), "expected exactly six digits");
     }
 }

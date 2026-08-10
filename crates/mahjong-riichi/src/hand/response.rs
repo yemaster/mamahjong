@@ -1,7 +1,7 @@
 use crate::{
-    DrawSource, EndReason, HandError, HandEvent, HandJudge, HandTransition, KanQuery, Meld, MeldId,
-    MeldKind, Rank, Reaction, ReactionKind, RiichiHand, RiichiScorer, RiichiStatus, RiichiVariant,
-    RonResolution, Seat, Tile, TileId, TileKind, WinEvaluation, WinQuery, WinSource,
+    DrawSource, EndReason, HandError, HandEvent, HandJudge, HandTransition, KanQuery, KuikaeRule,
+    Meld, MeldId, MeldKind, Rank, Reaction, ReactionKind, RiichiHand, RiichiScorer, RiichiStatus,
+    RiichiVariant, RonResolution, Seat, Tile, TileId, TileKind, WinEvaluation, WinQuery, WinSource,
 };
 
 use super::state::{PendingDiscard, PendingKan, Phase};
@@ -55,6 +55,14 @@ impl RiichiHand {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let early_resolve = match &self.phase {
+            Phase::Responses(pending) => {
+                !pending.responses.iter().all(Option::is_some)
+                    && self.can_resolve_discard_early(pending, judge)
+            }
+            _ => false,
+        };
+
         match &mut self.phase {
             Phase::Responses(pending) => {
                 for seat in unavailable {
@@ -65,10 +73,18 @@ impl RiichiHand {
                 }
                 if pending.responses.iter().all(Option::is_some) {
                     let pending = pending.clone();
-                    Ok(self.resolve_discard_responses(&pending, judge))
-                } else {
-                    Ok(HandTransition::default())
+                    return Ok(self.resolve_discard_responses(&pending, judge));
                 }
+                if early_resolve {
+                    for response in pending.responses.iter_mut() {
+                        if response.is_none() {
+                            *response = Some(Reaction::Pass);
+                        }
+                    }
+                    let pending = pending.clone();
+                    return Ok(self.resolve_discard_responses(&pending, judge));
+                }
+                Ok(HandTransition::default())
             }
             Phase::KanResponses(pending) => {
                 for seat in unavailable {
@@ -86,6 +102,41 @@ impl RiichiHand {
             }
             _ => Ok(HandTransition::default()),
         }
+    }
+
+    fn can_resolve_discard_early(&self, pending: &PendingDiscard, judge: &dyn HandJudge) -> bool {
+        let best_submitted = pending
+            .responses
+            .iter()
+            .enumerate()
+            .filter_map(|(index, response)| match response {
+                Some(reaction) if !matches!(reaction, Reaction::Pass) => {
+                    let seat = Seat::new(self.rules.variant, u8::try_from(index).ok()?)
+                        .expect("valid seat");
+                    Some((seat, reaction_priority(reaction)))
+                }
+                _ => None,
+            })
+            .max_by_key(|(_, priority)| *priority);
+
+        let Some((_, best_priority)) = best_submitted else {
+            return false;
+        };
+
+        for index in 0..self.rules.variant.seat_count().value() {
+            if pending.responses[usize::from(index)].is_some() {
+                continue;
+            }
+            let seat = Seat::new(self.rules.variant, index).expect("valid seat");
+            if let Ok(options) = self.available_reactions(seat, judge) {
+                for option in options {
+                    if reaction_priority(&option) >= best_priority {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
 
     pub fn evaluate_pending_ron(&self, actor: Seat) -> Result<WinEvaluation, HandError> {
@@ -532,7 +583,8 @@ impl RiichiHand {
         if matches!(kind, MeldKind::OpenKan) {
             transition.append(self.finish_kan(caller, meld));
         } else {
-            let forbidden_discards = forbidden_after_call(kind, called_tile, &meld);
+            let forbidden_discards =
+                forbidden_after_call(self.rules.calls.kuikae, kind, called_tile, &meld);
             self.players[usize::from(caller.index())].drawn_tile = None;
             self.phase = Phase::DiscardAfterCall {
                 seat: caller,
@@ -939,9 +991,17 @@ fn next_meld_id(player: &crate::PlayerHand) -> MeldId {
     MeldId::new(u8::try_from(player.melds.len()).expect("a player can have at most four melds"))
 }
 
-fn forbidden_after_call(kind: MeldKind, called_tile: Tile, meld: &Meld) -> Box<[TileKind]> {
+fn forbidden_after_call(
+    kuikae: KuikaeRule,
+    kind: MeldKind,
+    called_tile: Tile,
+    meld: &Meld,
+) -> Box<[TileKind]> {
+    if matches!(kuikae, KuikaeRule::Allowed) {
+        return Box::default();
+    }
     let mut forbidden = vec![called_tile.kind()];
-    if matches!(kind, MeldKind::Chi) {
+    if matches!(kuikae, KuikaeRule::Forbidden) && matches!(kind, MeldKind::Chi) {
         let called_rank = called_tile
             .kind()
             .rank()
@@ -986,10 +1046,19 @@ fn cancel_ippatsu(variant: RiichiVariant, players: &mut [crate::PlayerHand]) -> 
     cancelled.into_boxed_slice()
 }
 
+fn reaction_priority(reaction: &Reaction) -> u8 {
+    match reaction {
+        Reaction::Ron => 3,
+        Reaction::Pon { .. } | Reaction::OpenKan { .. } => 2,
+        Reaction::Chi { .. } => 1,
+        Reaction::Pass => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
-        DrawSource, EndReason, HandEvent, HandJudge, HandPhase, MeldKind, Reaction,
+        DrawSource, EndReason, HandEvent, HandJudge, HandPhase, KuikaeRule, MeldKind, Reaction,
         RejectAllHandJudge, RiichiHand, RiichiRules, RiichiStatus, RiichiVariant, RonResolution,
         Seat, TableProgress, TileId, TileKind, WallSeed, WinQuery, WinSource,
     };
@@ -1092,7 +1161,12 @@ mod tests {
                             Some(dealer),
                             Some(discard.id()),
                         );
-                        let forbidden = forbidden_after_call(MeldKind::Chi, discard, &meld);
+                        let forbidden = forbidden_after_call(
+                            KuikaeRule::Forbidden,
+                            MeldKind::Chi,
+                            discard,
+                            &meld,
+                        );
                         if let Some(forbidden_tile) = caller_tiles.iter().find(|tile| {
                             tile.id() != selected[0]
                                 && tile.id() != selected[1]
@@ -1619,32 +1693,89 @@ mod tests {
 
     #[test]
     fn call_helpers_reject_impossible_empty_inputs() {
-        let called = crate::Tile::new(
-            crate::TileId::new(99),
-            "3p".parse::<TileKind>().expect("kind"),
-            false,
-        )
-        .expect("tile");
+        let called = tile(99, "3p");
+
         assert!(
             validate_chi(&[], &[crate::TileId::new(1), crate::TileId::new(2)], called).is_err()
         );
+    }
 
-        let meld = crate::Meld::new(
+    fn tile(id: u16, code: &str) -> crate::Tile {
+        crate::Tile::new(
+            crate::TileId::new(id),
+            code.parse::<TileKind>().expect("tile kind"),
+            false,
+        )
+        .expect("tile")
+    }
+
+    /// Builds the meld a call would produce; `codes` are the meld tiles in order.
+    fn meld_of(kind: MeldKind, codes: &[&str], called: crate::Tile) -> crate::Meld {
+        crate::Meld::new(
             crate::MeldId::new(0),
-            MeldKind::Chi,
-            [
-                crate::Tile::new(crate::TileId::new(1), "3p".parse().expect("kind"), false)
-                    .expect("tile"),
-                crate::Tile::new(crate::TileId::new(2), "4p".parse().expect("kind"), false)
-                    .expect("tile"),
-                crate::Tile::new(crate::TileId::new(3), "5p".parse().expect("kind"), false)
-                    .expect("tile"),
-            ],
+            kind,
+            codes
+                .iter()
+                .enumerate()
+                .map(|(index, code)| tile(u16::try_from(index).expect("tile id"), code))
+                .collect::<Vec<_>>(),
             Some(Seat::new(RiichiVariant::Yonma, 0).expect("seat")),
             Some(called.id()),
+        )
+    }
+
+    fn kinds(codes: &[&str]) -> Vec<TileKind> {
+        codes
+            .iter()
+            .map(|code| code.parse::<TileKind>().expect("tile kind"))
+            .collect()
+    }
+
+    #[test]
+    fn kuikae_rule_selects_which_discards_a_call_forbids() {
+        let called = tile(99, "3p");
+        let meld = meld_of(MeldKind::Chi, &["3p", "4p", "5p"], called);
+
+        assert_eq!(
+            forbidden_after_call(KuikaeRule::Forbidden, MeldKind::Chi, called, &meld).as_ref(),
+            kinds(&["3p", "6p"])
         );
-        let forbidden = forbidden_after_call(MeldKind::Chi, called, &meld);
-        assert!(forbidden.contains(&"3p".parse().expect("kind")));
-        assert!(forbidden.contains(&"6p".parse().expect("kind")));
+        assert_eq!(
+            forbidden_after_call(KuikaeRule::SameTileOnly, MeldKind::Chi, called, &meld).as_ref(),
+            kinds(&["3p"])
+        );
+        assert!(forbidden_after_call(KuikaeRule::Allowed, MeldKind::Chi, called, &meld).is_empty());
+    }
+
+    #[test]
+    fn suji_kuikae_needs_a_chi_that_extends_a_sequence_end() {
+        let upper = tile(99, "6p");
+        let upper_meld = meld_of(MeldKind::Chi, &["4p", "5p", "6p"], upper);
+        assert_eq!(
+            forbidden_after_call(KuikaeRule::Forbidden, MeldKind::Chi, upper, &upper_meld).as_ref(),
+            kinds(&["3p", "6p"])
+        );
+
+        let middle = tile(99, "3p");
+        let middle_meld = meld_of(MeldKind::Chi, &["2p", "3p", "4p"], middle);
+        assert_eq!(
+            forbidden_after_call(KuikaeRule::Forbidden, MeldKind::Chi, middle, &middle_meld)
+                .as_ref(),
+            kinds(&["3p"])
+        );
+
+        let edge = tile(99, "3p");
+        let edge_meld = meld_of(MeldKind::Chi, &["1p", "2p", "3p"], edge);
+        assert_eq!(
+            forbidden_after_call(KuikaeRule::Forbidden, MeldKind::Chi, edge, &edge_meld).as_ref(),
+            kinds(&["3p"])
+        );
+
+        let ponned = tile(99, "3p");
+        let pon_meld = meld_of(MeldKind::Pon, &["3p", "3p", "3p"], ponned);
+        assert_eq!(
+            forbidden_after_call(KuikaeRule::Forbidden, MeldKind::Pon, ponned, &pon_meld).as_ref(),
+            kinds(&["3p"])
+        );
     }
 }

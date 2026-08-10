@@ -71,9 +71,9 @@ fn comparison_key(
 #[cfg(test)]
 mod tests {
     use crate::{
-        HandJudge, HandShape, Payment, PlayerHand, RiichiRules, RiichiScorer, RiichiVariant, Seat,
-        TableProgress, Tile, TileId, TileKind, TileSet, WaitKind, Wall, WallSeed, WinQuery,
-        WinSource, Yaku, YakumanValue,
+        HandJudge, HandShape, MeldKind, Payment, PlayerHand, RiichiRules, RiichiScorer,
+        RiichiVariant, Seat, TableProgress, Tile, TileId, TileKind, TileSet, WaitKind, Wall,
+        WallSeed, WinQuery, WinSource, Yaku, YakumanValue,
     };
 
     struct Fixture {
@@ -134,12 +134,16 @@ mod tests {
     }
 
     fn tiles(codes: &str) -> Vec<Tile> {
+        tiles_from(0, codes)
+    }
+
+    fn tiles_from(first_id: u16, codes: &str) -> Vec<Tile> {
         codes
             .split_whitespace()
             .enumerate()
             .map(|(index, code)| {
                 Tile::new(
-                    TileId::new(u16::try_from(index).expect("tile id")),
+                    TileId::new(first_id + u16::try_from(index).expect("tile id")),
                     code.parse::<TileKind>().expect("tile kind"),
                     false,
                 )
@@ -272,6 +276,32 @@ mod tests {
     }
 
     #[test]
+    fn big_four_winds_uses_configured_double_yakuman() {
+        let mut fixture = Fixture::ron("1z 1z 1z 2z 2z 2z 3z 3z 3z 4z 4z 4z 5z", "5z");
+
+        let result = RiichiScorer
+            .evaluate(fixture.query())
+            .expect("big four winds");
+        let big_four_winds = result
+            .yaku()
+            .iter()
+            .find(|value| value.yaku() == Yaku::Daisuushi)
+            .expect("big four winds yaku");
+        assert_eq!(big_four_winds.value(), 2);
+
+        fixture.rules.scoring.yakuman_value = YakumanValue::StackedOnly;
+        let configured_single = RiichiScorer
+            .evaluate(fixture.query())
+            .expect("configured single big four winds");
+        let big_four_winds = configured_single
+            .yaku()
+            .iter()
+            .find(|value| value.yaku() == Yaku::Daisuushi)
+            .expect("big four winds yaku");
+        assert_eq!(big_four_winds.value(), 1);
+    }
+
+    #[test]
     fn old_wheel_yaku_is_isolated_behind_rule_toggle() {
         let mut fixture = Fixture::ron("2p 2p 3p 3p 4p 4p 5p 5p 6p 6p 7p 7p 8p", "8p");
         fixture.calls_occurred = true;
@@ -288,6 +318,234 @@ mod tests {
                 .yaku()
                 .iter()
                 .any(|value| value.yaku() == Yaku::Daisharin)
+        );
+    }
+
+    #[test]
+    fn kuitan_decides_whether_an_open_all_simples_hand_has_a_yaku() {
+        let mut fixture = Fixture::ron("5m 6m 7m 2p 3p 4p 5s 6s 8p 8p", "7s");
+        fixture.calls_occurred = true;
+        fixture.player.add_scoring_fixture_meld(
+            MeldKind::Chi,
+            tiles_from(100, "2m 3m 4m"),
+            Some(Seat::new(RiichiVariant::Yonma, 1).expect("discarder")),
+        );
+
+        let open = RiichiScorer.evaluate(fixture.query()).expect("kuitan win");
+        assert_eq!(
+            open.yaku()
+                .iter()
+                .map(|value| value.yaku())
+                .collect::<Vec<_>>(),
+            [Yaku::Tanyao]
+        );
+
+        fixture.rules.calls.kuitan = false;
+        assert!(RiichiScorer.evaluate(fixture.query()).is_none());
+        assert!(!RiichiScorer.can_win(fixture.query()));
+    }
+
+    #[test]
+    fn kuitan_never_affects_a_closed_all_simples_hand() {
+        let mut fixture = Fixture::ron("2m 3m 4m 5m 6m 7m 2p 3p 4p 5s 6s 8p 8p", "7s");
+        fixture.rules.calls.kuitan = false;
+
+        let closed = RiichiScorer.evaluate(fixture.query()).expect("closed win");
+        assert!(
+            closed
+                .yaku()
+                .iter()
+                .any(|value| value.yaku() == Yaku::Tanyao)
+        );
+    }
+}
+
+/// 符数规则回归：底 20 符，门清荣和 +10，自摸 +2，平和自摸固定 20，
+/// 七对子固定 25，副露且只有 20 符时抬到 30，役牌雀头 +2，
+/// 坎张/边张/单骑 +2，刻子按「明/暗 × 中张/幺九 × 是否杠」查表。
+#[cfg(test)]
+mod fu_rules {
+    use crate::{
+        DrawSource, MeldKind, PlayerHand, RiichiRules, RiichiScorer, RiichiVariant, Seat,
+        TableProgress, Tile, TileId, TileKind, TileSet, Wall, WallSeed, WinQuery, WinSource,
+    };
+
+    fn tiles_from(first_id: u16, codes: &str) -> Vec<Tile> {
+        codes
+            .split_whitespace()
+            .enumerate()
+            .map(|(index, code)| {
+                Tile::new(
+                    TileId::new(first_id + u16::try_from(index).expect("tile id")),
+                    code.parse::<TileKind>().expect("tile kind"),
+                    false,
+                )
+                .expect("tile")
+            })
+            .collect()
+    }
+
+    /// 算一手牌的符数。`melds` 里给出副露，空的就是门清。
+    fn fu_of(codes: &str, winning: &str, tsumo: bool, melds: &[(MeldKind, &str)]) -> u16 {
+        let rules = RiichiRules::default();
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        let winner = Seat::new(RiichiVariant::Yonma, 2).expect("winner");
+        let progress = TableProgress::east_one(RiichiVariant::Yonma, dealer).expect("progress");
+        let mut player = PlayerHand::scoring_fixture(tiles_from(0, codes));
+        /* 牌河空着的话自摸会被判成地和，随便垫一张不相干的牌。 */
+        player.add_scoring_fixture_discard(
+            Tile::new(TileId::new(250), "4z".parse().expect("kind"), false).expect("tile"),
+        );
+        for (index, (kind, meld_codes)) in melds.iter().enumerate() {
+            player.add_scoring_fixture_meld(
+                *kind,
+                tiles_from(
+                    100 + u16::try_from(index).expect("meld id") * 10,
+                    meld_codes,
+                ),
+                (!matches!(kind, MeldKind::ConcealedKan))
+                    .then(|| Seat::new(RiichiVariant::Yonma, 1).expect("discarder")),
+            );
+        }
+        let winning_tile = Tile::new(
+            TileId::new(200),
+            winning.parse().expect("winning kind"),
+            false,
+        )
+        .expect("winning tile");
+        let wall = Wall::new(
+            TileSet::standard(RiichiVariant::Yonma),
+            &WallSeed::from_bytes([51; 32]),
+        );
+        let source = if tsumo {
+            WinSource::Tsumo(DrawSource::LiveWall)
+        } else {
+            WinSource::Discard {
+                from: Seat::new(RiichiVariant::Yonma, 1).expect("discarder"),
+            }
+        };
+        RiichiScorer
+            .evaluate(WinQuery::new(
+                &rules,
+                progress,
+                winner,
+                &player,
+                winning_tile,
+                source,
+                &wall,
+                !melds.is_empty(),
+            ))
+            .expect("win")
+            .fu()
+    }
+
+    #[test]
+    fn closed_ron_adds_ten_and_rounds_up() {
+        /* 20 底 + 10 门清荣和 + 4 中张暗刻 = 34 → 40 */
+        assert_eq!(
+            fu_of("5p 5p 5p 2m 3m 4m 5m 6m 7m 2s 3s 8p 8p", "4s", false, &[]),
+            40
+        );
+        /* 20 + 10 + 8 幺九暗刻 = 38 → 40 */
+        assert_eq!(
+            fu_of("5z 5z 5z 2m 3m 4m 5p 6p 7p 2s 3s 8p 8p", "4s", false, &[]),
+            40
+        );
+    }
+
+    #[test]
+    fn wait_shape_adds_two_only_for_kanchan_penchan_tanki() {
+        /* 坎张：20 + 10 + 2 = 32 → 40 */
+        assert_eq!(
+            fu_of("2m 3m 4m 5m 6m 7m 2p 4p 5s 6s 7s 8p 8p", "3p", false, &[]),
+            40
+        );
+        /* 单骑：20 + 10 + 2 = 32 → 40 */
+        assert_eq!(
+            fu_of("2m 3m 4m 5m 6m 7m 2p 3p 4p 5s 6s 7s 8p", "8p", false, &[]),
+            40
+        );
+        /* 两面平和荣和：20 + 10 = 30，不再加 */
+        assert_eq!(
+            fu_of("2m 3m 4m 5m 6m 7m 2p 3p 4p 5s 6s 8p 8p", "7s", false, &[]),
+            30
+        );
+    }
+
+    #[test]
+    fn pinfu_tsumo_is_flat_twenty() {
+        assert_eq!(
+            fu_of("2m 3m 4m 5m 6m 7m 2p 3p 4p 5s 6s 7s 8p 8p", "7s", true, &[]),
+            20
+        );
+    }
+
+    #[test]
+    fn tsumo_adds_two_and_keeps_triplets_concealed() {
+        /* 双碰自摸：20 + 2 自摸 + 8 幺九暗刻 = 30 */
+        assert_eq!(
+            fu_of("2m 3m 4m 5m 6m 7m 2p 3p 4p 5s 5s 5z 5z 5z", "5z", true, &[]),
+            30
+        );
+        /* 同型荣和：那副刻子算明刻，20 + 10 + 4 = 34 → 40 */
+        assert_eq!(
+            fu_of("2m 3m 4m 5m 6m 7m 2p 3p 4p 5s 5s 5z 5z", "5z", false, &[]),
+            40
+        );
+    }
+
+    #[test]
+    fn value_pair_adds_two() {
+        /* 20 + 2 自摸 + 8 幺九暗刻 + 2 白雀头 = 32 → 40 */
+        assert_eq!(
+            fu_of("1m 1m 1m 2m 3m 4m 5p 6p 7p 2s 3s 4s 5z 5z", "4s", true, &[]),
+            40
+        );
+    }
+
+    #[test]
+    fn kan_uses_the_quadrupled_row_of_the_table() {
+        /* 暗杠幺九 32 符：20 + 2 自摸 + 32 + 2 白雀头 = 56 → 60 */
+        assert_eq!(
+            fu_of(
+                "2m 3m 4m 5m 6m 7m 2p 3p 4p 5z 5z",
+                "4m",
+                true,
+                &[(MeldKind::ConcealedKan, "1z 1z 1z 1z")]
+            ),
+            60
+        );
+        /* 明杠幺九 16 符：副露没有门清荣和，20 + 16 = 36 → 40 */
+        assert_eq!(
+            fu_of(
+                "2m 3m 4m 5m 6m 7m 2p 3p 5z 5z",
+                "4p",
+                false,
+                &[(MeldKind::OpenKan, "1z 1z 1z 1z")]
+            ),
+            40
+        );
+    }
+
+    #[test]
+    fn open_hand_worth_only_twenty_is_lifted_to_thirty() {
+        /* 食い平和：副露、全顺子、两面、非役牌雀头，正好 20 符要抬到 30。 */
+        assert_eq!(
+            fu_of(
+                "5m 6m 7m 2p 3p 4p 5s 6s 8p 8p",
+                "7s",
+                false,
+                &[(MeldKind::Chi, "2m 3m 4m")]
+            ),
+            30
+        );
+    }
+
+    #[test]
+    fn seven_pairs_ignores_every_other_term() {
+        assert_eq!(
+            fu_of("1m 1m 2m 2m 3p 3p 4p 4p 5s 5s 6s 6s 7z", "7z", false, &[]),
+            25
         );
     }
 }

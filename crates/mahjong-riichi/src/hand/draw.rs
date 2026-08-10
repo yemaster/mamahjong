@@ -123,12 +123,22 @@ mod tests {
 
     use super::super::state::PendingDiscard;
 
+    /// Abortive draws are off by default, so this module opts in explicitly.
+    fn abortive_rules(variant: RiichiVariant) -> RiichiRules {
+        let mut rules = RiichiRules::standard(variant);
+        rules.abortive_draws.nine_terminals = true;
+        rules.abortive_draws.four_winds = matches!(variant, RiichiVariant::Yonma);
+        rules.abortive_draws.four_riichi = matches!(variant, RiichiVariant::Yonma);
+        rules.abortive_draws.four_kans = true;
+        rules
+    }
+
     fn start() -> RiichiHand {
         let variant = RiichiVariant::Yonma;
         let dealer = Seat::new(variant, 0).expect("dealer");
         let progress = TableProgress::east_one(variant, dealer).expect("progress");
         RiichiHand::start(
-            RiichiRules::standard(variant),
+            abortive_rules(variant),
             progress,
             [25_000; 4],
             &WallSeed::from_bytes([31; 32]),
@@ -234,6 +244,21 @@ mod tests {
                 declarer: None,
             }]
         ));
+    }
+
+    #[test]
+    fn disabled_abortive_draws_never_end_the_hand() {
+        let mut hand = start();
+        hand.rules.abortive_draws.four_winds = false;
+        hand.rules.abortive_draws.four_kans = false;
+        let pending = pending_after_first_discard(&mut hand, "1z".parse().expect("east tile kind"));
+
+        assert!(
+            hand.abortive_draw_after_unclaimed_discard(&pending)
+                .is_none()
+        );
+        hand.kan_counts.copy_from_slice(&[3, 1, 0, 0]);
+        assert!(!hand.should_abort_for_four_kans());
     }
 
     #[test]

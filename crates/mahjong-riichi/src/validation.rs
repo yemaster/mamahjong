@@ -96,6 +96,12 @@ impl RiichiRules {
             "match_rules.return_points",
             &mut violations,
         );
+        validate_configured_points(
+            self.match_rules.first_place_required_points,
+            "match_rules.first_place_required_points",
+            &mut violations,
+        );
+        validate_thinking_time(self, &mut violations);
         validate_noten_payment(self.settlement.noten_payment, self.variant, &mut violations);
         validate_red_fives(self, &mut violations);
         validate_variant_options(self, &mut violations);
@@ -106,6 +112,20 @@ impl RiichiRules {
         } else {
             Err(ValidationErrors::new(violations))
         }
+    }
+}
+
+fn validate_thinking_time(rules: &RiichiRules, violations: &mut Vec<RuleViolation>) {
+    let time = rules.match_rules.thinking_time;
+    if !matches!(
+        (time.base_seconds, time.reserve_seconds),
+        (5, 0) | (5, 20) | (5, 60) | (15, 60)
+    ) {
+        violations.push(RuleViolation::new(
+            "rules.thinking_time.unsupported",
+            "match_rules.thinking_time",
+            "must be one of 5+0, 5+20, 5+60, or 15+60",
+        ));
     }
 }
 
@@ -272,6 +292,17 @@ mod tests {
     }
 
     #[test]
+    fn thinking_time_accepts_only_the_room_presets() {
+        let mut rules = RiichiRules::default();
+        rules.match_rules.thinking_time.base_seconds = 10;
+        let errors = rules.validate().expect_err("unsupported thinking time");
+        assert!(errors.violations().iter().any(|violation| {
+            violation.code() == "rules.thinking_time.unsupported"
+                && violation.field() == "match_rules.thinking_time"
+        }));
+    }
+
+    #[test]
     fn noten_payment_must_split_without_seat_order_remainders() {
         let mut yonma = RiichiRules::default();
         yonma.settlement.noten_payment = 1_000;
@@ -297,6 +328,8 @@ mod tests {
         value["variant"] = json!("sanma");
         value["match_rules"]["initial_points"] = json!(501);
         value["bonuses"]["red_fives"]["man"] = json!(5);
+        value["abortive_draws"]["four_winds"] = json!(true);
+        value["abortive_draws"]["four_riichi"] = json!(true);
         value["settlement"]["uma"]["values"] = json!([30, 10, -20]);
         let rules: RiichiRules = serde_json::from_value(value).expect("structurally valid JSON");
 

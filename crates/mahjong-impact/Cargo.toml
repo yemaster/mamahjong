@@ -1,0 +1,19 @@
+[package]
+name = "mahjong-impact"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+mahjong-core = { path = "../mahjong-core" }
+rand_chacha.workspace = true
+rand_core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

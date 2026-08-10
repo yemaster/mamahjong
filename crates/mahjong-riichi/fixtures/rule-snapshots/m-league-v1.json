@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "rule_set_id": "riichi/yonma",
   "engine_version": "0.1.0",
   "preset": {
@@ -11,7 +11,12 @@
     "match_rules": {
       "length": "hanchan",
       "initial_points": 25000,
-      "return_points": 30000,
+      "return_points": 25000,
+      "first_place_required_points": 30000,
+      "thinking_time": {
+        "base_seconds": 5,
+        "reserve_seconds": 20
+      },
       "tobi": false,
       "dealer_continuation": "win_or_tenpai",
       "agari_yame": false
@@ -23,6 +28,10 @@
       "nagashi_mangan": false,
       "kazoe_yakuman": false,
       "kokushi_ankan_chankan": false
+    },
+    "calls": {
+      "kuitan": true,
+      "kuikae": "forbidden"
     },
     "bonuses": {
       "red_fives": {
@@ -44,10 +53,10 @@
       "uma": {
         "type": "fixed",
         "values": [
-          30,
-          10,
-          -10,
-          -30
+          45,
+          5,
+          -15,
+          -35
         ]
       },
       "noten_payment": 3000,

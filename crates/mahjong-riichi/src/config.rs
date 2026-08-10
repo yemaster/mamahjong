@@ -23,6 +23,18 @@ pub enum YakumanValue {
     DoubleVariantsAndStacked,
 }
 
+/// Restriction on discarding right after a chi or pon.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KuikaeRule {
+    /// The called tile kind and, for chi, the suji tile are both forbidden.
+    Forbidden,
+    /// Only the called tile kind is forbidden.
+    SameTileOnly,
+    /// No restriction.
+    Allowed,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RonResolution {
@@ -37,12 +49,48 @@ pub enum PlacementUma {
     JpmlA,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThinkingTimeRules {
+    pub base_seconds: u16,
+    pub reserve_seconds: u16,
+}
+
+impl ThinkingTimeRules {
+    #[must_use]
+    pub const fn base_ms(self) -> u64 {
+        self.base_seconds as u64 * 1_000
+    }
+
+    #[must_use]
+    pub const fn reserve_ms(self) -> u32 {
+        self.reserve_seconds as u32 * 1_000
+    }
+}
+
+impl Default for ThinkingTimeRules {
+    fn default() -> Self {
+        Self {
+            base_seconds: 5,
+            reserve_seconds: 20,
+        }
+    }
+}
+
+const fn default_first_place_required_points() -> u32 {
+    30_000
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MatchRules {
     pub length: MatchLength,
     pub initial_points: u32,
     pub return_points: u32,
+    #[serde(default = "default_first_place_required_points")]
+    pub first_place_required_points: u32,
+    #[serde(default)]
+    pub thinking_time: ThinkingTimeRules,
     pub tobi: bool,
     pub dealer_continuation: DealerContinuation,
     pub agari_yame: bool,
@@ -57,6 +105,14 @@ pub struct ScoringRules {
     pub nagashi_mangan: bool,
     pub kazoe_yakuman: bool,
     pub kokushi_ankan_chankan: bool,
+}
+
+/// Rules that only take effect once a hand is opened by a call.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CallRules {
+    pub kuitan: bool,
+    pub kuikae: KuikaeRule,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -91,6 +147,7 @@ pub struct RiichiRules {
     pub variant: RiichiVariant,
     pub match_rules: MatchRules,
     pub scoring: ScoringRules,
+    pub calls: CallRules,
     pub bonuses: BonusRules,
     pub abortive_draws: AbortiveDrawRules,
     pub settlement: SettlementRules,
@@ -102,10 +159,10 @@ impl RiichiRules {
         let (abortive_draws, uma) = match variant {
             RiichiVariant::Yonma => (
                 AbortiveDrawRules {
-                    four_winds: true,
-                    four_kans: true,
-                    nine_terminals: true,
-                    four_riichi: true,
+                    four_winds: false,
+                    four_kans: false,
+                    nine_terminals: false,
+                    four_riichi: false,
                 },
                 PlacementUma::Fixed {
                     values: vec![30, 10, -10, -30],
@@ -114,8 +171,8 @@ impl RiichiRules {
             RiichiVariant::Sanma => (
                 AbortiveDrawRules {
                     four_winds: false,
-                    four_kans: true,
-                    nine_terminals: true,
+                    four_kans: false,
+                    nine_terminals: false,
                     four_riichi: false,
                 },
                 PlacementUma::Fixed {
@@ -129,18 +186,24 @@ impl RiichiRules {
             match_rules: MatchRules {
                 length: MatchLength::Hanchan,
                 initial_points: 25_000,
-                return_points: 30_000,
+                return_points: 25_000,
+                first_place_required_points: 30_000,
+                thinking_time: ThinkingTimeRules::default(),
                 tobi: true,
                 dealer_continuation: DealerContinuation::WinOrTenpai,
                 agari_yame: true,
             },
             scoring: ScoringRules {
-                kiriage_mangan: true,
+                kiriage_mangan: false,
                 old_yaku: false,
                 yakuman_value: YakumanValue::DoubleVariantsAndStacked,
                 nagashi_mangan: true,
                 kazoe_yakuman: true,
                 kokushi_ankan_chankan: true,
+            },
+            calls: CallRules {
+                kuitan: true,
+                kuikae: KuikaeRule::Forbidden,
             },
             bonuses: BonusRules {
                 red_fives: variant.default_red_fives(),
@@ -166,7 +229,7 @@ impl Default for RiichiRules {
 
 #[cfg(test)]
 mod tests {
-    use crate::{DealerContinuation, PlacementUma, RiichiRules, RiichiVariant, Suit};
+    use crate::{DealerContinuation, KuikaeRule, PlacementUma, RiichiRules, RiichiVariant, Suit};
 
     #[test]
     fn yonma_default_expands_every_rule() {
@@ -174,15 +237,20 @@ mod tests {
 
         assert_eq!(rules.variant, RiichiVariant::Yonma);
         assert_eq!(rules.match_rules.initial_points, 25_000);
-        assert_eq!(rules.match_rules.return_points, 30_000);
+        assert_eq!(rules.match_rules.return_points, 25_000);
+        assert_eq!(rules.match_rules.first_place_required_points, 30_000);
+        assert_eq!(rules.match_rules.thinking_time.base_seconds, 5);
+        assert_eq!(rules.match_rules.thinking_time.reserve_seconds, 20);
         assert!(rules.match_rules.tobi);
         assert_eq!(
             rules.match_rules.dealer_continuation,
             DealerContinuation::WinOrTenpai
         );
         assert_eq!(rules.bonuses.red_fives.total(), 3);
-        assert!(rules.abortive_draws.four_winds);
-        assert!(rules.abortive_draws.four_riichi);
+        assert!(!rules.abortive_draws.four_winds);
+        assert!(!rules.abortive_draws.four_riichi);
+        assert!(rules.calls.kuitan);
+        assert_eq!(rules.calls.kuikae, KuikaeRule::Forbidden);
         assert_eq!(
             rules.settlement.uma,
             PlacementUma::Fixed {

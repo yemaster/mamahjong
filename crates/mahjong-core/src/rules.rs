@@ -3,7 +3,8 @@ use std::fmt::{self, Debug, Display, Formatter};
 use std::num::NonZeroU32;
 use std::str::FromStr;
 
-const RULE_SNAPSHOT_SCHEMA_VERSION: u16 = 1;
+/// Schema version written into every rule snapshot; readers accept only this value.
+pub const RULE_SNAPSHOT_SCHEMA_VERSION: u16 = 2;
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RuleSetId(String);
@@ -446,7 +447,10 @@ mod tests {
             },
         );
 
-        assert_eq!(snapshot.schema_version(), 1);
+        assert_eq!(
+            snapshot.schema_version(),
+            super::RULE_SNAPSHOT_SCHEMA_VERSION
+        );
         assert_eq!(snapshot.rule_set_id().as_str(), "riichi/yonma");
         assert_eq!(snapshot.config().initial_points, 25_000);
         assert_eq!(snapshot.preset().expect("preset").revision().get(), 1,);

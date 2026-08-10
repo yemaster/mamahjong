@@ -226,10 +226,17 @@ impl RiichiMatch {
         if self.rules.match_rules.tobi && hand.points_after().iter().any(|points| *points < 0) {
             return Some(MatchEndReason::Tobi);
         }
+        let first_place_requirement_met = hand.points_after().iter().copied().max()
+            >= i32::try_from(self.rules.match_rules.first_place_required_points).ok();
+        if is_after_scheduled_round(&self.rules, self.progress) {
+            return (first_place_requirement_met || is_last_round_hand(&self.rules, self.progress))
+                .then_some(MatchEndReason::ScheduledEnd);
+        }
         if !is_last_scheduled_hand(&self.rules, self.progress) {
             return None;
         }
         if self.rules.match_rules.agari_yame
+            && first_place_requirement_met
             && hand.dealer_continues()
             && matches!(hand.reason(), EndReason::Tsumo | EndReason::Ron)
             && hand
@@ -244,17 +251,28 @@ impl RiichiMatch {
         {
             return Some(MatchEndReason::AgariYame);
         }
-        (!hand.dealer_continues()).then_some(MatchEndReason::ScheduledEnd)
+        (!hand.dealer_continues() && first_place_requirement_met)
+            .then_some(MatchEndReason::ScheduledEnd)
+    }
+}
+
+fn scheduled_final_wind(rules: &RiichiRules) -> Wind {
+    match rules.match_rules.length {
+        MatchLength::EastOnly => Wind::East,
+        MatchLength::Hanchan => Wind::South,
     }
 }
 
 fn is_last_scheduled_hand(rules: &RiichiRules, progress: TableProgress) -> bool {
-    let final_wind = match rules.match_rules.length {
-        MatchLength::EastOnly => Wind::East,
-        MatchLength::Hanchan => Wind::South,
-    };
-    progress.round_wind() == final_wind
-        && progress.round_number().value() == rules.variant.seat_count().value()
+    progress.round_wind() == scheduled_final_wind(rules) && is_last_round_hand(rules, progress)
+}
+
+fn is_after_scheduled_round(rules: &RiichiRules, progress: TableProgress) -> bool {
+    progress.round_wind() > scheduled_final_wind(rules)
+}
+
+fn is_last_round_hand(rules: &RiichiRules, progress: TableProgress) -> bool {
+    progress.round_number().value() == rules.variant.seat_count().value()
 }
 
 fn build_match_result(
@@ -503,9 +521,9 @@ mod tests {
                 from,
             ]
         );
-        assert_eq!(result.placements()[0].oka_tenths(), 200);
+        assert_eq!(result.placements()[0].oka_tenths(), 0);
         assert_eq!(result.placements()[0].uma_tenths(), 300);
-        assert_eq!(result.placements()[0].score_tenths(), 527);
+        assert_eq!(result.placements()[0].score_tenths(), 377);
         assert_eq!(game.hands().len(), 1);
     }
 
@@ -628,7 +646,7 @@ mod tests {
             Wind::East,
             4,
             dealer,
-            &[24_000, 25_000, 25_000, 25_000],
+            &[24_000, 30_000, 23_000, 22_000],
             1,
         );
         let hand = HandSettlement
@@ -649,8 +667,194 @@ mod tests {
             .expect("scheduled end");
 
         assert_eq!(result.unclaimed_riichi_sticks_awarded(), 1);
-        assert_eq!(result.final_points(), [24_000, 26_000, 25_000, 25_000]);
+        assert_eq!(result.final_points(), [24_000, 31_000, 23_000, 22_000]);
         assert_eq!(result.placements()[0].seat().index(), 1);
+    }
+
+    #[test]
+    fn hanchan_enters_west_when_nobody_reaches_the_required_points() {
+        let rules = RiichiRules::default();
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        let winner = Seat::new(RiichiVariant::Yonma, 1).expect("winner");
+        let from = Seat::new(RiichiVariant::Yonma, 2).expect("from");
+        let mut game = RiichiMatch::start(rules.clone(), dealer).expect("match");
+        set_hand(
+            &mut game,
+            Wind::South,
+            4,
+            dealer,
+            &[25_000, 28_000, 22_000, 25_000],
+            0,
+        );
+        let hand = HandSettlement
+            .settle(
+                &rules,
+                game.progress(),
+                game.points().iter().copied(),
+                HandOutcome::Ron {
+                    from,
+                    winners: vec![ScoredWinner::new(
+                        winner,
+                        evaluation(Payment::Ron { points: 1_000 }),
+                    )]
+                    .into_boxed_slice(),
+                },
+            )
+            .expect("hand");
+
+        assert!(game.apply_hand(hand).expect("apply").is_none());
+        assert_eq!(game.progress().round_wind(), Wind::West);
+        assert_eq!(game.progress().round_number().value(), 1);
+    }
+
+    /// 东风战无人达标进入南场，见 docs/match-progression.md 第四节。
+    #[test]
+    fn east_only_enters_south_when_nobody_reaches_the_required_points() {
+        let mut rules = RiichiRules::standard(RiichiVariant::Sanma);
+        rules.match_rules.length = MatchLength::EastOnly;
+        rules.scoring.nagashi_mangan = false;
+        let dealer = Seat::new(RiichiVariant::Sanma, 2).expect("dealer");
+        let mut game = RiichiMatch::start(rules.clone(), dealer).expect("match");
+        set_hand(
+            &mut game,
+            Wind::East,
+            3,
+            dealer,
+            &[25_000, 25_000, 25_000],
+            0,
+        );
+        let hand = HandSettlement
+            .settle(
+                &rules,
+                game.progress(),
+                game.points().iter().copied(),
+                HandOutcome::ExhaustiveDraw {
+                    tenpai: Box::new([]),
+                    nagashi_winners: Box::new([]),
+                },
+            )
+            .expect("hand");
+        let next_progress = hand.next_progress();
+
+        assert!(game.apply_hand(hand).expect("apply").is_none());
+        assert_eq!(next_progress.round_wind(), Wind::South);
+        assert_eq!(next_progress.round_number().value(), 1);
+        assert_eq!(next_progress.dealer().index(), 0);
+    }
+
+    /// 延长场打到最后一局，即使无人达标也要结束，否则对局永远不会收尾。
+    #[test]
+    fn the_extension_round_ends_at_its_last_hand_even_below_the_requirement() {
+        let mut rules = RiichiRules::standard(RiichiVariant::Sanma);
+        rules.match_rules.length = MatchLength::EastOnly;
+        rules.scoring.nagashi_mangan = false;
+        let dealer = Seat::new(RiichiVariant::Sanma, 2).expect("dealer");
+        let mut game = RiichiMatch::start(rules.clone(), dealer).expect("match");
+        set_hand(
+            &mut game,
+            Wind::South,
+            3,
+            dealer,
+            &[25_000, 25_000, 25_000],
+            0,
+        );
+        let hand = HandSettlement
+            .settle(
+                &rules,
+                game.progress(),
+                game.points().iter().copied(),
+                HandOutcome::ExhaustiveDraw {
+                    tenpai: Box::new([]),
+                    nagashi_winners: Box::new([]),
+                },
+            )
+            .expect("hand");
+
+        assert_eq!(
+            game.apply_hand(hand)
+                .expect("apply")
+                .expect("extension round end")
+                .end_reason(),
+            MatchEndReason::ScheduledEnd
+        );
+    }
+
+    /// 一位必要点数等于起始点数时，东风战固定打满一个场风。
+    #[test]
+    fn lowering_the_requirement_keeps_an_east_only_match_at_one_round() {
+        let mut rules = RiichiRules::standard(RiichiVariant::Sanma);
+        rules.match_rules.length = MatchLength::EastOnly;
+        rules.match_rules.first_place_required_points = 25_000;
+        rules.scoring.nagashi_mangan = false;
+        let dealer = Seat::new(RiichiVariant::Sanma, 2).expect("dealer");
+        let mut game = RiichiMatch::start(rules.clone(), dealer).expect("match");
+        set_hand(
+            &mut game,
+            Wind::East,
+            3,
+            dealer,
+            &[25_000, 25_000, 25_000],
+            0,
+        );
+        let hand = HandSettlement
+            .settle(
+                &rules,
+                game.progress(),
+                game.points().iter().copied(),
+                HandOutcome::ExhaustiveDraw {
+                    tenpai: Box::new([]),
+                    nagashi_winners: Box::new([]),
+                },
+            )
+            .expect("hand");
+
+        assert_eq!(
+            game.apply_hand(hand)
+                .expect("apply")
+                .expect("scheduled end")
+                .end_reason(),
+            MatchEndReason::ScheduledEnd
+        );
+    }
+
+    #[test]
+    fn west_round_ends_once_first_place_reaches_the_requirement() {
+        let rules = RiichiRules::default();
+        let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
+        let winner = Seat::new(RiichiVariant::Yonma, 1).expect("winner");
+        let from = Seat::new(RiichiVariant::Yonma, 2).expect("from");
+        let mut game = RiichiMatch::start(rules.clone(), dealer).expect("match");
+        set_hand(
+            &mut game,
+            Wind::West,
+            1,
+            dealer,
+            &[25_000, 29_000, 21_000, 25_000],
+            0,
+        );
+        let hand = HandSettlement
+            .settle(
+                &rules,
+                game.progress(),
+                game.points().iter().copied(),
+                HandOutcome::Ron {
+                    from,
+                    winners: vec![ScoredWinner::new(
+                        winner,
+                        evaluation(Payment::Ron { points: 1_000 }),
+                    )]
+                    .into_boxed_slice(),
+                },
+            )
+            .expect("hand");
+
+        assert_eq!(
+            game.apply_hand(hand)
+                .expect("apply")
+                .expect("west round end")
+                .end_reason(),
+            MatchEndReason::ScheduledEnd
+        );
     }
 
     #[test]
