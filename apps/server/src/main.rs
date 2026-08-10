@@ -19,8 +19,17 @@ async fn main() -> Result<(), AnyError> {
 
     let state = match config.administrator() {
         Some(administrator) => {
-            let state =
-                AppState::persistent_with_admin(config.data_dir(), administrator.cookie_secure())?;
+            let state = match config.database_url() {
+                Some(database_url) => AppState::persistent_with_admin_and_database(
+                    config.data_dir(),
+                    administrator.cookie_secure(),
+                    database_url,
+                )?,
+                None => AppState::persistent_with_admin(
+                    config.data_dir(),
+                    administrator.cookie_secure(),
+                )?,
+            };
             state.application().bootstrap_administrator(RegisterUser {
                 login_name: administrator.login_name().to_owned(),
                 password: administrator.password().to_owned(),
@@ -28,7 +37,12 @@ async fn main() -> Result<(), AnyError> {
             })?;
             state
         }
-        None => AppState::persistent(config.data_dir())?,
+        None => match config.database_url() {
+            Some(database_url) => {
+                AppState::persistent_with_database(config.data_dir(), database_url)?
+            }
+            None => AppState::persistent(config.data_dir())?,
+        },
     };
     let app = build_router_with_web(state.clone(), config.admin_web_dir(), config.game_web_dir());
     let listener = TcpListener::bind(config.bind_address()).await?;

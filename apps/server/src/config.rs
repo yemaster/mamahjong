@@ -11,6 +11,7 @@ const ADMIN_WEB_DIR_ENV: &str = "MAMAHJONG_ADMIN_WEB_DIR";
 const DEFAULT_ADMIN_WEB_DIR: &str = "apps/admin-web/dist";
 const GAME_WEB_DIR_ENV: &str = "MAMAHJONG_GAME_WEB_DIR";
 const DEFAULT_GAME_WEB_DIR: &str = "apps/game-web/dist";
+const DATABASE_URL_ENV: &str = "MAMAHJONG_DATABASE_URL";
 const ADMIN_LOGIN_ENV: &str = "MAMAHJONG_ADMIN_LOGIN_NAME";
 const ADMIN_PASSWORD_ENV: &str = "MAMAHJONG_ADMIN_PASSWORD";
 const ADMIN_NICKNAME_ENV: &str = "MAMAHJONG_ADMIN_NICKNAME";
@@ -22,6 +23,7 @@ pub struct ServerConfig {
     data_dir: PathBuf,
     admin_web_dir: PathBuf,
     game_web_dir: PathBuf,
+    database_url: Option<String>,
     administrator: Option<AdministratorBootstrap>,
 }
 
@@ -39,12 +41,14 @@ impl ServerConfig {
         let data_dir = read_optional_env(DATA_DIR_ENV)?;
         let admin_web_dir = read_optional_env(ADMIN_WEB_DIR_ENV)?;
         let game_web_dir = read_optional_env(GAME_WEB_DIR_ENV)?;
+        let database_url = read_optional_env(DATABASE_URL_ENV)?;
         let mut config = Self::from_values_with_web(
             bind_address.as_deref(),
             data_dir.as_deref(),
             admin_web_dir.as_deref(),
             game_web_dir.as_deref(),
         )?;
+        config.database_url = database_url.filter(|value| !value.trim().is_empty());
         config.administrator = administrator_from_values(
             read_optional_env(ADMIN_LOGIN_ENV)?.as_deref(),
             read_optional_env(ADMIN_PASSWORD_ENV)?.as_deref(),
@@ -99,6 +103,7 @@ impl ServerConfig {
             data_dir,
             admin_web_dir,
             game_web_dir,
+            database_url: None,
             administrator: None,
         })
     }
@@ -126,6 +131,11 @@ impl ServerConfig {
     #[must_use]
     pub fn game_web_dir(&self) -> &Path {
         &self.game_web_dir
+    }
+
+    #[must_use]
+    pub fn database_url(&self) -> Option<&str> {
+        self.database_url.as_deref()
     }
 
     #[must_use]
@@ -164,6 +174,7 @@ impl Debug for ServerConfig {
             .field("data_dir", &self.data_dir)
             .field("admin_web_dir", &self.admin_web_dir)
             .field("game_web_dir", &self.game_web_dir)
+            .field("database_enabled", &self.database_url.is_some())
             .field("administrator_enabled", &self.administrator.is_some())
             .finish()
     }

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::auth::AuthenticatedUser;
 use super::error::ApiError;
-use crate::AppState;
+use crate::{AppState, AuditDraft};
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
@@ -34,9 +34,10 @@ async fn enter(
 ) -> Result<(StatusCode, Json<TicketResponse>), ApiError> {
     let Json(payload) = payload.map_err(ApiError::invalid_json)?;
     let variant = parse_variant(&payload.rule_set_id)?;
-    let ticket = state
-        .application()
-        .enter_matchmaking(user.user().id(), variant)?;
+    let ticket =
+        state
+            .application()
+            .enter_matchmaking(user.user().id(), variant, state.now_ms())?;
     if let MatchmakingStatus::Matched { match_id, .. } = ticket.status() {
         state
             .persist_match(user.user().id(), match_id)
@@ -46,6 +47,29 @@ async fn enter(
                 ApiError::internal()
             })?;
     }
+    state
+        .record_audit(AuditDraft {
+            severity: "info",
+            category: "matchmaking",
+            action: match ticket.status() {
+                MatchmakingStatus::Matched { .. } => "matchmaking.matched",
+                _ => "matchmaking.entered",
+            },
+            actor_id: Some(user.user().id().as_str().to_owned()),
+            target_type: "ticket",
+            target_id: Some(ticket.id().as_str().to_owned()),
+            outcome: "success",
+            detail: match ticket.status() {
+                MatchmakingStatus::Matched { .. } => "匹配完成",
+                _ => "已进入匹配",
+            }
+            .to_owned(),
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "failed to record matchmaking audit");
+            ApiError::internal()
+        })?;
     Ok((StatusCode::CREATED, Json(TicketResponse::from(&ticket))))
 }
 
@@ -70,9 +94,28 @@ async fn cancel(
     let ticket = state
         .application()
         .cancel_matchmaking(user.user().id(), &ticket_id)?;
+    state
+        .record_audit(AuditDraft {
+            severity: "info",
+            category: "matchmaking",
+            action: "matchmaking.cancelled",
+            actor_id: Some(user.user().id().as_str().to_owned()),
+            target_type: "ticket",
+            target_id: Some(ticket_id.as_str().to_owned()),
+            outcome: "success",
+            detail: "已取消匹配".to_owned(),
+        })
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "failed to record matchmaking cancellation audit");
+            ApiError::internal()
+        })?;
     Ok(Json(TicketResponse::from(&ticket)))
 }
 
+/// 匹配队列只收立直麻将。
+///
+/// 冲击麻将只开好友房，`impact/*` 在这里就被挡回去，不会走到应用层。
 fn parse_variant(value: &str) -> Result<RiichiVariant, ApiError> {
     match value {
         "riichi/yonma" => Ok(RiichiVariant::Yonma),

@@ -6,7 +6,7 @@ use mamahjong_application::{ApplicationError, ErrorCode};
 use serde::Serialize;
 
 #[derive(Debug)]
-pub(super) struct ApiError {
+pub(crate) struct ApiError {
     status: StatusCode,
     code: &'static str,
     message: String,
@@ -59,6 +59,15 @@ impl ApiError {
         }
     }
 
+    pub(super) fn invalid_ticket() -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            code: "auth.invalid_ticket",
+            message: "ws ticket is invalid, expired, or already used".to_owned(),
+            retryable: false,
+        }
+    }
+
     pub(super) fn internal() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -66,6 +75,18 @@ impl ApiError {
             message: "internal server error".to_owned(),
             retryable: true,
         }
+    }
+
+    pub(super) const fn code(&self) -> &'static str {
+        self.code
+    }
+
+    pub(super) fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub(super) const fn retryable(&self) -> bool {
+        self.retryable
     }
 }
 
@@ -76,13 +97,20 @@ impl From<ApplicationError> for ApiError {
             ErrorCode::InvalidLoginName
             | ErrorCode::InvalidPassword
             | ErrorCode::InvalidNickname
+            | ErrorCode::InvalidCharacter
+            | ErrorCode::InvalidTablecloth
+            | ErrorCode::InvalidMusicTrack
             | ErrorCode::InvalidRoomName
             | ErrorCode::InvalidRuleConfiguration => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorCode::InvalidCredentials | ErrorCode::InvalidSession => StatusCode::UNAUTHORIZED,
             ErrorCode::UserUnavailable | ErrorCode::NotRoomOwner | ErrorCode::NotMatchPlayer => {
                 StatusCode::FORBIDDEN
             }
-            ErrorCode::RoomNotFound | ErrorCode::MatchNotFound => StatusCode::NOT_FOUND,
+            ErrorCode::RoomNotFound
+            | ErrorCode::MatchNotFound
+            | ErrorCode::CharacterNotFound
+            | ErrorCode::TableclothNotFound
+            | ErrorCode::MusicTrackNotFound => StatusCode::NOT_FOUND,
             ErrorCode::LoginNameTaken
             | ErrorCode::RoomClosed
             | ErrorCode::RoomFull
@@ -95,6 +123,9 @@ impl From<ApplicationError> for ApiError {
             | ErrorCode::MatchFinished
             | ErrorCode::AlreadyQueued
             | ErrorCode::MatchmakingTicketNotWaiting => StatusCode::CONFLICT,
+            ErrorCode::CharacterDefaultRequired
+            | ErrorCode::TableclothDefaultRequired
+            | ErrorCode::MusicTrackDefaultRequired => StatusCode::CONFLICT,
             ErrorCode::UserBusy => StatusCode::CONFLICT,
             ErrorCode::MatchmakingTicketNotFound => StatusCode::NOT_FOUND,
             ErrorCode::InvalidGameCommand => StatusCode::UNPROCESSABLE_ENTITY,

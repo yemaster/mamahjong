@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tower_http::trace::TraceLayer;
 
-pub use archive::{ArchiveError, MatchArchive};
+pub use archive::{ArchiveError, MatchArchive, MatchRecordSummary, PlayerStatistics};
 pub use audit::{AuditDraft, AuditError, AuditEvent, AuditLog};
 pub use clock::spawn_sweeper;
 pub use config::{ConfigError, ServerConfig};
@@ -51,23 +51,44 @@ impl AppState {
     }
 
     pub fn persistent(data_dir: impl AsRef<Path>) -> Result<Self, StateError> {
-        Self::persistent_internal(data_dir, None)
+        Self::persistent_internal(data_dir, None, None)
+    }
+
+    pub fn persistent_with_database(
+        data_dir: impl AsRef<Path>,
+        database_url: &str,
+    ) -> Result<Self, StateError> {
+        Self::persistent_internal(data_dir, None, Some(database_url))
     }
 
     pub fn persistent_with_admin(
         data_dir: impl AsRef<Path>,
         cookie_secure: bool,
     ) -> Result<Self, StateError> {
-        Self::persistent_internal(data_dir, Some(cookie_secure))
+        Self::persistent_internal(data_dir, Some(cookie_secure), None)
+    }
+
+    pub fn persistent_with_admin_and_database(
+        data_dir: impl AsRef<Path>,
+        cookie_secure: bool,
+        database_url: &str,
+    ) -> Result<Self, StateError> {
+        Self::persistent_internal(data_dir, Some(cookie_secure), Some(database_url))
     }
 
     fn persistent_internal(
         data_dir: impl AsRef<Path>,
         cookie_secure: Option<bool>,
+        database_url: Option<&str>,
     ) -> Result<Self, StateError> {
         Ok(Self {
             readiness: Readiness::new(),
-            application: Application::new(),
+            application: match database_url {
+                Some(database_url) => {
+                    Application::connect_postgres(database_url).map_err(StateError::Application)?
+                }
+                None => Application::new(),
+            },
             archive: MatchArchive::open(&data_dir).map_err(StateError::Archive)?,
             audit: AuditLog::open(data_dir).map_err(StateError::Audit)?,
             admin_sessions: match cookie_secure {
@@ -133,12 +154,54 @@ impl AppState {
         actor: &UserId,
         match_id: &MatchId,
     ) -> Result<(), ArchiveError> {
+        // 冲击麻将本期不出牌谱，这里静默跳过；不然每走一步都会把「没有牌谱」
+        // 当成归档失败，整步操作报 500。
+        if !self.application.match_generates_record(match_id) {
+            return Ok(());
+        }
         let record = self
             .application
             .match_record(actor, match_id)
             .map_err(|_| ArchiveError::TaskFailed)?;
         let archive = self.archive.clone();
         tokio::task::spawn_blocking(move || archive.persist(&record))
+            .await
+            .map_err(|_| ArchiveError::TaskFailed)?
+    }
+
+    pub(crate) async fn player_statistics(
+        &self,
+        user_id: &UserId,
+    ) -> Result<PlayerStatistics, ArchiveError> {
+        let archive = self.archive.clone();
+        let user_id = user_id.as_str().to_owned();
+        tokio::task::spawn_blocking(move || archive.player_statistics(&user_id))
+            .await
+            .map_err(|_| ArchiveError::TaskFailed)?
+    }
+
+    /// 牌谱列表：内存里只留着还没结束的对局，翻历史只能扫归档。
+    pub(crate) async fn player_records(
+        &self,
+        user_id: &UserId,
+    ) -> Result<Vec<MatchRecordSummary>, ArchiveError> {
+        let archive = self.archive.clone();
+        let user_id = user_id.as_str().to_owned();
+        tokio::task::spawn_blocking(move || archive.player_records(&user_id))
+            .await
+            .map_err(|_| ArchiveError::TaskFailed)?
+    }
+
+    /// 归档里的一份牌谱，服务端重启之后重演就靠它。
+    pub(crate) async fn archived_record(
+        &self,
+        match_id: &MatchId,
+        user_id: &UserId,
+    ) -> Result<Option<serde_json::Value>, ArchiveError> {
+        let archive = self.archive.clone();
+        let match_id = match_id.as_str().to_owned();
+        let user_id = user_id.as_str().to_owned();
+        tokio::task::spawn_blocking(move || archive.record(&match_id, &user_id))
             .await
             .map_err(|_| ArchiveError::TaskFailed)?
     }
@@ -190,6 +253,7 @@ pub fn build_router_with_web(
 
 #[derive(Debug)]
 pub enum StateError {
+    Application(mamahjong_application::ApplicationError),
     Archive(ArchiveError),
     Audit(AuditError),
     AdminSession(web::AdminSessionError),
@@ -198,6 +262,7 @@ pub enum StateError {
 impl std::fmt::Display for StateError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Application(error) => error.fmt(formatter),
             Self::Archive(error) => error.fmt(formatter),
             Self::Audit(error) => error.fmt(formatter),
             Self::AdminSession(error) => error.fmt(formatter),
@@ -208,6 +273,7 @@ impl std::fmt::Display for StateError {
 impl std::error::Error for StateError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Application(error) => Some(error),
             Self::Archive(error) => Some(error),
             Self::Audit(error) => Some(error),
             Self::AdminSession(error) => Some(error),
