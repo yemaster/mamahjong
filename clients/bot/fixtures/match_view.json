@@ -1,0 +1,163 @@
+{
+  "schema": "match_view.v1",
+  "id": "match_019fd57e-5d32-7ba3-a44e-458d322f78bf",
+  "room_id": "451449",
+  "version": 1,
+  "event_sequence": 6,
+  "hand_index": 0,
+  "observer_seat": 2,
+  "progress": {
+    "round_wind": "east",
+    "round_number": 1,
+    "dealer": 0,
+    "honba": 0,
+    "riichi_sticks": 0
+  },
+  "phase": {
+    "kind": "awaiting_turn_action",
+    "seat": 0
+  },
+  "remaining_live_draws": 69,
+  "dora_indicators": [
+    {
+      "id": 52,
+      "code": "0p"
+    }
+  ],
+  "players": [
+    {
+      "user_id": "user_019fd57e-57a3-7723-8f25-f8ca6a68e8d3",
+      "seat": 0,
+      "nickname": "botuser3",
+      "avatar_path": null,
+      "character_illustration_path": "/game/assets/local-characters/mahjong-soul/ichihime/outfits/yiji.png",
+      "points": 25000,
+      "concealed_tiles": null,
+      "concealed_tile_count": 14,
+      "drawn_tile_id": null,
+      "melds": [],
+      "discards": [],
+      "riichi_status": "none",
+      "waiting_tiles": [],
+      "furiten": false
+    },
+    {
+      "user_id": "user_019fd57e-5b07-7e93-bf71-65b321abad5c",
+      "seat": 1,
+      "nickname": "botuser4",
+      "avatar_path": null,
+      "character_illustration_path": "/game/assets/local-characters/mahjong-soul/ichihime/outfits/yiji.png",
+      "points": 25000,
+      "concealed_tiles": null,
+      "concealed_tile_count": 13,
+      "drawn_tile_id": null,
+      "melds": [],
+      "discards": [],
+      "riichi_status": "none",
+      "waiting_tiles": [],
+      "furiten": false
+    },
+    {
+      "user_id": "user_019fd57e-5093-7ab3-aca0-df4cc17a27f1",
+      "seat": 2,
+      "nickname": "botuser1",
+      "avatar_path": null,
+      "character_illustration_path": "/game/assets/local-characters/mahjong-soul/ichihime/outfits/yiji.png",
+      "points": 25000,
+      "concealed_tiles": [
+        {
+          "id": 15,
+          "code": "4m"
+        },
+        {
+          "id": 131,
+          "code": "6z"
+        },
+        {
+          "id": 94,
+          "code": "6s"
+        },
+        {
+          "id": 91,
+          "code": "5s"
+        },
+        {
+          "id": 27,
+          "code": "7m"
+        },
+        {
+          "id": 42,
+          "code": "2p"
+        },
+        {
+          "id": 46,
+          "code": "3p"
+        },
+        {
+          "id": 126,
+          "code": "5z"
+        },
+        {
+          "id": 20,
+          "code": "6m"
+        },
+        {
+          "id": 65,
+          "code": "8p"
+        },
+        {
+          "id": 76,
+          "code": "2s"
+        },
+        {
+          "id": 109,
+          "code": "1z"
+        },
+        {
+          "id": 81,
+          "code": "3s"
+        }
+      ],
+      "concealed_tile_count": 13,
+      "drawn_tile_id": null,
+      "melds": [],
+      "discards": [],
+      "riichi_status": "none",
+      "waiting_tiles": [],
+      "furiten": false
+    },
+    {
+      "user_id": "user_019fd57e-5432-74a1-89c5-7406d280919b",
+      "seat": 3,
+      "nickname": "botuser2",
+      "avatar_path": null,
+      "character_illustration_path": "/game/assets/local-characters/mahjong-soul/ichihime/outfits/yiji.png",
+      "points": 25000,
+      "concealed_tiles": null,
+      "concealed_tile_count": 13,
+      "drawn_tile_id": null,
+      "melds": [],
+      "discards": [],
+      "riichi_status": "none",
+      "waiting_tiles": [],
+      "furiten": false
+    }
+  ],
+  "available_reactions": [],
+  "turn_actions": {
+    "can_tsumo": false,
+    "riichi_discard_tile_ids": [],
+    "riichi_discard_hints": [],
+    "concealed_kan_tile_ids": [],
+    "added_kan_options": [],
+    "can_nine_terminals": false
+  },
+  "clocks": [],
+  "opening_ready_seats": [],
+  "hand_settlement": null,
+  "result": null,
+  "friend_match": true,
+  "can_start_exit_vote": true,
+  "exit_vote": null,
+  "terminated_by_exit_vote": false
+}

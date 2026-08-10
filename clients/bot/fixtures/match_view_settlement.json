@@ -1,0 +1,988 @@
+{
+  "schema": "match_view.v1",
+  "id": "match_019fd57e-5d32-7ba3-a44e-458d322f78bf",
+  "room_id": "451449",
+  "version": 91,
+  "event_sequence": 165,
+  "hand_index": 0,
+  "observer_seat": 0,
+  "progress": {
+    "round_wind": "east",
+    "round_number": 1,
+    "dealer": 0,
+    "honba": 0,
+    "riichi_sticks": 0
+  },
+  "phase": {
+    "kind": "ended",
+    "reason": "exhaustive_draw"
+  },
+  "remaining_live_draws": 0,
+  "dora_indicators": [
+    {
+      "id": 52,
+      "code": "0p"
+    }
+  ],
+  "players": [
+    {
+      "user_id": "user_019fd57e-57a3-7723-8f25-f8ca6a68e8d3",
+      "seat": 0,
+      "nickname": "botuser3",
+      "avatar_path": null,
+      "character_illustration_path": "/game/assets/local-characters/mahjong-soul/ichihime/outfits/yiji.png",
+      "points": 25000,
+      "concealed_tiles": [
+        {
+          "id": 89,
+          "code": "5s"
+        },
+        {
+          "id": 40,
+          "code": "2p"
+        },
+        {
+          "id": 33,
+          "code": "9m"
+        },
+        {
+          "id": 133,
+          "code": "7z"
+        },
+        {
+          "id": 106,
+          "code": "9s"
+        },
+        {
+          "id": 70,
+          "code": "9p"
+        },
+        {
+          "id": 112,
+          "code": "2z"
+        },
+        {
+          "id": 50,
+          "code": "4p"
+        },
+        {
+          "id": 96,
+          "code": "7s"
+        },
+        {
+          "id": 47,
+          "code": "3p"
+        },
+        {
+          "id": 107,
+          "code": "9s"
+        },
+        {
+          "id": 7,
+          "code": "2m"
+        },
+        {
+          "id": 125,
+          "code": "5z"
+        }
+      ],
+      "concealed_tile_count": 13,
+      "drawn_tile_id": null,
+      "melds": [],
+      "discards": [
+        {
+          "tile": {
+            "id": 60,
+            "code": "7p"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 17,
+            "code": "5m"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 63,
+            "code": "7p"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 110,
+            "code": "1z"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 135,
+            "code": "7z"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 24,
+            "code": "7m"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 12,
+            "code": "4m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 105,
+            "code": "9s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 58,
+            "code": "6p"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 93,
+            "code": "6s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 14,
+            "code": "4m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 68,
+            "code": "9p"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 124,
+            "code": "5z"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 26,
+            "code": "7m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 127,
+            "code": "5z"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 43,
+            "code": "2p"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 83,
+            "code": "3s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 99,
+            "code": "7s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        }
+      ],
+      "riichi_status": "none",
+      "waiting_tiles": [],
+      "furiten": false
+    },
+    {
+      "user_id": "user_019fd57e-5b07-7e93-bf71-65b321abad5c",
+      "seat": 1,
+      "nickname": "botuser4",
+      "avatar_path": null,
+      "character_illustration_path": "/game/assets/local-characters/mahjong-soul/ichihime/outfits/yiji.png",
+      "points": 25000,
+      "concealed_tiles": [
+        {
+          "id": 101,
+          "code": "8s"
+        },
+        {
+          "id": 88,
+          "code": "0s"
+        },
+        {
+          "id": 97,
+          "code": "7s"
+        },
+        {
+          "id": 98,
+          "code": "7s"
+        },
+        {
+          "id": 59,
+          "code": "6p"
+        },
+        {
+          "id": 69,
+          "code": "9p"
+        },
+        {
+          "id": 108,
+          "code": "1z"
+        },
+        {
+          "id": 35,
+          "code": "9m"
+        },
+        {
+          "id": 119,
+          "code": "3z"
+        },
+        {
+          "id": 117,
+          "code": "3z"
+        },
+        {
+          "id": 53,
+          "code": "5p"
+        },
+        {
+          "id": 103,
+          "code": "8s"
+        },
+        {
+          "id": 29,
+          "code": "8m"
+        }
+      ],
+      "concealed_tile_count": 13,
+      "drawn_tile_id": null,
+      "melds": [],
+      "discards": [
+        {
+          "tile": {
+            "id": 4,
+            "code": "2m"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 62,
+            "code": "7p"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 100,
+            "code": "8s"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 16,
+            "code": "0m"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 121,
+            "code": "4z"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 54,
+            "code": "5p"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 36,
+            "code": "1p"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 115,
+            "code": "2z"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 6,
+            "code": "2m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 92,
+            "code": "6s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 45,
+            "code": "3p"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 122,
+            "code": "4z"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 32,
+            "code": "9m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 61,
+            "code": "7p"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 86,
+            "code": "4s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 34,
+            "code": "9m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 44,
+            "code": "3p"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 18,
+            "code": "5m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        }
+      ],
+      "riichi_status": "none",
+      "waiting_tiles": [],
+      "furiten": false
+    },
+    {
+      "user_id": "user_019fd57e-5093-7ab3-aca0-df4cc17a27f1",
+      "seat": 2,
+      "nickname": "botuser1",
+      "avatar_path": null,
+      "character_illustration_path": "/game/assets/local-characters/mahjong-soul/ichihime/outfits/yiji.png",
+      "points": 25000,
+      "concealed_tiles": [
+        {
+          "id": 39,
+          "code": "1p"
+        },
+        {
+          "id": 131,
+          "code": "6z"
+        },
+        {
+          "id": 94,
+          "code": "6s"
+        },
+        {
+          "id": 91,
+          "code": "5s"
+        },
+        {
+          "id": 27,
+          "code": "7m"
+        },
+        {
+          "id": 42,
+          "code": "2p"
+        },
+        {
+          "id": 46,
+          "code": "3p"
+        },
+        {
+          "id": 126,
+          "code": "5z"
+        },
+        {
+          "id": 20,
+          "code": "6m"
+        },
+        {
+          "id": 65,
+          "code": "8p"
+        },
+        {
+          "id": 76,
+          "code": "2s"
+        },
+        {
+          "id": 109,
+          "code": "1z"
+        },
+        {
+          "id": 81,
+          "code": "3s"
+        }
+      ],
+      "concealed_tile_count": 13,
+      "drawn_tile_id": null,
+      "melds": [],
+      "discards": [
+        {
+          "tile": {
+            "id": 55,
+            "code": "5p"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 49,
+            "code": "4p"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 102,
+            "code": "8s"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 64,
+            "code": "8p"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 82,
+            "code": "3s"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 15,
+            "code": "4m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 134,
+            "code": "7z"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 95,
+            "code": "6s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 130,
+            "code": "6z"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 8,
+            "code": "3m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 0,
+            "code": "1m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 79,
+            "code": "2s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 1,
+            "code": "1m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 118,
+            "code": "3z"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 123,
+            "code": "4z"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 128,
+            "code": "6z"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 11,
+            "code": "3m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        }
+      ],
+      "riichi_status": "none",
+      "waiting_tiles": [],
+      "furiten": false
+    },
+    {
+      "user_id": "user_019fd57e-5432-74a1-89c5-7406d280919b",
+      "seat": 3,
+      "nickname": "botuser2",
+      "avatar_path": null,
+      "character_illustration_path": "/game/assets/local-characters/mahjong-soul/ichihime/outfits/yiji.png",
+      "points": 25000,
+      "concealed_tiles": [
+        {
+          "id": 31,
+          "code": "8m"
+        },
+        {
+          "id": 116,
+          "code": "3z"
+        },
+        {
+          "id": 77,
+          "code": "2s"
+        },
+        {
+          "id": 66,
+          "code": "8p"
+        },
+        {
+          "id": 28,
+          "code": "8m"
+        },
+        {
+          "id": 48,
+          "code": "4p"
+        },
+        {
+          "id": 56,
+          "code": "6p"
+        },
+        {
+          "id": 41,
+          "code": "2p"
+        },
+        {
+          "id": 85,
+          "code": "4s"
+        },
+        {
+          "id": 21,
+          "code": "6m"
+        },
+        {
+          "id": 57,
+          "code": "6p"
+        },
+        {
+          "id": 73,
+          "code": "1s"
+        },
+        {
+          "id": 75,
+          "code": "1s"
+        }
+      ],
+      "concealed_tile_count": 13,
+      "drawn_tile_id": null,
+      "melds": [],
+      "discards": [
+        {
+          "tile": {
+            "id": 120,
+            "code": "4z"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 87,
+            "code": "4s"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 9,
+            "code": "3m"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 25,
+            "code": "7m"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 5,
+            "code": "2m"
+          },
+          "tsumogiri": true,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 37,
+            "code": "1p"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 23,
+            "code": "6m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 22,
+            "code": "6m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 67,
+            "code": "8p"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 74,
+            "code": "1s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 78,
+            "code": "2s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 3,
+            "code": "1m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 51,
+            "code": "4p"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 13,
+            "code": "4m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 84,
+            "code": "4s"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 132,
+            "code": "7z"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        },
+        {
+          "tile": {
+            "id": 2,
+            "code": "1m"
+          },
+          "tsumogiri": false,
+          "riichi_declared": false,
+          "claimed_by": null
+        }
+      ],
+      "riichi_status": "none",
+      "waiting_tiles": [],
+      "furiten": false
+    }
+  ],
+  "available_reactions": [],
+  "turn_actions": {
+    "can_tsumo": false,
+    "riichi_discard_tile_ids": [],
+    "riichi_discard_hints": [],
+    "concealed_kan_tile_ids": [],
+    "added_kan_options": [],
+    "can_nine_terminals": false
+  },
+  "clocks": [],
+  "opening_ready_seats": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "hand_settlement": {
+    "reason": "exhaustive_draw",
+    "tenpai_seats": [],
+    "point_deltas": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "points_before": [
+      25000,
+      25000,
+      25000,
+      25000
+    ],
+    "points_after": [
+      25000,
+      25000,
+      25000,
+      25000
+    ],
+    "winners": [],
+    "played_seats": [],
+    "confirm_remaining_ms": null,
+    "confirmed_seats": [],
+    "from_seat": null,
+    "ura_dora_indicators": []
+  },
+  "result": null,
+  "friend_match": true,
+  "can_start_exit_vote": false,
+  "exit_vote": null,
+  "terminated_by_exit_vote": false
+}

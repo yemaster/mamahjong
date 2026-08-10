@@ -30,6 +30,7 @@ impl ApiClient {
         })
     }
 
+    #[allow(dead_code)]
     pub async fn register(
         &mut self,
         login_name: &str,
@@ -50,6 +51,26 @@ impl ApiClient {
         Ok(response)
     }
 
+    pub async fn login(
+        &mut self,
+        login_name: &str,
+        password: &str,
+    ) -> Result<AuthResponse, ApiError> {
+        let response: AuthResponse = self
+            .send(
+                Method::POST,
+                "/api/v1/sessions",
+                Some(json!({
+                    "login_name": login_name,
+                    "password": password
+                })),
+            )
+            .await?;
+        self.token = Some(response.session.token.clone());
+        Ok(response)
+    }
+
+    #[allow(dead_code)]
     pub async fn create_room(&self, name: &str, variant: Variant) -> Result<RoomView, ApiError> {
         self.send(
             Method::POST,
@@ -103,6 +124,20 @@ impl ApiClient {
         .await
     }
 
+    pub async fn leave_room(
+        &self,
+        room_id: &str,
+        expected_version: u64,
+    ) -> Result<RoomView, ApiError> {
+        self.send(
+            Method::DELETE,
+            &format!("/api/v1/rooms/{room_id}/members"),
+            Some(json!({"expected_version": expected_version})),
+        )
+        .await
+    }
+
+    #[allow(dead_code)]
     pub async fn start_room(
         &self,
         room_id: &str,
@@ -118,6 +153,11 @@ impl ApiClient {
 
     pub async fn match_view(&self, match_id: &str) -> Result<MatchView, ApiError> {
         self.send(Method::GET, &format!("/api/v1/matches/{match_id}"), None)
+            .await
+    }
+
+    pub async fn room(&self, room_id: &str, _expected_version: u64) -> Result<RoomView, ApiError> {
+        self.send(Method::GET, &format!("/api/v1/rooms/{room_id}"), None)
             .await
     }
 
@@ -206,6 +246,10 @@ impl ApiError {
 
     pub fn is_invalid_command(&self) -> bool {
         self.code == "game.invalid_command"
+    }
+
+    pub fn is_stale_version(&self) -> bool {
+        self.code == "game.stale_version"
     }
 }
 
