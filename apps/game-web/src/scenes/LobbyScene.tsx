@@ -362,31 +362,44 @@ function LobbyMenu({
   }
 
   return (
-    <div className="game-lobby__menu game-lobby__join">
-      <label htmlFor="friend-room-id">房间号</label>
-      <input
-        id="friend-room-id"
-        value={roomId}
-        onChange={(event) =>
-          onRoomIdChange(event.target.value.replace(/\D/g, "").slice(0, 6))
-        }
-        onKeyDown={(event) => event.key === "Enter" && onJoin()}
-        autoComplete="off"
-        inputMode="numeric"
-        maxLength={6}
-        placeholder="六位房间号"
-        autoFocus
-      />
-      <button
-        type="button"
-        className="game-lobby__join-submit"
-        onClick={onJoin}
-        disabled={!/^\d{6}$/.test(roomId.trim()) || joining}
-      >
-        {joining ? "正在加入" : "确认加入"}
-      </button>
-      <LobbyBackButton onClick={() => onMenuChange("friends")} />
-    </div>
+    <form
+      className="game-lobby__menu game-lobby__join"
+      aria-label="加入房间"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onJoin();
+      }}
+    >
+      <header className="game-lobby__join-header">
+        <span aria-hidden="true">入</span>
+        <h2>加入房间</h2>
+      </header>
+      <div className="game-lobby__join-body">
+        <label htmlFor="friend-room-id">房间号</label>
+        <input
+          id="friend-room-id"
+          value={roomId}
+          onChange={(event) =>
+            onRoomIdChange(event.target.value.replace(/\D/g, "").slice(0, 6))
+          }
+          autoComplete="off"
+          inputMode="numeric"
+          maxLength={6}
+          placeholder="六位房间号"
+          autoFocus
+        />
+      </div>
+      <footer className="game-lobby__join-actions">
+        <LobbyBackButton onClick={() => onMenuChange("friends")} />
+        <button
+          type="submit"
+          className="game-lobby__join-submit"
+          disabled={!/^\d{6}$/.test(roomId.trim()) || joining}
+        >
+          {joining ? "加入中" : "加入房间"}
+        </button>
+      </footer>
+    </form>
   );
 }
 

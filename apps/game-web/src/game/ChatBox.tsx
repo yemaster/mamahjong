@@ -5,6 +5,7 @@ import {
   useState,
 } from "react";
 import { ChevronRight, SendHorizonal, Smile } from "lucide-react";
+import { visualPixelsToStage } from "../components/fixedDomStageLayout";
 import type { LobbyCharacter, MatchView } from "../types";
 import { useChatStore } from "../stores/chatStore";
 import { tableRelativeSeat } from "./table";
@@ -31,7 +32,15 @@ export function ChatBox({
   const [focused, setFocused] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    ox: number;
+    oy: number;
+    scaleX: number;
+    scaleY: number;
+  } | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
@@ -82,7 +91,10 @@ export function ChatBox({
         const popover = popoverRef.current;
         if (!popover) return;
         const rect = popover.getBoundingClientRect();
-        if (rect.top < 0) {
+        const stageTop =
+          popover.closest<HTMLElement>(".fixed-dom-stage__content")
+            ?.getBoundingClientRect().top ?? 0;
+        if (rect.top < stageTop) {
           setPopoverFlip(true);
         } else {
           setPopoverFlip(false);
@@ -96,28 +108,51 @@ export function ChatBox({
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       const box = boxRef.current;
-      if (!box) return;
-      const rect = box.getBoundingClientRect();
+      const stage = box?.offsetParent as HTMLElement | null;
+      if (!box || !stage || e.button !== 0) return;
+      const boxRect = box.getBoundingClientRect();
+      const stageRect = stage.getBoundingClientRect();
+      const scaleX =
+        stage.offsetWidth > 0 ? stageRect.width / stage.offsetWidth : 1;
+      const scaleY =
+        stage.offsetHeight > 0 ? stageRect.height / stage.offsetHeight : 1;
       dragRef.current = {
+        pointerId: e.pointerId,
         x: e.clientX,
         y: e.clientY,
-        ox: rect.left,
-        oy: rect.top,
+        /* client 坐标是缩放后的屏幕像素，left/top 是 1600×900 设计像素。 */
+        ox: visualPixelsToStage(boxRect.left - stageRect.left, scaleX),
+        oy: visualPixelsToStage(boxRect.top - stageRect.top, scaleY),
+        scaleX: Math.max(scaleX, 0.0001),
+        scaleY: Math.max(scaleY, 0.0001),
       };
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      e.currentTarget.setPointerCapture(e.pointerId);
+      e.preventDefault();
     },
     [],
   );
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
-    if (!dragRef.current) return;
-    const dx = e.clientX - dragRef.current.x;
-    const dy = e.clientY - dragRef.current.y;
-    setPos({ x: dragRef.current.ox + dx, y: dragRef.current.oy + dy });
+    const drag = dragRef.current;
+    const box = boxRef.current;
+    const stage = box?.offsetParent as HTMLElement | null;
+    if (!drag || drag.pointerId !== e.pointerId || !box || !stage) return;
+    const dx = visualPixelsToStage(e.clientX - drag.x, drag.scaleX);
+    const dy = visualPixelsToStage(e.clientY - drag.y, drag.scaleY);
+    const maxX = Math.max(0, stage.offsetWidth - box.offsetWidth);
+    const maxY = Math.max(0, stage.offsetHeight - box.offsetHeight);
+    setPos({
+      x: clamp(drag.ox + dx, 0, maxX),
+      y: clamp(drag.oy + dy, 0, maxY),
+    });
   }, []);
 
-  const onPointerUp = useCallback(() => {
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    if (dragRef.current?.pointerId !== e.pointerId) return;
     dragRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
   }, []);
 
   /* 双击拖动把手折叠/展开 */
@@ -173,6 +208,7 @@ export function ChatBox({
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
           onDoubleClick={onDoubleClick}
           title="双击折叠"
         />
@@ -228,6 +264,10 @@ export function ChatBox({
       </div>
     </div>
   );
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 /* ── ChatMessages (气泡展示) ───────────────────── */

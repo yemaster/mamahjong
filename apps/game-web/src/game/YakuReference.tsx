@@ -23,10 +23,17 @@ export function YakuReferencePage({
 }: {
   onBack: () => void;
 }) {
+  const [family, setFamily] = useState<ReferenceFamily | null>(null);
+  const title = referenceTitle(family);
+
   return (
     <section className="yaku-reference-page">
-      <YakuReferenceHeader onBack={onBack} />
-      <YakuReferenceBrowser />
+      <YakuReferenceHeader
+        title={title}
+        onBack={family === null ? onBack : () => setFamily(null)}
+        backLabel={family === null ? "返回大厅" : "返回帮助主页"}
+      />
+      <YakuReferenceBrowser family={family} onFamilyChange={setFamily} />
     </section>
   );
 }
@@ -36,6 +43,8 @@ export function YakuReferenceModal({
 }: {
   onClose: () => void;
 }) {
+  const [family, setFamily] = useState<ReferenceFamily | null>(null);
+
   return (
     <div
       className="yaku-reference-modal"
@@ -47,18 +56,27 @@ export function YakuReferenceModal({
       }}
     >
       <section className="yaku-reference-modal__panel">
-        <YakuReferenceHeader onClose={onClose} />
-        <YakuReferenceBrowser />
+        <YakuReferenceHeader
+          title={referenceTitle(family)}
+          onBack={family === null ? undefined : () => setFamily(null)}
+          backLabel="返回帮助主页"
+          onClose={onClose}
+        />
+        <YakuReferenceBrowser family={family} onFamilyChange={setFamily} />
       </section>
     </div>
   );
 }
 
 function YakuReferenceHeader({
+  title,
   onBack,
+  backLabel = "返回",
   onClose,
 }: {
+  title: string;
   onBack?: () => void;
+  backLabel?: string;
   onClose?: () => void;
 }) {
   return (
@@ -67,13 +85,13 @@ function YakuReferenceHeader({
         <button
           type="button"
           onClick={onBack}
-          aria-label="返回大厅"
-          title="返回大厅"
+          aria-label={backLabel}
+          title={backLabel}
         >
           <ArrowLeft aria-hidden="true" />
         </button>
       )}
-      <h1>帮助</h1>
+      <h1>{title}</h1>
       {onClose && (
         <button
           type="button"
@@ -110,9 +128,19 @@ const REFERENCE_FAMILIES = [
 
 type ReferenceFamily = (typeof REFERENCE_FAMILIES)[number]["key"];
 
-function YakuReferenceBrowser() {
-  /* null 就是还停在种类列表那一层。 */
-  const [family, setFamily] = useState<ReferenceFamily | null>(null);
+function referenceTitle(family: ReferenceFamily | null): string {
+  if (family === null) return "帮助";
+  const label = REFERENCE_FAMILIES.find((entry) => entry.key === family)?.label;
+  return `${label ?? "麻将"}-帮助`;
+}
+
+function YakuReferenceBrowser({
+  family,
+  onFamilyChange,
+}: {
+  family: ReferenceFamily | null;
+  onFamilyChange: (family: ReferenceFamily | null) => void;
+}) {
 
   if (family === null) {
     return (
@@ -120,7 +148,7 @@ function YakuReferenceBrowser() {
         <ul className="yaku-reference__families">
           {REFERENCE_FAMILIES.map((entry) => (
             <li key={entry.key}>
-              <button type="button" onClick={() => setFamily(entry.key)}>
+              <button type="button" onClick={() => onFamilyChange(entry.key)}>
                 <h2>{entry.label}</h2>
                 <p>{entry.summary}</p>
                 <span aria-hidden="true">查看规则 →</span>
@@ -132,22 +160,8 @@ function YakuReferenceBrowser() {
     );
   }
 
-  const current = REFERENCE_FAMILIES.find((entry) => entry.key === family);
-
   return (
     <div className="yaku-reference__browser">
-      {/* 这一行只退回种类列表；标题栏那个箭头仍然是退出整个帮助页。 */}
-      <div className="yaku-reference__crumb">
-        <button
-          type="button"
-          onClick={() => setFamily(null)}
-          aria-label="返回麻将种类"
-        >
-          <ArrowLeft aria-hidden="true" />
-          <span>麻将种类</span>
-        </button>
-        <strong>{current?.label}</strong>
-      </div>
       {family === "riichi" ? <RiichiReference /> : <ImpactReference />}
     </div>
   );

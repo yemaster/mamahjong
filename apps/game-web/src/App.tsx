@@ -4,6 +4,7 @@ import { gameApi } from "./api";
 import { playMusic, resolveTrack } from "./audio/music";
 import { MOUSECLICK_SFX, playSfx, preloadSfx } from "./audio/sfx";
 import { Layout } from "./components/Layout";
+import { FixedDomStage } from "./components/FixedDomStage";
 import {
   SceneModuleLoaded,
   SceneTransition,
@@ -141,9 +142,11 @@ export function App() {
   return (
     <SceneTransition sceneKey={sceneKey}>
       <Layout>
-        <Suspense fallback={<div className="scene-suspense-placeholder" />}>
-          <SceneModuleLoaded>{renderScene()}</SceneModuleLoaded>
-        </Suspense>
+        <FixedDomStage>
+          <Suspense fallback={<div className="scene-suspense-placeholder" />}>
+            <SceneModuleLoaded>{renderScene()}</SceneModuleLoaded>
+          </Suspense>
+        </FixedDomStage>
       </Layout>
     </SceneTransition>
   );

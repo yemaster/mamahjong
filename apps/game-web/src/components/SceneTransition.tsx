@@ -8,10 +8,12 @@ import {
   useRef,
   useState,
 } from "react";
+import { FixedDomStage } from "./FixedDomStage";
 
 type TransitionPhase = "idle" | "gathering" | "loading" | "revealing";
 
-const GATHER_DURATION = 650;
+/* 雾气 CSS 在 650ms 合拢；再留 30ms 给最后一帧落定，才替换旧页面。 */
+export const SCENE_GATHER_DURATION_MS = 680;
 const PROGRESS_FINISH_DURATION = 420;
 const REVEAL_DURATION = 700;
 const transitionLoader = `${import.meta.env.BASE_URL}assets/ui/scene-transition-loader.svg`;
@@ -127,7 +129,7 @@ export function SceneTransition({ sceneKey, children }: Props) {
         progressRef.current = 25;
         setProgress(25);
         changePhase("loading");
-      }, GATHER_DURATION),
+      }, SCENE_GATHER_DURATION_MS),
     );
 
     return clearTimers;
@@ -139,56 +141,59 @@ export function SceneTransition({ sceneKey, children }: Props) {
   return (
     <SceneLoadContext.Provider value={loadSignals}>
       {visibleChildren}
-      <div
-        className={`scene-transition scene-transition--${phase}`}
-        role="status"
-        aria-label="页面切换中"
-        aria-hidden={phase === "idle"}
-      >
-        <div className="scene-transition__white" />
-        <div className="scene-transition__mist scene-transition__mist--left">
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--one" />
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--two" />
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--three" />
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--four" />
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--five" />
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--six" />
-        </div>
-        <div className="scene-transition__mist scene-transition__mist--right">
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--one" />
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--two" />
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--three" />
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--four" />
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--five" />
-          <i className="scene-transition__mist-bank scene-transition__mist-bank--six" />
-        </div>
-        {waitingPeers ? (
-          <div className="scene-transition__waiting">
-            <span className="scene-transition__waiting-text">
-              等待其他玩家({waitingPeers.ready}/{waitingPeers.total})
-            </span>
-            <span className="scene-transition__waiting-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
+      {phase !== "idle" && (
+        <FixedDomStage variant="transition">
+          <div
+            className={`scene-transition scene-transition--${phase}`}
+            role="status"
+            aria-label="页面切换中"
+          >
+            <div className="scene-transition__white" />
+            <div className="scene-transition__mist scene-transition__mist--left">
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--one" />
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--two" />
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--three" />
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--four" />
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--five" />
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--six" />
+            </div>
+            <div className="scene-transition__mist scene-transition__mist--right">
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--one" />
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--two" />
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--three" />
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--four" />
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--five" />
+              <i className="scene-transition__mist-bank scene-transition__mist-bank--six" />
+            </div>
+            {waitingPeers ? (
+              <div className="scene-transition__waiting">
+                <span className="scene-transition__waiting-text">
+                  等待其他玩家({waitingPeers.ready}/{waitingPeers.total})
+                </span>
+                <span className="scene-transition__waiting-dots" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              </div>
+            ) : (
+              <div className="scene-transition__loader" aria-hidden="true">
+                <img
+                  className="scene-transition__loader-base"
+                  src={transitionLoader}
+                  alt=""
+                />
+                <span
+                  className="scene-transition__loader-fill"
+                  style={{ width: `${progress}%` }}
+                >
+                  <img src={transitionLoader} alt="" />
+                </span>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="scene-transition__loader" aria-hidden="true">
-            <img
-              className="scene-transition__loader-base"
-              src={transitionLoader}
-              alt=""
-            />
-            <span
-              className="scene-transition__loader-fill"
-              style={{ width: `${progress}%` }}
-            >
-              <img src={transitionLoader} alt="" />
-            </span>
-          </div>
-        )}
-      </div>
+        </FixedDomStage>
+      )}
     </SceneLoadContext.Provider>
   );
 }

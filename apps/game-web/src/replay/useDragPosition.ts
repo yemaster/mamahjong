@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { visualPixelsToStage } from "../components/fixedDomStageLayout";
 
 export interface DragPosition {
   x: number;
@@ -108,8 +109,8 @@ export function useDragPosition(bottomMargin = 12) {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
       const { maxX, maxY } = bounds();
-      const dx = (event.clientX - drag.startX) / drag.scale;
-      const dy = (event.clientY - drag.startY) / drag.scale;
+      const dx = visualPixelsToStage(event.clientX - drag.startX, drag.scale);
+      const dy = visualPixelsToStage(event.clientY - drag.startY, drag.scale);
       /* 真挪过一下才算数：光按一下把手不该把面板钉死在原地。 */
       movedRef.current = true;
       setPosition({

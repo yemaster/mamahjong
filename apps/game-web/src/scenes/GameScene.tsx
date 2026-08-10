@@ -1326,7 +1326,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
           }
         />
       </MatchStage>
-      {/* 帮助页是压在整个窗口上的参考弹窗，不进设计舞台。 */}
+      {/* 帮助页压在整个对局舞台上。 */}
       {yakuReferenceOpen && (
         <YakuReferenceModal onClose={() => setYakuReferenceOpen(false)} />
       )}

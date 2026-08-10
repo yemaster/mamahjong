@@ -10,7 +10,9 @@ import {
 } from "./audio/music";
 import { LoginModal } from "./components/LoginModal";
 import { Modal } from "./components/Modal";
+import { FixedDomStage } from "./components/FixedDomStage";
 import {
+  SCENE_GATHER_DURATION_MS,
   SceneModuleLoaded,
   SceneTransition,
   useSceneReady,
@@ -43,6 +45,7 @@ function Root() {
   const [resumeSplash, setResumeSplash] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [suppressLogin, setSuppressLogin] = useState(false);
+  const [hideSplashIdentity, setHideSplashIdentity] = useState(false);
   const { token, identity, isAuthenticated } = useAuthStore();
 
   useSakuraClickEffect();
@@ -131,10 +134,20 @@ function Root() {
 
   useEffect(() => {
     let loginTimer: number | null = null;
+    let logoutTimer: number | null = null;
     const returnToSplash = () => {
-      // Logout immediately so the splash screen doesn't flash
-      // "欢迎您，xxx" during the fog transition.
-      useAuthStore.getState().logout();
+      /*
+       * 旧大厅要留到雾气完全合拢。提前清空 identity 会让它重算为默认一姬，
+       * 所以会话与页面都在同一个「已被雾遮住」的时点切换。
+       */
+      if (logoutTimer != null) window.clearTimeout(logoutTimer);
+      /* 新的初始页先隐去旧账号文案，但不动旧大厅正在用的 identity。 */
+      setHideSplashIdentity(true);
+      logoutTimer = window.setTimeout(() => {
+        useAuthStore.getState().logout();
+        setHideSplashIdentity(false);
+        logoutTimer = null;
+      }, SCENE_GATHER_DURATION_MS);
       stopMusic();
       setShowApp(false);
       setResumeSplash(true);
@@ -151,6 +164,7 @@ function Root() {
     return () => {
       window.removeEventListener(RETURN_TO_SPLASH_EVENT, returnToSplash);
       if (loginTimer != null) window.clearTimeout(loginTimer);
+      if (logoutTimer != null) window.clearTimeout(logoutTimer);
     };
   }, []);
 
@@ -202,34 +216,38 @@ function Root() {
         {showApp ? (
           <InitialGame />
         ) : (
-          <ReadySplash
-            key={splashCycle}
-            prepareGame={prepareGame}
-            prepareCycle={prepareCycle}
-            onEnter={() => {
-              const currentToken = useAuthStore.getState().token;
-              if (currentToken) {
-                gameApi.revokeOtherSessions(currentToken).catch(() => {});
+          <FixedDomStage variant="splash">
+            <ReadySplash
+              key={splashCycle}
+              prepareGame={prepareGame}
+              prepareCycle={prepareCycle}
+              onEnter={() => {
+                const currentToken = useAuthStore.getState().token;
+                if (currentToken) {
+                  gameApi.revokeOtherSessions(currentToken).catch(() => {});
+                }
+                // 这一下点击就是浏览器要的用户操作，音乐只能从这里起。
+                playMusic(
+                  resolveTrack(
+                    queryClient.getQueryData<MusicTrackListResponse>([
+                      "music-tracks",
+                    ])?.music_tracks,
+                    "lobby",
+                    useAuthStore.getState().identity?.profile
+                      .selected_lobby_music_id,
+                  )?.audio_path ?? null,
+                );
+                setShowApp(true);
+              }}
+              onLogout={logoutFromSplash}
+              skipIntro={resumeSplash}
+              welcomeName={
+                hideSplashIdentity
+                  ? undefined
+                  : identity?.profile.nickname || identity?.login_name
               }
-              // 这一下点击就是浏览器要的用户操作，音乐只能从这里起。
-              playMusic(
-                resolveTrack(
-                  queryClient.getQueryData<MusicTrackListResponse>([
-                    "music-tracks",
-                  ])?.music_tracks,
-                  "lobby",
-                  useAuthStore.getState().identity?.profile
-                    .selected_lobby_music_id,
-                )?.audio_path ?? null,
-              );
-              setShowApp(true);
-            }}
-            onLogout={logoutFromSplash}
-            skipIntro={resumeSplash}
-            welcomeName={
-              identity?.profile.nickname || identity?.login_name
-            }
-          />
+            />
+          </FixedDomStage>
         )}
       </SceneTransition>
       <LoginModal

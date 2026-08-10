@@ -2,6 +2,7 @@ import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  SCENE_GATHER_DURATION_MS,
   SceneModuleLoaded,
   SceneTransition,
   useSceneReady,
@@ -74,9 +75,14 @@ describe("SceneTransition", () => {
     expect(
       container.querySelector(".scene-transition--gathering"),
     ).not.toBeNull();
+    expect(
+      container.querySelector(".fixed-dom-stage--transition"),
+    ).not.toBeNull();
 
-    act(() => vi.advanceTimersByTime(649));
+    /* 650ms 雾气动画结束后，旧页面仍留到安全帧结束。 */
+    act(() => vi.advanceTimersByTime(SCENE_GATHER_DURATION_MS - 1));
     expect(container.textContent).not.toContain("房间");
+    expect(container.textContent).toContain("雀庄");
     expect(
       container.querySelector(".scene-transition--gathering"),
     ).not.toBeNull();
@@ -106,7 +112,10 @@ describe("SceneTransition", () => {
     ).not.toBeNull();
 
     act(() => vi.advanceTimersByTime(1));
-    expect(container.querySelector(".scene-transition--idle")).not.toBeNull();
+    expect(container.querySelector(".scene-transition")).toBeNull();
+    expect(
+      container.querySelector(".fixed-dom-stage--transition"),
+    ).toBeNull();
   });
 
   it("等人的时候不许再退回加载图", () => {
@@ -128,7 +137,7 @@ describe("SceneTransition", () => {
       );
     });
 
-    act(() => vi.advanceTimersByTime(650));
+    act(() => vi.advanceTimersByTime(SCENE_GATHER_DURATION_MS));
     expect(container.textContent).toContain("等待其他玩家(1/4)");
     expect(container.querySelector(".scene-transition__loader")).toBeNull();
 
@@ -147,7 +156,7 @@ describe("SceneTransition", () => {
     expect(container.querySelector(".scene-transition__loader")).toBeNull();
 
     act(() => vi.advanceTimersByTime(700));
-    expect(container.querySelector(".scene-transition--idle")).not.toBeNull();
+    expect(container.querySelector(".scene-transition")).toBeNull();
     expect(container.textContent).toContain("牌局");
   });
 });
