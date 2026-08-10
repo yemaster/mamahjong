@@ -1,6 +1,28 @@
 name: mamahjong
 
 services:
+  database:
+    image: postgres:17.10-alpine3.23
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${MAMAHJONG_DATABASE_NAME:-mamahjong}
+      POSTGRES_USER: ${MAMAHJONG_DATABASE_USER:-mamahjong}
+      POSTGRES_PASSWORD: ${MAMAHJONG_DATABASE_PASSWORD:-mamahjong-local-password}
+    expose:
+      - "5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
   server:
     image: mamahjong-server:local
     build:
@@ -13,11 +35,15 @@ services:
       MAMAHJONG_DATA_DIR: /var/lib/mamahjong
       MAMAHJONG_ADMIN_WEB_DIR: /usr/share/mamahjong/admin
       MAMAHJONG_GAME_WEB_DIR: /usr/share/mamahjong/game
+      MAMAHJONG_DATABASE_URL: postgresql://${MAMAHJONG_DATABASE_USER:-mamahjong}:${MAMAHJONG_DATABASE_PASSWORD:-mamahjong-local-password}@database:5432/${MAMAHJONG_DATABASE_NAME:-mamahjong}
       MAMAHJONG_ADMIN_LOGIN_NAME: ${MAMAHJONG_ADMIN_LOGIN_NAME:-admin}
       MAMAHJONG_ADMIN_PASSWORD: ${MAMAHJONG_ADMIN_PASSWORD:-}
       MAMAHJONG_ADMIN_NICKNAME: ${MAMAHJONG_ADMIN_NICKNAME:-管理员}
       MAMAHJONG_ADMIN_COOKIE_SECURE: ${MAMAHJONG_ADMIN_COOKIE_SECURE:-false}
       RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      database:
+        condition: service_healthy
     ports:
       - "${MAMAHJONG_HOST:-127.0.0.1}:${MAMAHJONG_PORT:-8080}:8080"
     read_only: true
@@ -39,3 +65,4 @@ services:
 
 volumes:
   match-records:
+  postgres-data:

@@ -4,6 +4,7 @@
 .idea
 .vscode
 target
+**/node_modules
+**/dist
 *.log
 docs
-
