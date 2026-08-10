@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { gameApi, apiFailure } from "../api";
 import { Button } from "../components/Button";
+import { useSceneReady } from "../components/SceneTransition";
 import { navigateTo } from "../routing";
 import { useAuthStore } from "../stores/authStore";
 
@@ -36,6 +37,7 @@ export default function MatchmakingScene({ ticketId }: MatchmakingSceneProps) {
     refetchInterval: 2000,
     enabled: !!token,
   });
+  useSceneReady(!ticket.isLoading);
 
   /* Transition to game when matched. */
   useEffect(() => {

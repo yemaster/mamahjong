@@ -1,70 +1,16 @@
+import { useEffect, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { gameApi, apiFailure } from "../api";
+import { ApiError, gameApi, apiFailure } from "../api";
 import { Button } from "../components/Button";
+import { useSceneReady } from "../components/SceneTransition";
 import { navigateTo } from "../routing";
 import { useAuthStore } from "../stores/authStore";
 import type { MatchView } from "../types";
+import { RankRow } from "./result/RankRow";
+import { resultRows, rowEnterDelayMs, rowsSettledMs } from "./result/resultRows";
 
-const page: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  height: "100%",
-  textAlign: "center",
-  padding: 40,
-};
-
-const heading: React.CSSProperties = {
-  fontSize: 30,
-  fontWeight: 900,
-  letterSpacing: "0.1em",
-  color: "var(--pink-dark)",
-  
-  marginBottom: 36,
-};
-
-const placementsRow: React.CSSProperties = {
-  display: "flex",
-  gap: 24,
-  marginBottom: 32,
-  flexWrap: "wrap",
-  justifyContent: "center",
-};
-
-const placementCard = (rank: number): React.CSSProperties => ({
-  background: "var(--warm-white)",
-  padding: "24px 32px",
-  minWidth: 160,
-  textAlign: "center",
-  border:
-    rank === 1
-      ? "2px solid var(--pink-dark)"
-      : "1px solid var(--border)",
-  boxShadow:
-    rank === 1
-      ? "0 0 20px var(--pink)"
-      : "0 2px 8px rgba(0,0,0,0.4)",
-});
-
-const rankStyle: React.CSSProperties = {
-  fontSize: 36,
-  fontWeight: 900,
-  color: "var(--pink-dark)",
-  marginBottom: 8,
-};
-
-const nicknameStyle: React.CSSProperties = {
-  fontSize: 16,
-  fontWeight: 600,
-  color: "var(--brown)",
-  marginBottom: 4,
-};
-
-const pointsStyle: React.CSSProperties = {
-  fontSize: 14,
-  color: "#7A5C48",
-};
+const resultBackground =
+  `${import.meta.env.BASE_URL}assets/ui/sakura-campus-empty.png`;
 
 interface ResultSceneProps {
   matchId: string;
@@ -76,15 +22,35 @@ export default function ResultScene({ matchId }: ResultSceneProps) {
     queryKey: ["matchView", matchId],
     queryFn: () => gameApi.matchView(matchId, token!),
     enabled: !!token,
+    retry: (failureCount, error) =>
+      !(error instanceof ApiError && error.status === 404) &&
+      failureCount < 2,
   });
+  const matchMissing =
+    view.error instanceof ApiError && view.error.status === 404;
+
+  useEffect(() => {
+    if (matchMissing) {
+      navigateTo({ kind: "lobby" });
+    }
+  }, [matchMissing]);
+
+  useSceneReady(!view.isLoading);
 
   if (view.isLoading) {
-    return <div style={page}>加载结算…</div>;
+    return (
+      <div className="result-loading">
+        <span className="result-loading__mark">終</span>
+        <p>加载结算…</p>
+      </div>
+    );
   }
   if (view.error) {
     return (
-      <div style={{ ...page, color: "var(--color-danger)" }}>
-        {apiFailure(view.error).message}
+      <div className="result-error">
+        {matchMissing
+          ? "对局不存在，正在返回大厅…"
+          : apiFailure(view.error).message}
         <div style={{ marginTop: 16 }}>
           <Button onClick={() => navigateTo({ kind: "lobby" })}>
             返回大厅
@@ -98,7 +64,7 @@ export default function ResultScene({ matchId }: ResultSceneProps) {
   const result = data.result;
   if (!result) {
     return (
-      <div style={page}>
+      <div className="result-error">
         对局未结束
         <div style={{ marginTop: 16 }}>
           <Button onClick={() => navigateTo({ kind: "lobby" })}>
@@ -109,36 +75,50 @@ export default function ResultScene({ matchId }: ResultSceneProps) {
     );
   }
 
-  // Sort placements by rank.
-  const sorted = [...result.placements].sort((a, b) => a.rank - b.rank);
-  const players = new Map(data.players.map((p) => [p.seat, p.nickname]));
+  const rows = resultRows(data, result);
+  const champion = data.players.find((player) => player.seat === rows[0]?.seat);
 
   return (
-    <div style={page}>
-      <h1 style={heading}>对局结束</h1>
+    <div className="result-screen">
+      {/* 大厅那张校园背景压成夜色，终局和大厅是同一个地方，天黑了而已。 */}
+      <div
+        className="result-screen__scenery"
+        style={{ backgroundImage: `url(${resultBackground})` }}
+      />
+      <div className="result-screen__night" />
 
-      <div style={placementsRow}>
-        {sorted.map((p) => (
-          <div key={p.seat} style={placementCard(p.rank)}>
-            <div style={rankStyle}>
-              {p.rank === 1 ? "🥇" : p.rank === 2 ? "🥈" : p.rank === 3 ? "🥉" : "4"}
-            </div>
-            <div style={nicknameStyle}>
-              {players.get(p.seat) ?? `玩家${p.seat}`}
-            </div>
-            <div style={pointsStyle}>{p.points} 点</div>
-          </div>
-        ))}
-      </div>
+      {/* 左侧：冠军立绘，底端出血，右缘化进夜色 */}
+      {champion?.character_illustration_path && (
+        <div className="result-screen__hero">
+          <img src={champion.character_illustration_path} alt="" />
+        </div>
+      )}
 
-      <div style={{ display: "flex", gap: 12 }}>
-        <Button
-          variant="pink"
-          size="lg"
-          onClick={() => navigateTo({ kind: "lobby" })}
+      {/* 右侧：名次条 */}
+      <div className="result-screen__rankings">
+        <div className="result-screen__rows">
+          {rows.map((row) => (
+            <RankRow
+              key={row.seat}
+              row={row}
+              enterDelayMs={rowEnterDelayMs(row.rank, rows.length)}
+            />
+          ))}
+        </div>
+        <div
+          className="result-screen__actions"
+          style={
+            { "--enter-delay": `${rowsSettledMs(rows.length)}ms` } as CSSProperties
+          }
         >
-          返回大厅
-        </Button>
+          <button
+            className="result-screen__confirm"
+            type="button"
+            onClick={() => navigateTo({ kind: "room", roomId: data.room_id })}
+          >
+            返回房间
+          </button>
+        </div>
       </div>
     </div>
   );

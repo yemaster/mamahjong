@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LogOut, Maximize2, Minimize2 } from "lucide-react";
 
-/* ═══════════════════════════════════════════════════════════════
-   SPLASH — warm anime school style with falling sakura petals
-   ═══════════════════════════════════════════════════════════════ */
+const splashBackground = `${import.meta.env.BASE_URL}assets/ui/sakura-campus-splash.png`;
+const splashLogo = `${import.meta.env.BASE_URL}assets/ui/mamahjong-splash-logo.png`;
+const developerLogo = `${import.meta.env.BASE_URL}assets/ui/vtgame-developer-logo.png`;
 
 interface Petal {
   id: number;
@@ -12,165 +13,264 @@ interface Petal {
   size: string;
 }
 
-function petals(count: number): Petal[] {
-  return Array.from({ length: count }, (_, i) => ({
-    id: i,
+function createPetals(count: number): Petal[] {
+  return Array.from({ length: count }, (_, id) => ({
+    id,
     left: `${Math.random() * 100}%`,
     delay: `${Math.random() * 6}s`,
-    duration: `${5 + Math.random() * 8}s`,
-    size: `${8 + Math.random() * 10}px`,
+    duration: `${6 + Math.random() * 7}s`,
+    size: `${7 + Math.random() * 10}px`,
   }));
 }
 
-const wrapper = (clickable: boolean): React.CSSProperties => ({
-  position: "fixed",
-  inset: 0,
-  zIndex: 9999,
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  background: "#FFF8F0",
-  backgroundImage: "url('/assets/ui/bg_splash.jpg')",
-  backgroundSize: "cover",
-  backgroundPosition: "center",
-  backgroundRepeat: "no-repeat",
-  cursor: clickable ? "pointer" : "default",
-  transition: "opacity 0.6s ease-out",
-});
-
-const title: React.CSSProperties = {
-  fontSize: 46,
-  fontWeight: 900,
-  letterSpacing: "0.25em",
-  color: "#D4899E",
-};
-
-const sub: React.CSSProperties = {
-  fontSize: 14,
-  fontWeight: 600,
-  letterSpacing: "0.4em",
-  color: "#C9A96E",
-  marginTop: 8,
-};
-
-const bottom: React.CSSProperties = {
-  position: "absolute",
-  bottom: 72,
-  left: 0,
-  right: 0,
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  gap: 14,
-};
-
-const track: React.CSSProperties = {
-  width: 220,
-  height: 2,
-  background: "rgba(74,55,40,0.1)",
-  borderRadius: 1,
-};
-
-const fill = (pct: number): React.CSSProperties => ({
-  width: `${pct}%`,
-  height: "100%",
-  background: "#D4899E",
-  borderRadius: 1,
-  transition: "width 0.3s ease-out",
-});
-
-const loadText: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 600,
-  letterSpacing: "0.25em",
-  color: "rgba(74,55,40,0.35)",
-};
-
-const tap: React.CSSProperties = {
-  fontSize: 14,
-  fontWeight: 700,
-  letterSpacing: "0.3em",
-  color: "rgba(74,55,40,0.55)",
-  opacity: 0,
-  transition: "opacity 0.8s",
-};
-
-const corner: React.CSSProperties = {
-  position: "absolute",
-  bottom: 18,
-  fontSize: 10,
-  letterSpacing: "0.1em",
-  color: "rgba(74,55,40,0.15)",
-};
-
-/* ═══════════════════════════════════════════════════════════════ */
-
 interface Props {
   onEnter: () => void;
+  onLogout: () => void;
+  prepareGame: (reportProgress: (progress: number) => void) => Promise<void>;
+  prepareCycle?: number;
+  skipIntro?: boolean;
+  welcomeName?: string;
 }
 
-export function SplashScreen({ onEnter }: Props) {
-  const [progress, setProgress] = useState(0);
-  const [showTap, setShowTap] = useState(false);
-  const [fading, setFading] = useState(false);
-  const petalList = useMemo(() => petals(35), []);
+const BACKGROUND_REVEAL_DURATION = 800;
+const DEVELOPER_LOGO_FADE_IN_DURATION = 300;
+const DEVELOPER_LOGO_HOLD_DURATION = 1400;
+const DEVELOPER_LOGO_FADE_OUT_DURATION = 300;
+const LOGO_PAUSE_DURATION = 500;
+const GAME_LOGO_FADE_IN_DURATION = 300;
+const GAME_LOGO_HOLD_DURATION = 2000;
+const PROGRESS_FINISH_DURATION = 420;
 
-  useEffect(() => {
-    const steps = [
-      { at: 200, to: 25 },
-      { at: 500, to: 55 },
-      { at: 900, to: 85 },
-      { at: 1400, to: 100 },
-    ];
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    for (const s of steps) timers.push(setTimeout(() => setProgress(s.to), s.at));
-    timers.push(setTimeout(() => setShowTap(true), 1800));
-    return () => timers.forEach(clearTimeout);
+export function SplashScreen({
+  onEnter,
+  onLogout,
+  prepareGame,
+  prepareCycle = 0,
+  skipIntro = false,
+  welcomeName,
+}: Props) {
+  const [progress, setProgress] = useState(0);
+  const [backgroundLoaded, setBackgroundLoaded] = useState(false);
+  const [developerLogoLoaded, setDeveloperLogoLoaded] = useState(skipIntro);
+  const [developerLogoFading, setDeveloperLogoFading] = useState(skipIntro);
+  const [gameLogoVisible, setGameLogoVisible] = useState(skipIntro);
+  const [gameLogoHoldComplete, setGameLogoHoldComplete] = useState(skipIntro);
+  const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const backgroundHandled = useRef(false);
+  const petalList = useMemo(() => createPetals(28), []);
+  const backgroundReady = backgroundLoaded && gameLogoHoldComplete;
+
+  const handleBackgroundLoaded = useCallback(() => {
+    if (backgroundHandled.current) return;
+    backgroundHandled.current = true;
+    setBackgroundLoaded(true);
   }, []);
 
-  const handleClick = () => {
-    if (!showTap) return;
-    setFading(true);
-    setTimeout(onEnter, 600);
+  useEffect(() => {
+    const syncFullscreen = () => setFullscreen(Boolean(document.fullscreenElement));
+    syncFullscreen();
+    document.addEventListener("fullscreenchange", syncFullscreen);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+  }, []);
+
+  useEffect(() => {
+    if (skipIntro) return;
+    if (!developerLogoLoaded) return;
+
+    const developerLogoFadeOutStart =
+      DEVELOPER_LOGO_FADE_IN_DURATION + DEVELOPER_LOGO_HOLD_DURATION;
+    const gameLogoStart =
+      developerLogoFadeOutStart +
+      DEVELOPER_LOGO_FADE_OUT_DURATION +
+      LOGO_PAUSE_DURATION;
+    const fadeDeveloperLogoTimer = setTimeout(
+      () => setDeveloperLogoFading(true),
+      developerLogoFadeOutStart,
+    );
+    const showGameLogoTimer = setTimeout(
+      () => setGameLogoVisible(true),
+      gameLogoStart,
+    );
+    const finishGameLogoHoldTimer = setTimeout(
+      () => setGameLogoHoldComplete(true),
+      gameLogoStart + GAME_LOGO_FADE_IN_DURATION + GAME_LOGO_HOLD_DURATION,
+    );
+
+    return () => {
+      clearTimeout(fadeDeveloperLogoTimer);
+      clearTimeout(showGameLogoTimer);
+      clearTimeout(finishGameLogoHoldTimer);
+    };
+  }, [developerLogoLoaded, skipIntro]);
+
+  useEffect(() => {
+    if (!backgroundReady) return;
+
+    let cancelled = false;
+    let finishTimer: ReturnType<typeof setTimeout> | undefined;
+    const revealTimer = setTimeout(() => {
+      setLoading(true);
+      prepareGame((nextProgress) => {
+        if (!cancelled) setProgress(nextProgress);
+      })
+        .then(() => {
+          if (cancelled) return;
+          setProgress(100);
+          finishTimer = setTimeout(() => {
+            if (!cancelled) setReady(true);
+          }, PROGRESS_FINISH_DURATION);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setLoading(false);
+            setProgress(0);
+          }
+        });
+    }, BACKGROUND_REVEAL_DURATION);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(revealTimer);
+      if (finishTimer) clearTimeout(finishTimer);
+    };
+  }, [backgroundReady, prepareCycle, prepareGame]);
+
+  const handleEnter = () => {
+    if (!ready) return;
+    onEnter();
+  };
+
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch {
+      // Browsers can reject fullscreen when it is unavailable.
+    }
+  };
+
+  const handleLogout = () => {
+    setReady(false);
+    setLoading(false);
+    setProgress(0);
+    onLogout();
   };
 
   return (
-    <div style={wrapper(showTap)} onClick={handleClick}>
-      {/* Sakura petals */}
-      {petalList.map((p) => (
-        <div
-          key={p.id}
-          className="sakura-petal"
-          style={{
-            left: p.left,
-            animationDelay: p.delay,
-            animationDuration: p.duration,
-            width: p.size,
-            height: p.size,
-          }}
+    <div
+      className={`splash-screen${developerLogoLoaded ? " is-developer-logo-visible" : ""}${developerLogoFading ? " is-developer-logo-fading" : ""}${gameLogoVisible ? " is-game-logo-visible" : ""}${backgroundReady ? " has-background" : ""}${loading ? " is-loading" : ""}${ready ? " is-ready" : ""}`}
+    >
+      <button
+        type="button"
+        className="splash-entry-hit-area"
+        onClick={handleEnter}
+        disabled={!ready}
+        aria-label={ready ? "点击进入游戏" : `游戏加载中，${progress}%`}
+      />
+      <img
+        className="splash-background"
+        src={splashBackground}
+        alt=""
+        aria-hidden="true"
+        onLoad={handleBackgroundLoaded}
+      />
+      <span className="splash-screen__veil" aria-hidden="true" />
+
+      {welcomeName && (
+        <span className="splash-welcome">欢迎您，{welcomeName}。</span>
+      )}
+
+      <span className="splash-developer-logo" aria-label="开发者标志">
+        <img
+          src={developerLogo}
+          alt=""
+          aria-hidden="true"
+          onLoad={() => setDeveloperLogoLoaded(true)}
+          onError={() => setDeveloperLogoLoaded(true)}
         />
-      ))}
+      </span>
 
-      {/* Logo */}
-      <div style={title}>麻麻的将</div>
-      <div style={sub}>MAHJONG</div>
+      <span className="splash-logo" aria-label="麻麻的将">
+        <img
+          className="splash-logo__image"
+          src={splashLogo}
+          alt=""
+          aria-hidden="true"
+        />
+      </span>
 
-      {/* Bottom bar */}
-      <div style={bottom}>
-        <div style={track}>
-          <div style={fill(progress)} />
-        </div>
-        <div style={loadText}>
-          {progress < 100 ? `LOADING ${progress}%` : "READY"}
-        </div>
-        <div style={{ ...tap, opacity: showTap ? 1 : 0 }}>
-          TOUCH TO START
-        </div>
-      </div>
+      <span
+        className={`splash-petals${backgroundReady ? " is-visible" : ""}`}
+        aria-hidden="true"
+      >
+        {petalList.map((petal) => (
+          <i
+            key={petal.id}
+            className="sakura-petal"
+            style={{
+              left: petal.left,
+              animationDelay: petal.delay,
+              animationDuration: petal.duration,
+              width: petal.size,
+              height: petal.size,
+            }}
+          />
+        ))}
+      </span>
 
-      <div style={{ ...corner, left: 20 }}>© mamahjong</div>
-      <div style={{ ...corner, right: 20 }}>ver 0.1.0</div>
+      <span className="splash-bottom">
+        <span
+          className={`splash-loader${loading && welcomeName && !ready ? " is-visible" : ""}`}
+          aria-hidden="true"
+        >
+          <span className="splash-loader__track">
+            <span
+              className="splash-loader__fill"
+              style={{ width: `${progress}%` }}
+            >
+              <span className="splash-loader__tile">中</span>
+            </span>
+          </span>
+        </span>
+        <span
+          className={`splash-enter${ready ? " is-visible" : ""}`}
+          aria-hidden="true"
+        >
+          点击进入游戏
+        </span>
+      </span>
+
+      <span
+        className={`splash-actions${ready ? " is-visible" : ""}`}
+        aria-hidden={!ready}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          className="splash-action-button"
+          onClick={toggleFullscreen}
+          tabIndex={ready ? 0 : -1}
+          aria-label={fullscreen ? "退出全屏" : "进入全屏"}
+          title={fullscreen ? "退出全屏" : "进入全屏"}
+        >
+          {fullscreen ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+        </button>
+        <button
+          type="button"
+          className="splash-action-button"
+          onClick={handleLogout}
+          tabIndex={ready ? 0 : -1}
+          aria-label="退出登录"
+          title="退出登录"
+        >
+          <LogOut aria-hidden="true" />
+        </button>
+      </span>
     </div>
   );
 }

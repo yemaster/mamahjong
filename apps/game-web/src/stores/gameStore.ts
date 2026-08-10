@@ -10,6 +10,8 @@ export interface GameState {
   version: number;
   /** Per-seat clock countdowns (from clock.v1 frames). */
   clocks: Map<number, SeatClockView>;
+  /** Local receipt time used to interpolate the visible countdown. */
+  clockUpdatedAt: number;
   /** Per-seat online status (from presence.v1 frames). */
   presence: Map<number, boolean>;
   /** WebSocket connection state. */
@@ -26,6 +28,7 @@ export const useGameStore = create<GameState>((set) => ({
   matchView: null,
   version: 0,
   clocks: new Map(),
+  clockUpdatedAt: Date.now(),
   presence: new Map(),
   wsState: "disconnected",
 
@@ -34,8 +37,9 @@ export const useGameStore = create<GameState>((set) => ({
       matchView: view,
       version: view.version,
       clocks: new Map(
-        view.clocks.map((clock) => [clock.seat, clock]),
+        (view.clocks ?? []).map((clock) => [clock.seat, clock]),
       ),
+      clockUpdatedAt: Date.now(),
     });
   },
 
@@ -45,7 +49,7 @@ export const useGameStore = create<GameState>((set) => ({
       for (const seat of seats) {
         clocks.set(seat.seat, seat);
       }
-      return { clocks };
+      return { clocks, clockUpdatedAt: Date.now() };
     });
   },
 
@@ -68,6 +72,7 @@ export const useGameStore = create<GameState>((set) => ({
       matchView: null,
       version: 0,
       clocks: new Map(),
+      clockUpdatedAt: Date.now(),
       presence: new Map(),
       wsState: "disconnected",
     });

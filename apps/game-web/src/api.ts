@@ -1,14 +1,24 @@
 import type {
   ApiFailure,
   AuthResponse,
+  CharacterListResponse,
+  DefaultCharacterResponse,
   MatchView,
   MatchmakingTicket,
+  MusicTrackListResponse,
   RoomList,
   RoomView,
   RuleSetCatalog,
   StartMatchResponse,
+  TableclothListResponse,
+  UserActivity,
+  UserProfileDetail,
   WsTicketResponse,
 } from "./types";
+import type {
+  MatchRecord,
+  MatchRecordListResponse,
+} from "./replay/recordTypes";
 
 export class ApiError extends Error {
   constructor(
@@ -19,6 +29,8 @@ export class ApiError extends Error {
     super(message);
   }
 }
+
+export const SESSION_INVALID_EVENT = "mamahjong:session-invalid";
 
 async function request<T>(
   path: string,
@@ -40,11 +52,19 @@ async function request<T>(
       code?: string;
       message?: string;
     } | null;
-    throw new ApiError(
+    const error = new ApiError(
       body?.message ?? "request failed",
       response.status,
       body?.code ?? "server.unknown",
     );
+    if (
+      init?.token &&
+      response.status === 401 &&
+      error.code === "auth.invalid_session"
+    ) {
+      window.dispatchEvent(new CustomEvent(SESSION_INVALID_EVENT));
+    }
+    throw error;
   }
   if (response.status === 204) {
     return undefined as T;
@@ -71,13 +91,67 @@ export const gameApi = {
       body: JSON.stringify({ login_name: loginName, password }),
     }),
 
+  revokeOtherSessions: (token: string) =>
+    request<void>("/sessions/me/revoke-others", {
+      method: "POST",
+      token,
+    }),
+
   me: (token: string) =>
     request<AuthResponse["user"]>("/users/me", { token }),
+
+  activity: (token: string) =>
+    request<UserActivity>("/users/me/activity", { token }),
 
   updateProfile: (token: string, nickname: string) =>
     request<AuthResponse["user"]>("/users/me/profile", {
       method: "PATCH",
       body: JSON.stringify({ nickname }),
+      token,
+    }),
+
+  updatePresentation: (
+    token: string,
+    characterId: string,
+    outfitId: string,
+    avatarPath: string,
+  ) =>
+    request<AuthResponse["user"]>("/users/me/presentation", {
+      method: "PUT",
+      body: JSON.stringify({
+        character_id: characterId,
+        outfit_id: outfitId,
+        avatar_path: avatarPath,
+      }),
+      token,
+    }),
+
+  profile: (token: string, userId: string) =>
+    request<UserProfileDetail>(`/users/${userId}/profile`, { token }),
+
+  defaultCharacter: () =>
+    request<DefaultCharacterResponse>("/characters/default"),
+
+  characters: () => request<CharacterListResponse>("/characters"),
+
+  tablecloths: () => request<TableclothListResponse>("/tablecloths"),
+
+  updateTablecloth: (token: string, tableclothId: string) =>
+    request<AuthResponse["user"]>("/users/me/tablecloth", {
+      method: "PUT",
+      body: JSON.stringify({ tablecloth_id: tableclothId }),
+      token,
+    }),
+
+  musicTracks: () => request<MusicTrackListResponse>("/music-tracks"),
+
+  updateMusic: (
+    token: string,
+    selection: { lobby_music_id?: string; match_music_id?: string; riichi_music_id?: string },
+  ) =>
+    request<AuthResponse["user"]>("/users/me/music", {
+      method: "PUT",
+      body: JSON.stringify(selection),
       token,
     }),
 
@@ -87,9 +161,10 @@ export const gameApi = {
 
   /* ── Rooms ──────────────────────────────── */
 
-  rooms: () => request<RoomList>("/rooms"),
+  rooms: (token: string) => request<RoomList>("/rooms", { token }),
 
-  getRoom: (roomId: string) => request<RoomView>(`/rooms/${roomId}`),
+  getRoom: (roomId: string, token: string) =>
+    request<RoomView>(`/rooms/${roomId}`, { token }),
 
   createRoom: (payload: unknown, token: string) =>
     request<RoomView>("/rooms", {
@@ -111,6 +186,16 @@ export const gameApi = {
       body: JSON.stringify({ expected_version: version }),
       token,
     }),
+
+  leaveRoomOnExit: (roomId: string, token: string) => {
+    void fetch(`/api/v1/rooms/${roomId}/members/me`, {
+      method: "DELETE",
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+      keepalive: true,
+    }).catch(() => {});
+  },
 
   setReady: (roomId: string, version: number, ready: boolean, token: string) =>
     request<RoomView>(`/rooms/${roomId}/members/me/readiness`, {
@@ -165,6 +250,14 @@ export const gameApi = {
       }),
       token,
     }),
+
+  /* ── Records ────────────────────────────── */
+
+  records: (token: string) =>
+    request<MatchRecordListResponse>("/records", { token }),
+
+  matchRecord: (matchId: string, token: string) =>
+    request<MatchRecord>(`/matches/${matchId}/record`, { token }),
 
   /* ── WebSocket ──────────────────────────── */
 

@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 export type GameScene =
   | { kind: "lobby" }
@@ -7,10 +7,19 @@ export type GameScene =
   | { kind: "matchmaking"; ticketId: string }
   | { kind: "game"; matchId: string }
   | { kind: "result"; matchId: string }
-  | { kind: "profile" };
+  | { kind: "yaku-reference" }
+  | { kind: "table-settings" }
+  | { kind: "records" }
+  | { kind: "replay"; matchId: string }
+  | {
+      kind: "profile";
+      userId?: string;
+      tab?: "info" | "character" | "interface" | "music";
+      returnRoomId?: string;
+    };
 
 function parseScene(hash: string): GameScene {
-  const path = hash.replace(/^#/, "");
+  const [path, query = ""] = hash.replace(/^#/, "").split("?");
   if (!path || path === "lobby") {
     return { kind: "lobby" };
   }
@@ -26,8 +35,29 @@ function parseScene(hash: string): GameScene {
       return { kind: "game", matchId: id! };
     case "result":
       return { kind: "result", matchId: id! };
+    case "yaku-reference":
+      return { kind: "yaku-reference" };
+    case "table-settings":
+      return { kind: "table-settings" };
+    case "records":
+      return { kind: "records" };
+    case "replay":
+      return { kind: "replay", matchId: id! };
     case "profile":
-      return { kind: "profile" };
+      {
+        const parameters = new URLSearchParams(query);
+        return {
+          kind: "profile",
+          userId: id || undefined,
+          tab:
+            parameters.get("tab") === "character" ||
+            parameters.get("tab") === "interface" ||
+            parameters.get("tab") === "music"
+              ? (parameters.get("tab") as "character" | "interface" | "music")
+              : undefined,
+          returnRoomId: parameters.get("return_room") ?? undefined,
+        };
+      }
     default:
       return { kind: "lobby" };
   }
@@ -47,8 +77,27 @@ function sceneHash(scene: GameScene): string {
       return `#game/${scene.matchId}`;
     case "result":
       return `#result/${scene.matchId}`;
+    case "yaku-reference":
+      return "#yaku-reference";
+    case "table-settings":
+      return "#table-settings";
+    case "records":
+      return "#records";
+    case "replay":
+      return `#replay/${scene.matchId}`;
     case "profile":
-      return "#profile";
+      {
+        const path = scene.userId ? `#profile/${scene.userId}` : "#profile";
+        const parameters = new URLSearchParams();
+        if (scene.tab && scene.tab !== "info") {
+          parameters.set("tab", scene.tab);
+        }
+        if (scene.returnRoomId) {
+          parameters.set("return_room", scene.returnRoomId);
+        }
+        const query = parameters.toString();
+        return query ? `${path}?${query}` : path;
+      }
   }
 }
 
@@ -69,9 +118,7 @@ function subscribeToHash(callback: () => void): () => void {
 }
 
 export function useGameScene(): GameScene {
-  const getHash = useCallback(
-    () => parseScene(window.location.hash),
-    [],
-  );
-  return useSyncExternalStore(subscribeToHash, getHash);
+  const getHash = useCallback(() => window.location.hash, []);
+  const hash = useSyncExternalStore(subscribeToHash, getHash, () => "#lobby");
+  return useMemo(() => parseScene(hash), [hash]);
 }

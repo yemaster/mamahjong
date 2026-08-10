@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { gameApi, apiFailure } from "../api";
 import { Button } from "../components/Button";
+import { useSceneReady } from "../components/SceneTransition";
 import { navigateTo } from "../routing";
 import { useAuthStore } from "../stores/authStore";
 
@@ -50,6 +51,7 @@ export default function CreateRoomScene() {
   const [presetId, setPresetId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useSceneReady(!catalog.isLoading);
 
   const selectedRuleSet = catalog.data?.rule_sets.find((rs) => rs.id === ruleSetId);
   const presets = selectedRuleSet?.presets ?? [];
@@ -85,7 +87,7 @@ export default function CreateRoomScene() {
       <div style={label}>规则</div>
       <select style={field} value={ruleSetId} onChange={(e) => { setRuleSetId(e.target.value); setPresetId(""); }}>
         {catalog.data?.rule_sets.map((rs) => (
-          <option key={rs.id} value={rs.id}>{rs.name}（{rs.seat_count}人）</option>
+          <option key={rs.id} value={rs.id}>{rs.display_name}（{rs.seat_count}人）</option>
         )) ?? <option value="riichi/yonma">四人麻将</option>}
       </select>
       {presets.length > 0 && (
