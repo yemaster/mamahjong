@@ -1,4 +1,5 @@
 use mahjong_core::{MatchId, RoomId, UserId};
+use mahjong_impact::ImpactRuleSnapshot;
 use mahjong_riichi::{RiichiRuleSnapshot, RiichiVariant};
 
 use crate::{ApplicationError, ErrorCode};
@@ -19,6 +20,7 @@ pub enum RoomLifecycle {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GameRuleSnapshot {
     Riichi(RiichiRuleSnapshot),
+    Impact(ImpactRuleSnapshot),
 }
 
 impl GameRuleSnapshot {
@@ -26,6 +28,7 @@ impl GameRuleSnapshot {
     pub const fn seat_count(&self) -> u8 {
         match self {
             Self::Riichi(snapshot) => snapshot.rules().variant.seat_count().value(),
+            Self::Impact(_) => mahjong_impact::SEAT_COUNT,
         }
     }
 
@@ -33,6 +36,7 @@ impl GameRuleSnapshot {
     pub const fn riichi_variant(&self) -> Option<RiichiVariant> {
         match self {
             Self::Riichi(snapshot) => Some(snapshot.rules().variant),
+            Self::Impact(_) => None,
         }
     }
 
@@ -40,6 +44,24 @@ impl GameRuleSnapshot {
     pub const fn as_riichi(&self) -> Option<&RiichiRuleSnapshot> {
         match self {
             Self::Riichi(snapshot) => Some(snapshot),
+            Self::Impact(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_impact(&self) -> Option<&ImpactRuleSnapshot> {
+        match self {
+            Self::Impact(snapshot) => Some(snapshot),
+            Self::Riichi(_) => None,
+        }
+    }
+
+    /// 前端与 DTO 用来分派渲染分支的规则家族标识。
+    #[must_use]
+    pub const fn variant_kind(&self) -> &'static str {
+        match self {
+            Self::Riichi(_) => "riichi",
+            Self::Impact(_) => "impact",
         }
     }
 }
@@ -87,15 +109,18 @@ pub struct Room {
     members: Vec<RoomMember>,
     next_join_order: u64,
     active_match_id: Option<MatchId>,
+    matchmaking_room: bool,
 }
 
 impl Room {
     pub(crate) fn new(
+        id: RoomId,
         owner_user_id: UserId,
         owner_nickname: String,
         name: String,
         visibility: RoomVisibility,
         rule_snapshot: GameRuleSnapshot,
+        matchmaking_room: bool,
     ) -> Self {
         let owner = RoomMember {
             user_id: owner_user_id.clone(),
@@ -105,7 +130,7 @@ impl Room {
             join_order: 0,
         };
         Self {
-            id: RoomId::new(),
+            id,
             version: 1,
             owner_user_id,
             name,
@@ -115,6 +140,7 @@ impl Room {
             members: vec![owner],
             next_join_order: 1,
             active_match_id: None,
+            matchmaking_room,
         }
     }
 
@@ -161,6 +187,11 @@ impl Room {
     #[must_use]
     pub const fn active_match_id(&self) -> Option<&MatchId> {
         self.active_match_id.as_ref()
+    }
+
+    #[must_use]
+    pub const fn is_matchmaking_room(&self) -> bool {
+        self.matchmaking_room
     }
 
     pub(crate) fn join(
@@ -303,6 +334,16 @@ impl Room {
         }
         self.lifecycle = RoomLifecycle::Waiting;
         self.active_match_id = None;
+        for member in &mut self.members {
+            member.ready = false;
+        }
+        self.version += 1;
+        Ok(())
+    }
+
+    pub(crate) fn close_by_administrator(&mut self) -> Result<(), ApplicationError> {
+        self.ensure_waiting()?;
+        self.lifecycle = RoomLifecycle::Closed;
         for member in &mut self.members {
             member.ready = false;
         }

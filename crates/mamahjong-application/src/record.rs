@@ -1,11 +1,12 @@
 use mahjong_riichi::{
-    DrawSource, EndReason, HandEvent, HandResult, MatchEndReason, MatchResult, Meld, MeldKind,
-    ReactionKind, RiichiRuleSnapshot, Tile, WinSource, Wind,
+    DrawSource, HandEvent, HandResult, MatchEndReason, MatchResult, Meld, MeldKind, ReactionKind,
+    RiichiRuleSnapshot, Tile, WinSource,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::game::GameRuntime;
+use crate::game::{HandWall, RiichiRuntime};
+use crate::naming::{end_reason_name, limit_name, wind_name, yaku_name};
 use crate::{ApplicationError, GameEventRecord};
 
 #[derive(Clone, Debug, Serialize)]
@@ -14,6 +15,8 @@ pub struct MatchRecord {
     match_id: String,
     version: u64,
     event_sequence: u64,
+    /// 好友对战还是段位匹配，牌谱列表的标题要用。
+    friend_match: bool,
     rule_snapshot: RiichiRuleSnapshot,
     players: Vec<RecordPlayer>,
     hands: Vec<HandRecord>,
@@ -22,15 +25,19 @@ pub struct MatchRecord {
 
 impl MatchRecord {
     pub(crate) fn from_runtime(
-        runtime: &GameRuntime,
+        runtime: &RiichiRuntime,
         actor: &mahjong_core::UserId,
     ) -> Result<Self, ApplicationError> {
         runtime.seat_for(actor)?;
+        // 牌山只在对局结束之后才随牌谱下发：还在打的时候把牌山发出去，等于给客户端
+        // 一份作弊器。这一条没有例外，也不许改成「只发已经打完的那几局」。
+        let finished = runtime.game.result().is_some();
         Ok(Self {
             schema: "match_record.v1",
             match_id: runtime.id.as_str().to_owned(),
             version: runtime.version,
             event_sequence: runtime.event_sequence,
+            friend_match: runtime.friend_match,
             rule_snapshot: runtime.rule_snapshot.clone(),
             players: runtime
                 .players
@@ -51,6 +58,12 @@ impl MatchRecord {
                         u32::try_from(index).expect("hand count is bounded by u32"),
                         hand,
                         &runtime.events,
+                        finished.then(|| runtime.hand_walls.get(index)).flatten(),
+                        runtime
+                            .hand_ura_dora
+                            .get(index)
+                            .map_or(&[][..], |tiles| &tiles[..]),
+                        runtime.game.rules().variant.seat_count().value(),
                     )
                 })
                 .collect(),
@@ -61,6 +74,11 @@ impl MatchRecord {
     #[must_use]
     pub fn match_id(&self) -> &str {
         &self.match_id
+    }
+
+    #[must_use]
+    pub const fn version(&self) -> u64 {
+        self.version
     }
 
     #[must_use]
@@ -94,6 +112,10 @@ struct HandRecord {
     point_deltas: Vec<i32>,
     points_after: Vec<i32>,
     winners: Vec<u8>,
+    /// 和牌那几家的番符与役种，重演要靠它画结算面板。流局时是空的。
+    winner_scores: Vec<WinnerScoreRecord>,
+    /// 本局的里宝牌指示牌，没人和牌就是空的（流局不翻里宝牌）。
+    ura_dora_indicators: Vec<Value>,
     from: Option<u8>,
     tenpai: Vec<u8>,
     nagashi_winners: Vec<u8>,
@@ -101,11 +123,20 @@ struct HandRecord {
     dealer_continues: bool,
     first_event_sequence: Option<u64>,
     last_event_sequence: Option<u64>,
+    /// 本局洗好的牌山，对局结束之前一律为 `None`。
+    wall: Option<WallSnapshot>,
     events: Vec<RecordEvent>,
 }
 
 impl HandRecord {
-    fn new(hand_index: u32, hand: &HandResult, events: &[GameEventRecord]) -> Self {
+    fn new(
+        hand_index: u32,
+        hand: &HandResult,
+        events: &[GameEventRecord],
+        wall: Option<&HandWall>,
+        ura_dora_indicators: &[Tile],
+        seat_count: u8,
+    ) -> Self {
         let hand_events: Vec<_> = events
             .iter()
             .filter(|event| event.hand_index() == hand_index)
@@ -129,6 +160,18 @@ impl HandRecord {
                 .iter()
                 .map(|winner| winner.seat().index())
                 .collect(),
+            winner_scores: hand
+                .winners()
+                .iter()
+                .map(|winner| {
+                    WinnerScoreRecord::new(winner, winner.seat() == progress.dealer(), seat_count)
+                })
+                .collect(),
+            ura_dora_indicators: ura_dora_indicators
+                .iter()
+                .copied()
+                .map(tile_value)
+                .collect(),
             from: hand.from().map(mahjong_riichi::Seat::index),
             tenpai: hand.tenpai().iter().map(|seat| seat.index()).collect(),
             nagashi_winners: hand
@@ -140,7 +183,93 @@ impl HandRecord {
             dealer_continues: hand.dealer_continues(),
             first_event_sequence,
             last_event_sequence,
+            wall: wall.map(WallSnapshot::from),
             events: hand_events.into_iter().map(RecordEvent::from).collect(),
+        }
+    }
+}
+
+/// 一家和牌的番符明细。
+///
+/// 字段和实时对局那份 `WinnerSettlementResponse`（`apps/server/src/api/dto.rs`）一一对应：
+/// 重演直接把结算面板那套组件拿过来用，两边的形状必须一样。
+#[derive(Clone, Debug, Serialize)]
+struct WinnerScoreRecord {
+    seat: u8,
+    han: u8,
+    fu: u16,
+    yakuman_multiplier: u8,
+    limit: &'static str,
+    /// 这家实收的点数，本场棒和立直棒都算进去了。
+    points: u32,
+    dealer: bool,
+    yaku: Vec<YakuRecord>,
+}
+
+impl WinnerScoreRecord {
+    fn new(winner: &mahjong_riichi::ScoredWinner, dealer: bool, seat_count: u8) -> Self {
+        let evaluation = winner.evaluation();
+        let mut yaku: Vec<_> = evaluation
+            .yaku()
+            .iter()
+            .map(|value| YakuRecord {
+                name: yaku_name(value.yaku()),
+                value: value.value(),
+                yakuman: value.is_yakuman(),
+            })
+            .collect();
+        // 役满不看宝牌，只有非役满的和牌才把宝牌／里宝／赤宝当成三行「役」补上去。
+        if evaluation.yakuman_multiplier() == 0 {
+            let bonuses = evaluation.bonuses();
+            for (name, value) in [
+                ("宝牌", bonuses.dora()),
+                ("里宝牌", bonuses.ura_dora()),
+                ("赤宝牌", bonuses.red_dora()),
+            ] {
+                if value > 0 {
+                    yaku.push(YakuRecord {
+                        name,
+                        value,
+                        yakuman: false,
+                    });
+                }
+            }
+        }
+        Self {
+            seat: winner.seat().index(),
+            han: evaluation.han(),
+            fu: evaluation.fu(),
+            yakuman_multiplier: evaluation.yakuman_multiplier(),
+            limit: limit_name(evaluation.limit()),
+            points: evaluation.payment().total_received(seat_count, dealer),
+            dealer,
+            yaku,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct YakuRecord {
+    name: &'static str,
+    value: u8,
+    yakuman: bool,
+}
+
+/// 一局的完整牌山顺序。
+///
+/// `tiles[..live_end]` 是活牌区、按摸牌先后排，之后的十四张是王牌。重演要靠它画出
+/// 没人摸到的那些牌；摸牌本身不会改动这个顺序，所以一局打完之后它仍然是完整的。
+#[derive(Clone, Debug, Serialize)]
+struct WallSnapshot {
+    tiles: Vec<Value>,
+    live_end: usize,
+}
+
+impl From<&HandWall> for WallSnapshot {
+    fn from(value: &HandWall) -> Self {
+        Self {
+            tiles: value.tiles.iter().copied().map(tile_value).collect(),
+            live_end: value.live_end,
         }
     }
 }
@@ -166,7 +295,7 @@ impl From<&GameEventRecord> for RecordEvent {
 }
 
 #[allow(clippy::too_many_lines)]
-fn event_payload(event: &HandEvent) -> (&'static str, Value) {
+pub(crate) fn event_payload(event: &HandEvent) -> (&'static str, Value) {
     match event {
         HandEvent::HandStarted {
             progress,
@@ -344,7 +473,7 @@ fn meld_value(meld: &Meld) -> Value {
     })
 }
 
-const fn draw_source_name(source: DrawSource) -> &'static str {
+pub(crate) const fn draw_source_name(source: DrawSource) -> &'static str {
     match source {
         DrawSource::LiveWall => "live_wall",
         DrawSource::Rinshan => "rinshan",
@@ -430,25 +559,4 @@ struct RecordPlacement {
     uma_tenths: i32,
     oka_tenths: i32,
     score_tenths: i32,
-}
-
-const fn wind_name(value: Wind) -> &'static str {
-    match value {
-        Wind::East => "east",
-        Wind::South => "south",
-        Wind::West => "west",
-        Wind::North => "north",
-    }
-}
-
-const fn end_reason_name(value: EndReason) -> &'static str {
-    match value {
-        EndReason::ExhaustiveDraw => "exhaustive_draw",
-        EndReason::NineTerminals => "nine_terminals",
-        EndReason::FourWinds => "four_winds",
-        EndReason::FourKans => "four_kans",
-        EndReason::FourRiichi => "four_riichi",
-        EndReason::Tsumo => "tsumo",
-        EndReason::Ron => "ron",
-    }
 }
