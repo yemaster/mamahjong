@@ -111,6 +111,47 @@ impl MatchArchive {
         Ok(seat_of(&value, user_id).map(|_| value))
     }
 
+    pub fn admin_record(&self, match_id: &str) -> Result<Option<Value>, ArchiveError> {
+        let Some(inner) = &self.inner else {
+            return Ok(None);
+        };
+        let Some(path) = inner.record_path(match_id) else {
+            return Ok(None);
+        };
+        let Ok(bytes) = fs::read(path) else {
+            return Ok(None);
+        };
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(ArchiveError::Decode)
+    }
+
+    pub fn all_records(&self) -> Result<Vec<MatchRecordSummary>, ArchiveError> {
+        let Some(inner) = &self.inner else {
+            return Ok(Vec::new());
+        };
+        let mut records = Vec::new();
+        for entry in fs::read_dir(&inner.directory).map_err(ArchiveError::Io)? {
+            let entry = entry.map_err(ArchiveError::Io)?;
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let value: Value = serde_json::from_slice(&fs::read(&path).map_err(ArchiveError::Io)?)
+                .map_err(ArchiveError::Decode)?;
+            if let Some(summary) = summarize(&value, file_modified_ms(&path)) {
+                records.push(summary);
+            }
+        }
+        records.sort_unstable_by(|left, right| {
+            right
+                .finished_at_ms
+                .cmp(&left.finished_at_ms)
+                .then_with(|| right.match_id.cmp(&left.match_id))
+        });
+        Ok(records)
+    }
+
     /// 某个用户打过的对局记录，按结束时间倒序。
     ///
     /// 只收真的打完了的：还在进行中的对局没有名次也没有素点，列不出一行东西来。

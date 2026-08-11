@@ -7,7 +7,7 @@ use axum::{Json, Router};
 use mahjong_core::{RoomId, UserId};
 use mamahjong_application::{
     AccountRole, AccountStatus, ApplicationError, Character, ErrorCode, RoomLifecycle,
-    RoomVisibility, SaveCharacter, SaveTablecloth, Tablecloth, User,
+    RoomVisibility, SaveCharacter, SaveMusicTrack, SaveTablecloth, Tablecloth, UpdateProfile, User,
 };
 use serde::{Deserialize, Serialize};
 
@@ -26,9 +26,12 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/me", get(me))
         .route("/overview", get(overview))
         .route("/users", get(users))
+        .route("/users/{user_id}", put(update_user))
         .route("/users/{user_id}/status", put(update_user_status))
         .route("/rooms", get(rooms))
         .route("/rooms/{room_id}/close", post(close_room))
+        .route("/matches", get(matches))
+        .route("/matches/{match_id}", get(match_detail))
         .route("/characters", get(characters).post(create_character))
         .route(
             "/characters/{character_id}",
@@ -39,6 +42,9 @@ pub(super) fn routes() -> Router<AppState> {
             "/tablecloths/{tablecloth_id}",
             put(update_tablecloth).delete(delete_tablecloth),
         )
+        .route("/music", get(music).post(create_music))
+        .route("/music/{music_id}", put(update_music).delete(delete_music))
+        .route("/database", get(database))
         .route("/audit", get(audit))
 }
 
@@ -275,6 +281,229 @@ async fn record_tablecloth_audit(
 }
 
 #[derive(Serialize)]
+struct MusicListResponse {
+    schema: &'static str,
+    music_tracks: Vec<mamahjong_application::MusicTrack>,
+}
+
+async fn music(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<MusicListResponse>, AdminApiError> {
+    authenticate(&state, &headers)?;
+    Ok(Json(MusicListResponse {
+        schema: "admin_music_list.v1",
+        music_tracks: state.application().list_music_tracks()?,
+    }))
+}
+
+async fn create_music(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SaveMusicTrack>,
+) -> Result<(StatusCode, Json<mamahjong_application::MusicTrack>), AdminApiError> {
+    let authenticated = authenticate(&state, &headers)?;
+    require_csrf(&headers, &authenticated)?;
+    if state
+        .application()
+        .list_music_tracks()?
+        .iter()
+        .any(|track| track.id() == request.id)
+    {
+        return Err(AdminApiError::conflict(
+            "music.already_exists",
+            "音乐编号已存在",
+        ));
+    }
+    let track = state.application().save_music_track(request)?;
+    record_music_audit(
+        &state,
+        &authenticated.user,
+        "admin.music.created",
+        track.id(),
+        "音乐已添加",
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(track)))
+}
+
+async fn update_music(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(music_id): Path<String>,
+    Json(mut request): Json<SaveMusicTrack>,
+) -> Result<Json<mamahjong_application::MusicTrack>, AdminApiError> {
+    let authenticated = authenticate(&state, &headers)?;
+    require_csrf(&headers, &authenticated)?;
+    if music_id != request.id {
+        return Err(AdminApiError::invalid_id());
+    }
+    request.id = music_id;
+    let track = state.application().save_music_track(request)?;
+    record_music_audit(
+        &state,
+        &authenticated.user,
+        "admin.music.updated",
+        track.id(),
+        "音乐资料已更新",
+    )
+    .await?;
+    Ok(Json(track))
+}
+
+async fn delete_music(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(music_id): Path<String>,
+) -> Result<StatusCode, AdminApiError> {
+    let authenticated = authenticate(&state, &headers)?;
+    require_csrf(&headers, &authenticated)?;
+    state.application().delete_music_track(&music_id)?;
+    record_music_audit(
+        &state,
+        &authenticated.user,
+        "admin.music.deleted",
+        &music_id,
+        "音乐已删除",
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn record_music_audit(
+    state: &AppState,
+    actor: &User,
+    action: &'static str,
+    id: &str,
+    detail: &'static str,
+) -> Result<(), AdminApiError> {
+    state
+        .record_audit(AuditDraft {
+            severity: "info",
+            category: "admin",
+            action,
+            actor_id: Some(actor.id().as_str().to_owned()),
+            target_type: "music",
+            target_id: Some(id.to_owned()),
+            outcome: "success",
+            detail: detail.to_owned(),
+        })
+        .await?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct MatchListResponse {
+    schema: &'static str,
+    matches: Vec<crate::MatchRecordSummary>,
+}
+
+async fn matches(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<MatchListResponse>, AdminApiError> {
+    authenticate(&state, &headers)?;
+    Ok(Json(MatchListResponse {
+        schema: "admin_match_list.v1",
+        matches: state
+            .admin_records()
+            .await
+            .map_err(|_| AdminApiError::internal())?,
+    }))
+}
+
+async fn match_detail(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(match_id): Path<String>,
+) -> Result<Json<serde_json::Value>, AdminApiError> {
+    authenticate(&state, &headers)?;
+    state
+        .admin_archived_record(&match_id)
+        .await
+        .map_err(|_| AdminApiError::internal())?
+        .map(Json)
+        .ok_or_else(|| AdminApiError::not_found("match.not_found", "对局不存在"))
+}
+
+#[derive(Serialize)]
+struct DatabaseTableResponse {
+    name: &'static str,
+    label: &'static str,
+    records: usize,
+    writable: bool,
+}
+
+#[derive(Serialize)]
+struct DatabaseResponse {
+    schema: &'static str,
+    engine: &'static str,
+    persistent: bool,
+    status: &'static str,
+    tables: Vec<DatabaseTableResponse>,
+}
+
+async fn database(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<DatabaseResponse>, AdminApiError> {
+    authenticate(&state, &headers)?;
+    let application = state.application();
+    let records = state
+        .admin_records()
+        .await
+        .map_err(|_| AdminApiError::internal())?;
+    Ok(Json(DatabaseResponse {
+        schema: "admin_database.v1",
+        engine: if application.persistence_enabled() {
+            "PostgreSQL"
+        } else {
+            "内存"
+        },
+        persistent: application.persistence_enabled(),
+        status: "正常",
+        tables: vec![
+            DatabaseTableResponse {
+                name: "mamahjong_users",
+                label: "用户",
+                records: application.list_users()?.len(),
+                writable: true,
+            },
+            DatabaseTableResponse {
+                name: "mamahjong_characters",
+                label: "角色",
+                records: application.list_characters()?.len(),
+                writable: true,
+            },
+            DatabaseTableResponse {
+                name: "mamahjong_tablecloths",
+                label: "桌布",
+                records: application.list_tablecloths()?.len(),
+                writable: true,
+            },
+            DatabaseTableResponse {
+                name: "mamahjong_music_tracks",
+                label: "音乐",
+                records: application.list_music_tracks()?.len(),
+                writable: true,
+            },
+            DatabaseTableResponse {
+                name: "match_archive",
+                label: "对局归档",
+                records: records.len(),
+                writable: false,
+            },
+            DatabaseTableResponse {
+                name: "audit_log",
+                label: "审计日志",
+                records: state.audit().recent(500)?.len(),
+                writable: false,
+            },
+        ],
+    }))
+}
+
+#[derive(Serialize)]
 struct SessionBootstrapResponse {
     schema: &'static str,
     enabled: bool,
@@ -407,6 +636,10 @@ struct OverviewResponse {
     user_count: usize,
     waiting_room_count: usize,
     playing_room_count: usize,
+    match_count: usize,
+    character_count: usize,
+    tablecloth_count: usize,
+    music_count: usize,
     recent_audit: Vec<AuditEvent>,
 }
 
@@ -417,6 +650,11 @@ async fn overview(
     authenticate(&state, &headers)?;
     let users = state.application().list_users()?;
     let rooms = state.application().list_all_rooms()?;
+    let match_count = state
+        .admin_records()
+        .await
+        .map_err(|_| AdminApiError::internal())?
+        .len();
     Ok(Json(OverviewResponse {
         schema: "admin_overview.v1",
         user_count: users.len(),
@@ -428,6 +666,10 @@ async fn overview(
             .iter()
             .filter(|room| room.lifecycle() == RoomLifecycle::Playing)
             .count(),
+        match_count,
+        character_count: state.application().list_characters()?.len(),
+        tablecloth_count: state.application().list_tablecloths()?.len(),
+        music_count: state.application().list_music_tracks()?.len(),
         recent_audit: state.audit().recent(10)?,
     }))
 }
@@ -479,6 +721,42 @@ fn admin_user_response(user: &User) -> AdminUserResponse {
             AccountRole::Administrator => "administrator",
         },
     }
+}
+
+async fn update_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(user_id): Path<String>,
+    Json(request): Json<UpdateUserRequest>,
+) -> Result<Json<AdminUserResponse>, AdminApiError> {
+    let authenticated = authenticate(&state, &headers)?;
+    require_csrf(&headers, &authenticated)?;
+    let user_id = UserId::parse(user_id).map_err(|_| AdminApiError::invalid_id())?;
+    let user = state.application().update_profile(
+        &user_id,
+        UpdateProfile {
+            nickname: request.nickname,
+        },
+    )?;
+    state
+        .record_audit(AuditDraft {
+            severity: "info",
+            category: "admin",
+            action: "admin.user.updated",
+            actor_id: Some(authenticated.user.id().as_str().to_owned()),
+            target_type: "user",
+            target_id: Some(user_id.as_str().to_owned()),
+            outcome: "success",
+            detail: "用户资料已更新".to_owned(),
+        })
+        .await?;
+    Ok(Json(admin_user_response(&user)))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateUserRequest {
+    nickname: String,
 }
 
 #[derive(Deserialize)]
@@ -773,6 +1051,14 @@ impl AdminApiError {
         }
     }
 
+    fn not_found(code: &'static str, message: &'static str) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            code,
+            message,
+        }
+    }
+
     fn internal() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -861,6 +1147,15 @@ impl From<ApplicationError> for AdminApiError {
             },
             ErrorCode::TableclothDefaultRequired => {
                 Self::conflict("tablecloth.default_required", "不能删除初始桌布")
+            }
+            ErrorCode::InvalidMusicTrack => Self {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                code: "request.invalid_music_track",
+                message: "音乐资料格式不正确",
+            },
+            ErrorCode::MusicTrackNotFound => Self::not_found("music.not_found", "音乐不存在"),
+            ErrorCode::MusicTrackDefaultRequired => {
+                Self::conflict("music.default_required", "不能删除默认音乐")
             }
             _ => Self::internal(),
         }
@@ -1084,6 +1379,58 @@ mod tests {
                 .iter()
                 .any(|event| event["action"] == "admin.user.suspended")
         );
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn catalog_database_and_match_admin_endpoints_are_queryable() {
+        let (state, directory) = admin_state();
+        let router = build_router(state);
+        let (cookie, csrf) = login(router.clone()).await;
+
+        let (status, _, matches) = request(
+            router.clone(),
+            Method::GET,
+            "/api/v1/admin/matches",
+            None,
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(matches.expect("matches")["schema"], "admin_match_list.v1");
+
+        let (status, _, database) = request(
+            router.clone(),
+            Method::GET,
+            "/api/v1/admin/database",
+            None,
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(database.expect("database")["tables"].is_array());
+
+        let (status, _, track) = request(
+            router,
+            Method::POST,
+            "/api/v1/admin/music",
+            Some(json!({
+                "id": "admin-test-track",
+                "name": "测试音乐",
+                "scene": "lobby",
+                "audio_path": "/game/assets/local-game-assets/music/admin-test.mp3",
+                "duration_ms": 60000,
+                "enabled": true,
+                "is_default": false
+            })),
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(track.expect("track")["id"], "admin-test-track");
         std::fs::remove_dir_all(directory).expect("cleanup");
     }
 }

@@ -192,6 +192,24 @@ impl AppState {
             .map_err(|_| ArchiveError::TaskFailed)?
     }
 
+    pub(crate) async fn admin_records(&self) -> Result<Vec<MatchRecordSummary>, ArchiveError> {
+        let archive = self.archive.clone();
+        tokio::task::spawn_blocking(move || archive.all_records())
+            .await
+            .map_err(|_| ArchiveError::TaskFailed)?
+    }
+
+    pub(crate) async fn admin_archived_record(
+        &self,
+        match_id: &str,
+    ) -> Result<Option<serde_json::Value>, ArchiveError> {
+        let archive = self.archive.clone();
+        let match_id = match_id.to_owned();
+        tokio::task::spawn_blocking(move || archive.admin_record(&match_id))
+            .await
+            .map_err(|_| ArchiveError::TaskFailed)?
+    }
+
     /// 归档里的一份牌谱，服务端重启之后重演就靠它。
     pub(crate) async fn archived_record(
         &self,

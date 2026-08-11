@@ -89,6 +89,11 @@ impl Application {
         Self::default()
     }
 
+    #[must_use]
+    pub fn persistence_enabled(&self) -> bool {
+        self.identity_store.is_some()
+    }
+
     pub fn connect_postgres(database_url: &str) -> Result<Self, ApplicationError> {
         let identity_store = Arc::new(PostgresIdentityStore::connect(database_url)?);
         let mut store = MemoryStore::default();
@@ -135,11 +140,26 @@ impl Application {
     }
 
     pub fn register(&self, command: RegisterUser) -> Result<(User, Session), ApplicationError> {
-        let (user, session) = self.register_with_role(command, AccountRole::Player, true)?;
+        let (user, session) = self.register_with_role(command, AccountRole::Player, true, 10)?;
         Ok((user, session.ok_or_else(internal_error)?))
     }
 
     pub fn bootstrap_administrator(&self, command: RegisterUser) -> Result<User, ApplicationError> {
+        self.bootstrap_administrator_with_minimum(command, 10)
+    }
+
+    pub fn bootstrap_development_administrator(
+        &self,
+        command: RegisterUser,
+    ) -> Result<User, ApplicationError> {
+        self.bootstrap_administrator_with_minimum(command, 8)
+    }
+
+    fn bootstrap_administrator_with_minimum(
+        &self,
+        command: RegisterUser,
+        minimum_password_bytes: usize,
+    ) -> Result<User, ApplicationError> {
         let canonical = canonical_login_name(&command.login_name)?;
         let existing = {
             let store = self.read_store()?;
@@ -150,16 +170,32 @@ impl Application {
                 .cloned()
         };
         if let Some(existing) = existing {
-            let verified = self.verify_login(&command.login_name, &command.password)?;
             if existing.role() == AccountRole::Administrator {
-                return Ok(verified);
+                validate_password_with_minimum(&command.password, minimum_password_bytes)?;
+                let password_hash = hash_password(&command.password)?;
+                if let Some(identity_store) = &self.identity_store {
+                    identity_store.update_password(existing.id(), &password_hash)?;
+                }
+                let mut store = self.write_store()?;
+                store
+                    .password_hashes
+                    .insert(existing.id().clone(), password_hash);
+                store
+                    .sessions
+                    .retain(|_, session| session.user_id() != existing.id());
+                return Ok(existing);
             }
             return Err(ApplicationError::new(
                 ErrorCode::LoginNameTaken,
                 "login name is already registered",
             ));
         }
-        let (user, _) = self.register_with_role(command, AccountRole::Administrator, false)?;
+        let (user, _) = self.register_with_role(
+            command,
+            AccountRole::Administrator,
+            false,
+            minimum_password_bytes,
+        )?;
         Ok(user)
     }
 
@@ -168,9 +204,10 @@ impl Application {
         command: RegisterUser,
         role: AccountRole,
         create_session: bool,
+        minimum_password_bytes: usize,
     ) -> Result<(User, Option<Session>), ApplicationError> {
         let login_name = canonical_login_name(&command.login_name)?;
-        validate_password(&command.password)?;
+        validate_password_with_minimum(&command.password, minimum_password_bytes)?;
         let nickname = Nickname::parse(command.nickname)?;
         let password_hash = hash_password(&command.password)?;
         let mut store = self.write_store()?;
@@ -1275,11 +1312,14 @@ fn canonical_login_name(value: &str) -> Result<String, ApplicationError> {
     Ok(value.to_ascii_lowercase())
 }
 
-fn validate_password(password: &str) -> Result<(), ApplicationError> {
-    if !(10..=MAX_PASSWORD_BYTES).contains(&password.len()) {
+fn validate_password_with_minimum(
+    password: &str,
+    minimum_password_bytes: usize,
+) -> Result<(), ApplicationError> {
+    if !(minimum_password_bytes..=MAX_PASSWORD_BYTES).contains(&password.len()) {
         return Err(ApplicationError::new(
             ErrorCode::InvalidPassword,
-            "password must contain 10 to 128 bytes",
+            format!("password must contain {minimum_password_bytes} to 128 bytes"),
         ));
     }
     Ok(())
@@ -1593,13 +1633,21 @@ mod tests {
             application
                 .bootstrap_administrator(RegisterUser {
                     login_name: "ADMINISTRATOR".to_owned(),
-                    password: "administrator-password".to_owned(),
+                    password: "rotated-admin-password".to_owned(),
                     nickname: "不会覆盖".to_owned(),
                 })
                 .expect("idempotent administrator bootstrap")
                 .id(),
             administrator.id()
         );
+        assert!(
+            application
+                .verify_login("administrator", "administrator-password")
+                .is_err()
+        );
+        application
+            .verify_login("administrator", "rotated-admin-password")
+            .expect("rotated administrator password");
         assert_eq!(player.role(), AccountRole::Player);
         assert_eq!(application.list_users().expect("users").len(), 2);
 

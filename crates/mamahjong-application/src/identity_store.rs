@@ -52,7 +52,7 @@ type StoredTableclothRow = (String, i64, String, String, bool, bool);
 type StoredMusicRow = (String, i64, String, String, String, i64, bool, bool);
 
 pub(crate) struct PostgresIdentityStore {
-    client: Mutex<Client>,
+    client: Mutex<Option<Client>>,
 }
 
 impl PostgresIdentityStore {
@@ -70,7 +70,7 @@ impl PostgresIdentityStore {
         .join()
         .map_err(|_| database_worker_failed())??;
         Ok(Self {
-            client: Mutex::new(client),
+            client: Mutex::new(Some(client)),
         })
     }
 
@@ -600,6 +600,32 @@ impl PostgresIdentityStore {
         })
     }
 
+    pub(crate) fn update_password(
+        &self,
+        user_id: &UserId,
+        password_hash: &str,
+    ) -> Result<(), ApplicationError> {
+        self.with_client(|client| {
+            let mut transaction = client.transaction().map_err(database_error)?;
+            let updated = transaction
+                .execute(
+                    "UPDATE mamahjong_users SET password_hash = $2 WHERE id = $1",
+                    &[&user_id.as_str(), &password_hash],
+                )
+                .map_err(database_error)?;
+            if updated != 1 {
+                return Err(database_inconsistent());
+            }
+            transaction
+                .execute(
+                    "DELETE FROM mamahjong_sessions WHERE user_id = $1",
+                    &[&user_id.as_str()],
+                )
+                .map_err(database_error)?;
+            transaction.commit().map_err(database_error)
+        })
+    }
+
     fn with_client<T>(
         &self,
         operation: impl FnOnce(&mut Client) -> Result<T, ApplicationError> + Send,
@@ -616,11 +642,24 @@ impl PostgresIdentityStore {
                             "identity database client lock is poisoned",
                         )
                     })?;
-                    operation(&mut client)
+                    let client = client.as_mut().ok_or_else(database_worker_failed)?;
+                    operation(client)
                 })
                 .join()
                 .map_err(|_| database_worker_failed())?
         })
+    }
+}
+
+impl Drop for PostgresIdentityStore {
+    fn drop(&mut self) {
+        let Ok(client) = self.client.get_mut() else {
+            return;
+        };
+        let Some(client) = client.take() else {
+            return;
+        };
+        let _ = thread::spawn(move || drop(client)).join();
     }
 }
 

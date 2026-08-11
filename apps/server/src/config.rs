@@ -14,6 +14,7 @@ const DEFAULT_GAME_WEB_DIR: &str = "apps/game-web/dist";
 const DATABASE_URL_ENV: &str = "MAMAHJONG_DATABASE_URL";
 const ADMIN_LOGIN_ENV: &str = "MAMAHJONG_ADMIN_LOGIN_NAME";
 const ADMIN_PASSWORD_ENV: &str = "MAMAHJONG_ADMIN_PASSWORD";
+const ADMIN_ALLOW_INSECURE_PASSWORD_ENV: &str = "MAMAHJONG_ADMIN_ALLOW_INSECURE_PASSWORD";
 const ADMIN_NICKNAME_ENV: &str = "MAMAHJONG_ADMIN_NICKNAME";
 const ADMIN_COOKIE_SECURE_ENV: &str = "MAMAHJONG_ADMIN_COOKIE_SECURE";
 
@@ -33,6 +34,7 @@ pub struct AdministratorBootstrap {
     password: String,
     nickname: String,
     cookie_secure: bool,
+    allow_insecure_password: bool,
 }
 
 impl ServerConfig {
@@ -42,6 +44,20 @@ impl ServerConfig {
         let admin_web_dir = read_optional_env(ADMIN_WEB_DIR_ENV)?;
         let game_web_dir = read_optional_env(GAME_WEB_DIR_ENV)?;
         let database_url = read_optional_env(DATABASE_URL_ENV)?;
+        let allow_insecure_admin_password =
+            match read_optional_env(ADMIN_ALLOW_INSECURE_PASSWORD_ENV)?
+                .as_deref()
+                .unwrap_or("false")
+            {
+                "true" => true,
+                "false" => false,
+                value => {
+                    return Err(ConfigError::InvalidBoolean {
+                        variable: ADMIN_ALLOW_INSECURE_PASSWORD_ENV,
+                        value: value.to_owned(),
+                    });
+                }
+            };
         let mut config = Self::from_values_with_web(
             bind_address.as_deref(),
             data_dir.as_deref(),
@@ -54,6 +70,7 @@ impl ServerConfig {
             read_optional_env(ADMIN_PASSWORD_ENV)?.as_deref(),
             read_optional_env(ADMIN_NICKNAME_ENV)?.as_deref(),
             read_optional_env(ADMIN_COOKIE_SECURE_ENV)?.as_deref(),
+            allow_insecure_admin_password,
         )?;
         Ok(config)
     }
@@ -164,6 +181,11 @@ impl AdministratorBootstrap {
     pub const fn cookie_secure(&self) -> bool {
         self.cookie_secure
     }
+
+    #[must_use]
+    pub const fn allow_insecure_password(&self) -> bool {
+        self.allow_insecure_password
+    }
 }
 
 impl Debug for ServerConfig {
@@ -188,6 +210,7 @@ impl Debug for AdministratorBootstrap {
             .field("password", &"[REDACTED]")
             .field("nickname", &self.nickname)
             .field("cookie_secure", &self.cookie_secure)
+            .field("allow_insecure_password", &self.allow_insecure_password)
             .finish()
     }
 }
@@ -239,11 +262,13 @@ fn administrator_from_values(
     password: Option<&str>,
     nickname: Option<&str>,
     cookie_secure: Option<&str>,
+    allow_insecure_password: bool,
 ) -> Result<Option<AdministratorBootstrap>, ConfigError> {
     let Some(password) = password.filter(|password| !password.is_empty()) else {
         return Ok(None);
     };
-    if !(12..=128).contains(&password.len()) {
+    let minimum_password_bytes = if allow_insecure_password { 8 } else { 12 };
+    if !(minimum_password_bytes..=128).contains(&password.len()) {
         return Err(ConfigError::InvalidAdminPassword);
     }
     let cookie_secure = match cookie_secure.unwrap_or("false") {
@@ -261,6 +286,7 @@ fn administrator_from_values(
         password: password.to_owned(),
         nickname: nickname.unwrap_or("管理员").to_owned(),
         cookie_secure,
+        allow_insecure_password,
     }))
 }
 
@@ -321,7 +347,7 @@ mod tests {
     #[test]
     fn administrator_is_disabled_without_password() {
         assert!(
-            administrator_from_values(Some("admin"), None, Some("管理员"), None)
+            administrator_from_values(Some("admin"), None, Some("管理员"), None, false)
                 .expect("configuration")
                 .is_none()
         );
@@ -334,14 +360,16 @@ mod tests {
             Some("long-admin-password"),
             Some("运营人员"),
             Some("true"),
+            false,
         )
         .expect("configuration")
         .expect("administrator");
         assert_eq!(administrator.login_name(), "operator");
         assert!(administrator.cookie_secure());
         assert!(matches!(
-            administrator_from_values(None, Some("short"), None, None),
+            administrator_from_values(None, Some("short"), None, None, false),
             Err(ConfigError::InvalidAdminPassword)
         ));
+        assert!(administrator_from_values(None, Some("abc123456"), None, None, true).is_ok());
     }
 }

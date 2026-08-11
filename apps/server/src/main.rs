@@ -30,11 +30,20 @@ async fn main() -> Result<(), AnyError> {
                     administrator.cookie_secure(),
                 )?,
             };
-            state.application().bootstrap_administrator(RegisterUser {
+            let administrator_command = RegisterUser {
                 login_name: administrator.login_name().to_owned(),
                 password: administrator.password().to_owned(),
                 nickname: administrator.nickname().to_owned(),
-            })?;
+            };
+            if administrator.allow_insecure_password() {
+                state
+                    .application()
+                    .bootstrap_development_administrator(administrator_command)?;
+            } else {
+                state
+                    .application()
+                    .bootstrap_administrator(administrator_command)?;
+            }
             state
         }
         None => match config.database_url() {
