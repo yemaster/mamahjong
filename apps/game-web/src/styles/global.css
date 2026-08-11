@@ -2186,7 +2186,8 @@ a { color: var(--pink-dark); text-decoration: none; }
 .lobby-create__setting {
   display: grid;
   min-height: 64px;
-  grid-template-columns: minmax(160px, 0.9fr) minmax(0, 1.7fr);
+  /* 控件按实际宽度占位，剩余空间留给标签；文字确实放不下时仍可正常换行。 */
+  grid-template-columns: minmax(160px, 1fr) auto;
   align-items: center;
   gap: 16px;
   border-bottom: 1px solid rgba(87, 61, 68, 0.2);
