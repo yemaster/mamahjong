@@ -84,13 +84,10 @@
 git clone https://github.com/yemaster/mamahjong.git
 cd mamahjong
 
-docker login registry.abstrax.cn
-
 cp .env.production.example .env.production
 # 编辑 .env.production，修改数据库密码
 
-docker compose --env-file .env.production \
-  -f compose.production.yaml up --detach --pull always
+docker compose --env-file .env.production up --detach --pull always
 ```
 
 访问：
@@ -102,15 +99,14 @@ http://127.0.0.1:8080/game/
 ### 关闭
 
 ```bash
-docker compose --env-file .env.production \
-  -f compose.production.yaml down
+docker compose --env-file .env.production down
 ```
 
 ### 更新
 
 ```bash
-docker compose --env-file .env.production -f compose.production.yaml pull
-docker compose --env-file .env.production -f compose.production.yaml up --detach
+docker compose --env-file .env.production pull
+docker compose --env-file .env.production up --detach
 ```
 
 ---
@@ -168,8 +164,8 @@ mamahjong/
 │   ├── mahjong-riichi/         # 日麻规则实现
 │   └── mahjong-impact/         # 冲击麻将规则实现
 ├── docs/                # 架构与设计文档
-├── compose.yaml         # Docker Compose 编排
-├── compose.production.yaml # 使用已发布镜像的生产编排
+├── scripts/             # 本地启动与生产镜像发布脚本
+├── compose.yaml         # 开发与生产共用的 Docker Compose 编排
 └── Dockerfile           # 多阶段构建
 ```
 
@@ -250,6 +246,22 @@ Infrastructure
 
 ## 本地开发
 
+### Docker 开发环境
+
+构建并启动；代码更新后重复执行即可重建并重启：
+
+```bash
+./scripts/dev.sh
+```
+
+### 构建并发布生产镜像
+
+指定新版本号发布 `linux/amd64` 和 `linux/arm64` 镜像：
+
+```bash
+./scripts/publish-images.sh 0.1.1
+```
+
 ### 后端开发
 
 ```bash
@@ -276,35 +288,19 @@ npm run typecheck # 类型检查
 npm test          # 运行测试
 ```
 
-### 管理后台开发
-
-```bash
-cd apps/admin-web
-npm install
-npm run dev
-```
-
 ### 环境变量
 
 编辑 `.env` 文件（参考 `.env.example`）：
 
 ```bash
-# 服务绑定地址（生产环境建议使用反向代理）
-MAMAHJONG_HOST=127.0.0.1
-MAMAHJONG_PORT=8080
+# Web 出口绑定地址
+MAMAHJONG_WEB_HOST=127.0.0.1
+MAMAHJONG_WEB_PORT=8080
 
 # 数据库配置
 MAMAHJONG_DATABASE_NAME=mamahjong
 MAMAHJONG_DATABASE_USER=mamahjong
 MAMAHJONG_DATABASE_PASSWORD=your-secure-password
-
-# 管理员配置（密码至少 12 字节）
-MAMAHJONG_ADMIN_LOGIN_NAME=admin
-MAMAHJONG_ADMIN_PASSWORD=your-admin-password
-MAMAHJONG_ADMIN_NICKNAME=管理员
-
-# HTTPS 部署时设为 true
-MAMAHJONG_ADMIN_COOKIE_SECURE=false
 
 # 日志级别
 RUST_LOG=info

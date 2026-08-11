@@ -43,8 +43,8 @@ cp .env.example .env
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
-| `MAMAHJONG_HOST` | `127.0.0.1` | 宿主机监听地址 |
-| `MAMAHJONG_PORT` | `8080` | 宿主机端口 |
+| `MAMAHJONG_WEB_HOST` | `127.0.0.1` | Web 出口的宿主机监听地址 |
+| `MAMAHJONG_WEB_PORT` | `8080` | Web 出口的宿主机端口 |
 | `RUST_LOG` | `info` | 日志过滤规则 |
 | `MAMAHJONG_ADMIN_LOGIN_NAME` | `admin` | 管理员账号 |
 | `MAMAHJONG_ADMIN_PASSWORD` | 空 | 管理员密码；空值关闭管理登录 |
@@ -65,7 +65,7 @@ cp .env.example .env
 `http://127.0.0.1:8080/admin/`。运行日志写入卷内 `logs/`，审计日志写入
 `audit/audit.jsonl`，牌局记录写入 `matches/`。
 
-如需让反向代理从其他主机访问，可以把 `MAMAHJONG_HOST` 改为内网地址。
+如需让反向代理从其他主机访问，可以把 `MAMAHJONG_WEB_HOST` 改为内网地址。
 不要在没有 TLS、鉴权和防火墙的情况下直接暴露公网。
 
 ## 常用命令
@@ -186,7 +186,7 @@ npm run build
 端口被占用：
 
 ```bash
-MAMAHJONG_PORT=18080 docker compose up --detach
+MAMAHJONG_WEB_PORT=18080 docker compose up --detach
 ```
 
 检查健康状态：
