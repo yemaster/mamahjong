@@ -406,7 +406,9 @@ impl ImpactRuntime {
                             held.concealed().len(),
                             (mine || revealed)
                                 .then(|| held.concealed().iter().copied().map(tile_view).collect()),
-                            mine.then(|| held.drawn().map(TileId::value)).flatten(),
+                            (mine || revealed)
+                                .then(|| held.drawn().map(TileId::value))
+                                .flatten(),
                             held.melds().iter().map(meld_view).collect(),
                             held.discards()
                                 .iter()
