@@ -29,7 +29,6 @@
 - [架构设计](#架构设计)
 - [文档](#文档)
 - [本地开发](#本地开发)
-- [生产部署](#生产部署)
 - [测试](#测试)
 - [贡献](#贡献)
 - [许可证](#许可证)
@@ -76,25 +75,43 @@
 
 ### 环境要求
 
-- Docker 和 Docker Compose
-- Node.js 20 或更高版本（开发前端时需要）
+- Docker Engine
+- Docker Compose v2
 
-### 启动服务
+### 启动
 
 ```bash
 git clone https://github.com/yemaster/mamahjong.git
 cd mamahjong
 
-# 可选：配置环境变量
-cp .env.example .env
+docker login registry.abstrax.cn
 
-# 启动数据库、后端与 Web 前端
-docker compose up --detach --build
+cp .env.production.example .env.production
+# 编辑 .env.production，修改数据库密码
+
+docker compose --env-file .env.production \
+  -f compose.production.yaml up --detach --pull always
 ```
 
-服务启动后：
-- 游戏 Web 界面：http://127.0.0.1:8080/game/
-- 管理控制台：http://127.0.0.1:8080/admin/（需在 `.env` 中设置 `MAMAHJONG_ADMIN_PASSWORD`）
+访问：
+
+```text
+http://127.0.0.1:8080/game/
+```
+
+### 关闭
+
+```bash
+docker compose --env-file .env.production \
+  -f compose.production.yaml down
+```
+
+### 更新
+
+```bash
+docker compose --env-file .env.production -f compose.production.yaml pull
+docker compose --env-file .env.production -f compose.production.yaml up --detach
+```
 
 ---
 
@@ -152,6 +169,7 @@ mamahjong/
 │   └── mahjong-impact/         # 冲击麻将规则实现
 ├── docs/                # 架构与设计文档
 ├── compose.yaml         # Docker Compose 编排
+├── compose.production.yaml # 使用已发布镜像的生产编排
 └── Dockerfile           # 多阶段构建
 ```
 
@@ -291,60 +309,6 @@ MAMAHJONG_ADMIN_COOKIE_SECURE=false
 # 日志级别
 RUST_LOG=info
 ```
-
----
-
-## 生产部署
-
-### 使用 Docker Compose
-
-```bash
-# 1. 配置环境变量
-cp .env.example .env
-vim .env  # 设置数据库密码、管理员密码等
-
-# 2. 启动服务
-docker compose up --detach --build
-
-# 3. 查看日志
-docker compose logs -f server
-
-# 4. 停止服务
-docker compose down
-
-# 5. 数据备份
-docker compose exec database pg_dump -U mamahjong mamahjong > backup.sql
-```
-
-### 反向代理配置
-
-生产环境建议使用 Nginx 或 Caddy 作为反向代理。Nginx 配置示例：
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name mahjong.example.com;
-
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        
-        # WebSocket 支持
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-部署 HTTPS 时需设置 `MAMAHJONG_ADMIN_COOKIE_SECURE=true`。
 
 ---
 

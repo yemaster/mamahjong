@@ -1,21 +1,10 @@
-FROM node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c AS admin-web-builder
-
-WORKDIR /web
-
-COPY apps/admin-web/package.json apps/admin-web/package-lock.json ./
-RUN --mount=type=cache,id=mamahjong-npm,target=/root/.npm,sharing=locked \
-    npm ci
-COPY apps/admin-web ./
-RUN npm run build
-
 FROM node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c AS game-web-builder
 
 WORKDIR /web
 
-COPY apps/game-web/package.json ./
-# no package-lock.json committed yet for game-web
+COPY apps/game-web/package.json apps/game-web/package-lock.json ./
 RUN --mount=type=cache,id=mamahjong-npm-game,target=/root/.npm,sharing=locked \
-    npm install
+    npm ci
 COPY apps/game-web ./
 RUN npm run build
 
@@ -31,12 +20,23 @@ COPY crates ./crates
 RUN --mount=type=cache,id=mamahjong-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=mamahjong-target,target=/build/target,sharing=locked \
     cargo build --locked --release --package mamahjong-server \
-    && mkdir --parents /artifacts \
-    && mkdir --parents /artifacts/data \
+    && mkdir --parents /artifacts/data /artifacts/admin /artifacts/game \
     && cp /build/target/release/mamahjong-server /artifacts/ \
     && cp /build/target/release/mamahjong-healthcheck /artifacts/
 
-FROM gcr.io/distroless/cc-debian12:nonroot@sha256:fccdbb0a547c14e23fcf4ce8ad62ca5d43b4faae8d22cd292f490fef9946c96e AS runtime
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:fccdbb0a547c14e23fcf4ce8ad62ca5d43b4faae8d22cd292f490fef9946c96e AS server-base
+
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION=dev
+
+LABEL org.opencontainers.image.title="MaMahjong Server" \
+    org.opencontainers.image.description="Self-hosted multiplayer Mahjong API and realtime server" \
+    org.opencontainers.image.source="https://github.com/yemaster/mamahjong" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.revision="${VCS_REF}" \
+    org.opencontainers.image.created="${BUILD_DATE}" \
+    org.opencontainers.image.licenses="MIT"
 
 COPY --from=builder --chown=65532:65532 \
     /artifacts/mamahjong-server \
@@ -47,11 +47,11 @@ COPY --from=builder --chown=65532:65532 \
 COPY --from=builder --chown=65532:65532 \
     /artifacts/data/ \
     /var/lib/mamahjong/
-COPY --from=admin-web-builder --chown=65532:65532 \
-    /web/dist/ \
+COPY --from=builder --chown=65532:65532 \
+    /artifacts/admin/ \
     /usr/share/mamahjong/admin/
-COPY --from=game-web-builder --chown=65532:65532 \
-    /web/dist/ \
+COPY --from=builder --chown=65532:65532 \
+    /artifacts/game/ \
     /usr/share/mamahjong/game/
 
 ENV MAMAHJONG_BIND_ADDRESS=0.0.0.0:8080 \
@@ -67,3 +67,43 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
     CMD ["/usr/local/bin/mamahjong-healthcheck"]
 
 ENTRYPOINT ["/usr/local/bin/mamahjong-server"]
+
+# Publish this target as registry.abstrax.cn/mamahjong/server.
+FROM server-base AS server
+
+FROM nginx:1.29.4-alpine3.23-slim@sha256:441b69e13e79b436f9b617910633b6b6adce314c3788c3238dcd8e03b4cb512e AS frontend-base
+
+ENV MAMAHJONG_SERVER_URL=http://server:8080 \
+    NGINX_ENVSUBST_FILTER=MAMAHJONG_
+
+COPY deployment/nginx/web.conf.template /etc/nginx/templates/default.conf.template
+
+EXPOSE 8080
+STOPSIGNAL SIGQUIT
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health || exit 1
+
+# Publish this target as registry.abstrax.cn/mamahjong/web.
+FROM frontend-base AS web
+
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION=dev
+
+LABEL org.opencontainers.image.title="MaMahjong Web" \
+    org.opencontainers.image.description="MaMahjong browser game client with configurable API proxy" \
+    org.opencontainers.image.source="https://github.com/yemaster/mamahjong" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.revision="${VCS_REF}" \
+    org.opencontainers.image.created="${BUILD_DATE}" \
+    org.opencontainers.image.licenses="MIT"
+
+COPY --from=game-web-builder /web/dist/ /usr/share/nginx/html/game/
+
+# Keep the default build target backward-compatible with compose.yaml.
+FROM server-base AS runtime
+
+COPY --from=game-web-builder --chown=65532:65532 \
+    /web/dist/ \
+    /usr/share/mamahjong/game/
