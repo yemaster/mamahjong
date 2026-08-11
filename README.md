@@ -87,28 +87,35 @@ wget -O compose.yaml \
   https://raw.githubusercontent.com/yemaster/mamahjong/main/compose.yaml
 wget -O .env.production \
   https://raw.githubusercontent.com/yemaster/mamahjong/main/.env.production.example
-# 编辑 .env.production，修改数据库密码
+# 编辑 .env.production，修改数据库密码。
+# 如需启用管理后台，同时设置至少 12 字节的 MAMAHJONG_ADMIN_PASSWORD。
 
 docker compose --env-file .env.production up --detach --pull always --no-build
+
+# 启用可选的 admin-web 时改用：
+docker compose --env-file .env.production --profile admin up --detach --pull always --no-build
 ```
 
 访问：
 
 ```text
-http://127.0.0.1:8080/game/
+游戏端：   http://127.0.0.1:8080/game/
+管理后台： http://127.0.0.1:8080/admin/（仅启用 admin profile 后可用）
 ```
+
+`admin-web` 不暴露独立宿主机端口，由主 Web 容器统一转发 `/admin/`。
 
 ### 关闭
 
 ```bash
-docker compose --env-file .env.production down
+docker compose --env-file .env.production --profile admin down
 ```
 
 ### 更新
 
 ```bash
-docker compose --env-file .env.production pull
-docker compose --env-file .env.production up --detach --no-build
+docker compose --env-file .env.production --profile admin pull
+docker compose --env-file .env.production --profile admin up --detach --no-build
 ```
 
 ---
