@@ -75,6 +75,22 @@ describe("手牌理牌", () => {
       2,
     ]);
   });
+
+  it("冲击麻将的自摸牌即使是财神也留在最右侧", () => {
+    const tiles = [
+      { id: 1, code: "7z" },
+      { id: 2, code: "3p" },
+      { id: 3, code: "1m" },
+      { id: 4, code: "3p" },
+    ];
+
+    expect(sortHandForDisplay(tiles, 4, "3p").map((tile) => tile.id)).toEqual([
+      2,
+      3,
+      1,
+      4,
+    ]);
+  });
 });
 
 describe("副露来源方向", () => {
@@ -1126,10 +1142,11 @@ describe("自摸甩牌", () => {
     const impact = {
       mesh: {
         visible: false,
+        scale: { setScalar: () => {} },
         geometry: { dispose: () => {} },
         removeFromParent: () => {},
       },
-      material: { uniforms: { uProgress: { value: -1 } }, dispose: () => {} },
+      material: { opacity: 0, dispose: () => {} },
       startedAt: 1000,
       duration: 400,
     } as unknown as TableImpact;
@@ -1139,7 +1156,8 @@ describe("自摸甩牌", () => {
     // 落地之后按进度扬起来
     expect(advanceTableImpacts([impact], 1200)).toHaveLength(1);
     expect(impact.mesh.visible).toBe(true);
-    expect(impact.material.uniforms.uProgress?.value).toBeCloseTo(0.5, 6);
+    expect(impact.material.opacity).toBeGreaterThan(0);
+    expect(impact.material.opacity).toBeLessThan(0.62);
     // 散完就不留在场景里
     expect(advanceTableImpacts([impact], 1400)).toHaveLength(0);
   });

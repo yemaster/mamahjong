@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useGameStore } from "../stores/gameStore";
 import type { MatchView, TileView } from "../types";
 import { tableRelativeSeat } from "./table";
@@ -24,9 +24,6 @@ export function MatchHud({
    */
   seatWaitHints?: Map<number, SeatWaitHint>;
 }) {
-  const clocks = useGameStore((state) => state.clocks);
-  const clockUpdatedAt = useGameStore((state) => state.clockUpdatedAt);
-  const [now, setNow] = useState(Date.now());
   const seatCount = view.players.length;
   const activeSeat = turnSeat(view);
   // 冲击麻将没有宝牌、没有本场棒与场供棒，左上角只剩一张财神指示牌和连庄次数。
@@ -35,22 +32,6 @@ export function MatchHud({
     activeSeat === view.observer_seat ||
     (view.phase.kind === "awaiting_responses" &&
       view.available_reactions.length > 0);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 100);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const activeClock = ownIsWaiting
-    ? clocks.get(view.observer_seat)
-    : undefined;
-  const visibleRemaining = useMemo(() => {
-    if (!activeClock) return null;
-    return Math.max(
-      0,
-      activeClock.remaining_ms - Math.max(0, now - clockUpdatedAt),
-    );
-  }, [activeClock, clockUpdatedAt, now]);
 
   return (
     <div className="match-hud" aria-label="对局信息">
@@ -139,17 +120,40 @@ export function MatchHud({
           </section>
         );
       })}
-      {visibleRemaining != null && (
-        <div
-          className={`match-self-clock${
-            visibleRemaining <= 5000 ? " is-urgent" : ""
-          }`}
-          role="timer"
-          aria-label="我的剩余时间"
-        >
-          {formatClock(visibleRemaining)}
-        </div>
-      )}
+      <SelfClock seat={view.observer_seat} active={ownIsWaiting} />
+    </div>
+  );
+}
+
+/** 高频倒计时独立渲染，避免秒数刷新带着整块 HUD、头像和宝牌一起重绘。 */
+function SelfClock({ seat, active }: { seat: number; active: boolean }) {
+  const clock = useGameStore((state) =>
+    active ? state.clocks.get(seat) : undefined,
+  );
+  const clockUpdatedAt = useGameStore((state) => state.clockUpdatedAt);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!clock) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [clock, clockUpdatedAt]);
+
+  if (!clock) return null;
+  const visibleRemaining = Math.max(
+    0,
+    clock.remaining_ms - Math.max(0, now - clockUpdatedAt),
+  );
+  return (
+    <div
+      className={`match-self-clock${
+        visibleRemaining <= 5000 ? " is-urgent" : ""
+      }`}
+      role="timer"
+      aria-label="我的剩余时间"
+    >
+      {formatClock(visibleRemaining)}
     </div>
   );
 }

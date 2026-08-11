@@ -74,7 +74,7 @@ export interface DiceRollAnimation {
 /** 牌砸在桌上扬起的那层灰。散完就地拆掉，不留在场景里。 */
 export interface TableImpact {
   mesh: THREE.Mesh;
-  material: THREE.ShaderMaterial;
+  material: THREE.MeshBasicMaterial;
   /** 可以排在将来：牌落地那一刻这层灰才开始扬。 */
   startedAt: number;
   duration: number;
@@ -94,6 +94,14 @@ export interface HighlightTileFace {
   base: THREE.Color;
 }
 
+/** 同一尺寸的牌共用一组不可变几何体，场景重建时只换实例和材质。 */
+export interface TileGeometrySet {
+  upper: THREE.BufferGeometry;
+  lower: THREE.BufferGeometry;
+  seam: THREE.BufferGeometry;
+  artwork: THREE.BufferGeometry | null;
+}
+
 export interface TableRuntime {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
@@ -103,6 +111,10 @@ export interface TableRuntime {
   root: THREE.Group;
   textures: Map<string, THREE.Texture>;
   tableTexture: THREE.Texture;
+  /** 砸牌扬尘共用的 Canvas 纹理，避免为短动画编译自定义 shader。 */
+  impactDustTexture: THREE.Texture;
+  tileGeometries: Map<string, TileGeometrySet>;
+  tileGeometryWidthRatio: number;
   selectable: THREE.Mesh[];
   hovered: THREE.Group | null;
   animations: TileAnimation[];

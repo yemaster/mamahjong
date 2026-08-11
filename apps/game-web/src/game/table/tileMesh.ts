@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { normalizeTileCode } from "../tileAssets";
 import { TILE_DEPTH_RATIO } from "./constants";
 import { makeDoraShine } from "./doraShine";
-import type { TableRuntime } from "./types";
+import type { TableRuntime, TileGeometrySet } from "./types";
 
 /**
  * 一张麻将牌：上下两层加一圈接缝，牌面贴图单独铺一层平面。
@@ -53,23 +53,55 @@ export function makeTile(
   const lowerLayerDepth = isBack ? faceLayerDepth : backLayerDepth;
   const upperRadius = Math.min(edgeRadius, upperLayerDepth * 0.48);
   const lowerRadius = Math.min(edgeRadius, lowerLayerDepth * 0.48);
-  const upperGeometry = new RoundedBoxGeometry(
-    width * 1.006,
-    upperLayerDepth,
-    length * 1.006,
-    5,
-    upperRadius,
-  );
+  const geometryKey = [
+    isBack ? "back" : "face",
+    length,
+    runtime.tileWidthRatio,
+  ].join(":");
+  let geometries = runtime.tileGeometries.get(geometryKey);
+  if (!geometries) {
+    const upperGeometry = new RoundedBoxGeometry(
+      width * 1.006,
+      upperLayerDepth,
+      length * 1.006,
+      5,
+      upperRadius,
+    );
+    const lowerGeometry = new RoundedBoxGeometry(
+      width,
+      lowerLayerDepth,
+      length,
+      5,
+      lowerRadius,
+    );
+    const seamGeometry = roundedSeamGeometry(
+      width * 1.006,
+      length * 1.006,
+      depth * 0.12,
+      edgeRadius,
+    );
+    const artworkGeometry = isBack
+      ? null
+      : artworkPlaneGeometry(width, length);
+    geometries = {
+      upper: upperGeometry,
+      lower: lowerGeometry,
+      seam: seamGeometry,
+      artwork: artworkGeometry,
+    };
+    markSharedTileGeometries(geometries);
+    runtime.tileGeometries.set(geometryKey, geometries);
+  }
   const upperMaterial = isBack
     ? back
     : [upperSide, upperSide, face, upperSide, upperSide, upperSide];
-  const upper = new THREE.Mesh(upperGeometry, upperMaterial);
+  const upper = new THREE.Mesh(geometries.upper, upperMaterial);
   upper.position.y = (depth - upperLayerDepth) / 2;
   upper.castShadow = false;
   upper.receiveShadow = false;
 
   const lower = new THREE.Mesh(
-    new RoundedBoxGeometry(width, lowerLayerDepth, length, 5, lowerRadius),
+    geometries.lower,
     isBack ? upperSide : back,
   );
   lower.position.y = -(depth - lowerLayerDepth) / 2;
@@ -77,22 +109,14 @@ export function makeTile(
   lower.receiveShadow = false;
 
   const seamDepth = depth * 0.12;
-  const seamWidth = width * 1.006;
-  const seamLength = length * 1.006;
-  const seamGeometry = roundedSeamGeometry(
-    seamWidth,
-    seamLength,
-    seamDepth,
-    edgeRadius,
-  );
   const layerBoundary = (lowerLayerDepth - upperLayerDepth) / 2;
   const upperSeam = new THREE.Mesh(
-    seamGeometry,
+    geometries.seam,
     isBack ? back : upperSide,
   );
   upperSeam.position.y = layerBoundary + seamDepth / 2;
   const lowerSeam = new THREE.Mesh(
-    seamGeometry.clone(),
+    geometries.seam,
     isBack ? upperSide : back,
   );
   lowerSeam.position.y = layerBoundary - seamDepth / 2;
@@ -103,14 +127,9 @@ export function makeTile(
 
   const body = new THREE.Group();
   body.add(upper, lower, upperSeam, lowerSeam);
-  if (artwork) {
-    const svgAspect = 19 / 26;
-    /* 墙牌和小牌需要放大图案比例，让宝牌指示牌更清晰可见 */
-    const artworkScale = length <= 0.56 ? 0.98 : 0.94;
-    const artworkWidth = width * artworkScale;
-    const artworkLength = artworkWidth / svgAspect;
+  if (artwork && geometries.artwork) {
     const artworkMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(artworkWidth, artworkLength),
+      geometries.artwork,
       artwork,
     );
     artworkMesh.rotation.x = -Math.PI / 2;
@@ -138,6 +157,26 @@ export function makeTile(
   group.userData.hovered = false;
   group.userData.hoverLift = 0;
   return group;
+}
+
+function artworkPlaneGeometry(
+  width: number,
+  length: number,
+): THREE.PlaneGeometry {
+  const svgAspect = 19 / 26;
+  /* 墙牌和小牌需要放大图案比例，让宝牌指示牌更清晰可见。 */
+  const artworkScale = length <= 0.56 ? 0.98 : 0.94;
+  const artworkWidth = width * artworkScale;
+  return new THREE.PlaneGeometry(artworkWidth, artworkWidth / svgAspect);
+}
+
+function markSharedTileGeometries(geometries: TileGeometrySet): void {
+  geometries.upper.userData.sharedTileGeometry = true;
+  geometries.lower.userData.sharedTileGeometry = true;
+  geometries.seam.userData.sharedTileGeometry = true;
+  if (geometries.artwork) {
+    geometries.artwork.userData.sharedTileGeometry = true;
+  }
 }
 
 /**

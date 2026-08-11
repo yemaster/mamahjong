@@ -11,6 +11,7 @@
  * - `runtime` 渲染器与那一条动画循环，`scene` 把上面这些按视图拼起来
  */
 export { GameTable } from "./GameTable";
+export type { GameTableHandle } from "./GameTable";
 export type {
   TableCameraConfig,
   TableRuntime,

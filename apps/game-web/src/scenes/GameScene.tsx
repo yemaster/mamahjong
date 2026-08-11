@@ -40,6 +40,7 @@ import {
   canLocalPlayerDiscard,
   DEFAULT_TABLECLOTH_ASSET,
   GameTable,
+  type GameTableHandle,
   OPENING_DICE_MS,
   TILE_STAND_UP_MS,
   openingDealArrival,
@@ -82,6 +83,7 @@ import { YakuReferenceModal } from "../game/YakuReference";
 import {
   automaticMatchCommand,
   loadMatchAssistSettings,
+  resetPerHandMatchAssistSettings,
   saveMatchAssistSettings,
 } from "../game/matchAssist";
 import {
@@ -173,15 +175,14 @@ export default function GameScene({ matchId }: GameSceneProps) {
       ),
     [userId],
   );
-  const {
-    matchView,
-    setMatchView,
-    updateClocks,
-    updatePresence,
-    setWsState,
-    reset,
-    wsState,
-  } = useGameStore();
+  /* 只订阅主场景真正需要的状态；时钟与在线帧不能让整页 GameScene 重绘。 */
+  const matchView = useGameStore((state) => state.matchView);
+  const wsState = useGameStore((state) => state.wsState);
+  const setMatchView = useGameStore((state) => state.setMatchView);
+  const updateClocks = useGameStore((state) => state.updateClocks);
+  const updatePresence = useGameStore((state) => state.updatePresence);
+  const setWsState = useGameStore((state) => state.setWsState);
+  const reset = useGameStore((state) => state.reset);
   const streamRef = useRef<MatchStream | null>(null);
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
@@ -220,14 +221,17 @@ export default function GameScene({ matchId }: GameSceneProps) {
   const [assistSettings, setAssistSettings] = useState(() =>
     loadMatchAssistSettings(userId),
   );
+  const assistSettingsHandKey = useRef<string | null>(null);
   const [yakuReferenceOpen, setYakuReferenceOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settlementRevealSeats, setSettlementRevealSeats] = useState<number[]>([]);
   const [settlementWinningTileSeats, setSettlementWinningTileSeats] = useState<
     number[]
   >([]);
-  /* 手上拿起的那张牌，桌上同种的明牌要跟着点亮。 */
-  const [focusedTileCode, setFocusedTileCode] = useState<string | null>(null);
+  const gameTableRef = useRef<GameTableHandle>(null);
+  const focusTableTile = useCallback((code: string | null) => {
+    gameTableRef.current?.setFocusedTileCode(code);
+  }, []);
   const [callBanners, setCallBanners] = useState<CallBannerItem[]>([]);
   const [settlementPanelVisible, setSettlementPanelVisible] = useState(false);
   const [settlementConfirmReady, setSettlementConfirmReady] = useState(false);
@@ -253,6 +257,16 @@ export default function GameScene({ matchId }: GameSceneProps) {
   useEffect(() => {
     saveMatchAssistSettings(userId, assistSettings);
   }, [assistSettings, userId]);
+
+  /* 每一局只重置一次。视图版本会不停增长，不能拿 version 当局号，否则玩家刚打开
+     的按钮会在下一帧又被关掉。断线后重新进入当前局也按一次新局处理。 */
+  useEffect(() => {
+    if (!matchView || matchView.id !== matchId) return;
+    const handKey = `${matchView.id}:${matchView.hand_index}`;
+    if (assistSettingsHandKey.current === handKey) return;
+    assistSettingsHandKey.current = handKey;
+    setAssistSettings(resetPerHandMatchAssistSettings);
+  }, [matchId, matchView?.hand_index, matchView?.id]);
 
   /* 指令被拒时把服务端给的原因摆到桌上，几秒后收走。 */
   const showNotice = useCallback((message: string) => {
@@ -1198,13 +1212,13 @@ export default function GameScene({ matchId }: GameSceneProps) {
   return (
     <div className="match-screen">
       <GameTable
+        ref={gameTableRef}
         view={matchView}
         openingPhase={openingPhase}
         dice={dice}
         onTileDiscard={onTileDiscard}
         settlementRevealSeats={settlementRevealSeats}
         settlementWinningTileSeats={settlementWinningTileSeats}
-        focusedTileCode={focusedTileCode}
         cameraConfig={tableCameraConfig}
         tableclothPath={tableclothPath}
         onRendererError={() =>
@@ -1218,7 +1232,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
           onTileDiscard={onTileDiscard}
           riichiSelecting={riichiSelecting}
           autoSort={assistSettings.autoSort}
-          onFocusedTileChange={setFocusedTileCode}
+          onFocusedTileChange={focusTableTile}
           blocked={playingKan != null}
         />
         <MatchHud view={matchView} />

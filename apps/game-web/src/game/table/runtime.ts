@@ -15,7 +15,11 @@ import {
   tableCameraLayout,
 } from "./geometry";
 import { advanceDoraShine, createDoraShineMaterial } from "./doraShine";
-import { advanceCameraShake, advanceTableImpacts } from "./impact";
+import {
+  advanceCameraShake,
+  advanceTableImpacts,
+  createImpactDustTexture,
+} from "./impact";
 import { advanceTransientTiles } from "./transient";
 import type { TableCameraConfig, TableRuntime } from "./types";
 
@@ -78,6 +82,9 @@ export async function createRuntime(
     root,
     textures,
     tableTexture,
+    impactDustTexture: createImpactDustTexture(),
+    tileGeometries: new Map(),
+    tileGeometryWidthRatio: tileWidthRatio,
     selectable: [],
     hovered: null,
     animations: [],
@@ -208,8 +215,30 @@ export async function createRuntime(
     down: onPointerDown,
   };
 
+  let lastRenderedAt = 0;
   const animate = (now: number) => {
     if (runtime.disposed || runtime.contextLost) return;
+    const hoverMoving = runtime.selectable.some((group) => {
+      const tileGroup = group.userData.tileGroup as THREE.Group | undefined;
+      if (!tileGroup) return false;
+      const target = tileGroup.userData.hovered ? 0.34 : 0;
+      return Math.abs((tileGroup.userData.hoverLift ?? 0) - target) > 0.002;
+    });
+    const fullRate =
+      hoverMoving ||
+      runtime.animations.length > 0 ||
+      runtime.tilts.length > 0 ||
+      runtime.transients.length > 0 ||
+      runtime.impacts.length > 0 ||
+      runtime.shake != null ||
+      runtime.diceRolls.length > 0;
+    /* 主要动作维持 60 FPS；空闲时的扫光和标记动画用 30 FPS，显著减少常驻 GPU 占用。 */
+    const frameInterval = 1000 / (fullRate ? 60 : 30);
+    if (lastRenderedAt > 0 && now - lastRenderedAt < frameInterval - 1) {
+      runtime.frame = requestAnimationFrame(animate);
+      return;
+    }
+    lastRenderedAt = now;
     for (const group of runtime.selectable) {
       const tileGroup = group.userData.tileGroup as THREE.Group | undefined;
       if (!tileGroup) continue;
@@ -411,27 +440,38 @@ async function loadTableTexture(
   return texture;
 }
 
-/** 清掉一整棵子树上自己造的几何体和材质，共用的贴图和材质留着。 */
+/** 清掉一整棵子树上自己造的资源；同树复用的对象只释放一次。 */
 export function disposeGroup(group: THREE.Group): void {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  const textures = new Set<THREE.Texture>();
   group.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
-    object.geometry.dispose();
-    const materials = Array.isArray(object.material)
+    if (!object.geometry.userData.sharedTileGeometry) {
+      geometries.add(object.geometry);
+    }
+    const meshMaterials = Array.isArray(object.material)
       ? object.material
       : [object.material];
-    for (const material of materials) {
-      /* 整张桌子共用的那份（宝牌扫光）活得比场景久，不跟着这次重建走。 */
-      if (material.userData.shared) continue;
-      if (
-        material.map &&
-        !material.map.userData.sharedTileTexture &&
-        !material.map.userData.sharedTableTexture
-      ) {
-        material.map.dispose();
-      }
-      material.dispose();
+    for (const material of meshMaterials) {
+      if (!material.userData.shared) materials.add(material);
     }
   });
+  for (const geometry of geometries) geometry.dispose();
+  for (const material of materials) {
+    const map = (material as THREE.Material & { map?: THREE.Texture | null })
+      .map;
+    if (
+      map &&
+      !map.userData.sharedTileTexture &&
+      !map.userData.sharedTableTexture &&
+      !map.userData.sharedImpactTexture
+    ) {
+      textures.add(map);
+    }
+    material.dispose();
+  }
+  for (const texture of textures) texture.dispose();
 }
 
 export function destroyRuntime(runtime: TableRuntime): void {
@@ -446,9 +486,11 @@ export function destroyRuntime(runtime: TableRuntime): void {
     canvas.removeEventListener("pointerdown", events.down);
   }
   disposeGroup(runtime.root);
+  disposeTileGeometries(runtime);
   runtime.doraShine.dispose();
   for (const texture of runtime.textures.values()) texture.dispose();
   runtime.tableTexture.dispose();
+  runtime.impactDustTexture.dispose();
   runtime.renderer.dispose();
   /*
    * `dispose` 只放掉 three 自己那些 GPU 资源，上下文本身要等垃圾回收才还。牌桌
@@ -457,4 +499,15 @@ export function destroyRuntime(runtime: TableRuntime): void {
    */
   runtime.renderer.forceContextLoss();
   canvas.remove();
+}
+
+/** 牌宽设置变化或运行时销毁后，释放不再被场景引用的共用牌几何体。 */
+export function disposeTileGeometries(runtime: TableRuntime): void {
+  for (const geometrySet of runtime.tileGeometries.values()) {
+    geometrySet.upper.dispose();
+    geometrySet.lower.dispose();
+    geometrySet.seam.dispose();
+    geometrySet.artwork?.dispose();
+  }
+  runtime.tileGeometries.clear();
 }

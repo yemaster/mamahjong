@@ -1,9 +1,13 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LogOut } from "lucide-react";
 import { gameApi } from "../api";
 import { useSceneReady } from "../components/SceneTransition";
-import { DEFAULT_TABLECLOTH_ASSET, GameTable } from "../game/table";
+import {
+  DEFAULT_TABLECLOTH_ASSET,
+  GameTable,
+  type GameTableHandle,
+} from "../game/table";
 import { MatchHud } from "../game/MatchHud";
 import { MatchStage } from "../game/MatchStage";
 import { PlayerHand2D } from "../game/PlayerHand2D";
@@ -57,8 +61,10 @@ export default function TableSettingsScene() {
     loadTablePerspectiveSettings(userId),
   );
   const [collapsed, setCollapsed] = useState(false);
-  /* 拿起一张手牌时桌上同种的明牌跟着点亮，和正式对局一样。 */
-  const [focusedTileCode, setFocusedTileCode] = useState<string | null>(null);
+  const gameTableRef = useRef<GameTableHandle>(null);
+  const focusTableTile = useCallback((code: string | null) => {
+    gameTableRef.current?.setFocusedTileCode(code);
+  }, []);
   useSceneReady(true);
 
   const cameraConfig = useMemo(
@@ -78,11 +84,11 @@ export default function TableSettingsScene() {
   return (
     <div className="match-screen match-preview">
       <GameTable
+        ref={gameTableRef}
         view={tablePreviewView}
         openingPhase="play"
         dice={PREVIEW_DICE}
         onTileDiscard={noop}
-        focusedTileCode={focusedTileCode}
         cameraConfig={cameraConfig}
         tableclothPath={tableclothPath}
       />
@@ -104,7 +110,7 @@ export default function TableSettingsScene() {
           openingPhase="play"
           onTileDiscard={noop}
           riichiSelecting={false}
-          onFocusedTileChange={setFocusedTileCode}
+          onFocusedTileChange={focusTableTile}
         />
         <MatchHud view={tablePreviewView} />
       </MatchStage>

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import type { MatchView } from "../../types";
 import type { OpeningPhase } from "../OpeningSequence";
 import {
@@ -11,6 +11,10 @@ import { renderTable } from "./scene";
 import { setTableDangerTiles, setTableTileHighlight } from "./tileHighlight";
 import type { TableCameraConfig, TableRuntime } from "./types";
 
+export interface GameTableHandle {
+  setFocusedTileCode: (code: string | null) => void;
+}
+
 interface GameTableProps {
   view: MatchView;
   openingPhase: OpeningPhase;
@@ -20,8 +24,6 @@ interface GameTableProps {
   /** Seats whose 自摸 tile is flipped up ahead of the rest of the hand. */
   settlementWinningTileSeats?: number[];
   onRendererError?: () => void;
-  /** 主视角手上拿起的那张牌，桌上同种的明牌会跟着点亮。 */
-  focusedTileCode?: string | null;
   /** 牌谱重演的铳牌提示：这些牌种在桌上染红。对局中不传。 */
   dangerTileCodes?: string[];
   /** 牌谱重演的摊牌开关：为真时别人的暗手正面朝上，不看结算状态。 */
@@ -42,24 +44,26 @@ interface GameTableProps {
  * React 只负责挂载画布和把最新的视图交给 {@link renderTable}，桌面本身是一棵
  * 命令式的 three.js 场景树，活在 {@link TableRuntime} 上。
  */
-export function GameTable({
-  view,
-  openingPhase,
-  dice,
-  onTileDiscard,
-  settlementRevealSeats = [],
-  settlementWinningTileSeats = [],
-  onRendererError,
-  focusedTileCode = null,
-  dangerTileCodes,
-  revealAllHands = false,
-  dimTsumogiri = false,
-  instantDraw = false,
-  cameraConfig,
-  tileScale = DEFAULT_TILE_SCALE,
-  tileWidthRatio = TILE_WIDTH_RATIO,
-  tableclothPath = DEFAULT_TABLECLOTH_ASSET,
-}: GameTableProps) {
+export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function GameTable(
+  {
+    view,
+    openingPhase,
+    dice,
+    onTileDiscard,
+    settlementRevealSeats = [],
+    settlementWinningTileSeats = [],
+    onRendererError,
+    dangerTileCodes,
+    revealAllHands = false,
+    dimTsumogiri = false,
+    instantDraw = false,
+    cameraConfig,
+    tileScale = DEFAULT_TILE_SCALE,
+    tileWidthRatio = TILE_WIDTH_RATIO,
+    tableclothPath = DEFAULT_TABLECLOTH_ASSET,
+  }: GameTableProps,
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<TableRuntime | null>(null);
   const discardRef = useRef(onTileDiscard);
@@ -67,7 +71,7 @@ export function GameTable({
   const cameraConfigRef = useRef(cameraConfig);
   const tileScaleRef = useRef(tileScale);
   const tileWidthRatioRef = useRef(tileWidthRatio);
-  const focusedTileCodeRef = useRef(focusedTileCode);
+  const focusedTileCodeRef = useRef<string | null>(null);
   const dangerTileCodesRef = useRef(dangerTileCodes);
   const revealAllHandsRef = useRef(revealAllHands);
   const dimTsumogiriRef = useRef(dimTsumogiri);
@@ -85,7 +89,6 @@ export function GameTable({
   cameraConfigRef.current = cameraConfig;
   tileScaleRef.current = tileScale;
   tileWidthRatioRef.current = tileWidthRatio;
-  focusedTileCodeRef.current = focusedTileCode;
   dangerTileCodesRef.current = dangerTileCodes;
   revealAllHandsRef.current = revealAllHands;
   dimTsumogiriRef.current = dimTsumogiri;
@@ -97,6 +100,18 @@ export function GameTable({
     settlementRevealSeats,
     settlementWinningTileSeats,
   };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      setFocusedTileCode(code) {
+        focusedTileCodeRef.current = code;
+        const runtime = runtimeRef.current;
+        if (runtime) setTableTileHighlight(runtime, code);
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     const container = containerRef.current;
@@ -155,14 +170,7 @@ export function GameTable({
     };
   }, [tableclothPath, view.id]);
 
-  /* 点亮桌上的同种牌不用重建场景，直接改材质颜色就行。 */
-  useEffect(() => {
-    const runtime = runtimeRef.current;
-    if (!runtime) return;
-    setTableTileHighlight(runtime, focusedTileCode);
-  }, [focusedTileCode]);
-
-  /* 铳牌的红也只是改材质颜色，和点亮同种牌走同一条路，不重建场景。 */
+  /* 铳牌的红只改材质颜色，不重建场景。 */
   useEffect(() => {
     const runtime = runtimeRef.current;
     if (!runtime) return;
@@ -223,4 +231,4 @@ export function GameTable({
       aria-label="三维麻将牌桌"
     />
   );
-}
+});

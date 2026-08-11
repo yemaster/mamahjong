@@ -15,6 +15,24 @@ export const DEFAULT_MATCH_ASSIST_SETTINGS: MatchAssistSettings = {
   autoTsumogiri: false,
 };
 
+/**
+ * 新一局开始时，可能替玩家直接发送指令的三项必须重新关闭。自动理牌只改变本地
+ * 展示顺序，不会替玩家操作，所以保留玩家上一局的选择。
+ */
+export function resetPerHandMatchAssistSettings(
+  settings: MatchAssistSettings,
+): MatchAssistSettings {
+  if (!settings.autoWin && !settings.skipCalls && !settings.autoTsumogiri) {
+    return settings;
+  }
+  return {
+    ...settings,
+    autoWin: false,
+    skipCalls: false,
+    autoTsumogiri: false,
+  };
+}
+
 export interface AutomaticMatchCommand {
   name: GameCommandName;
   payload?: unknown;
@@ -121,4 +139,3 @@ export function saveMatchAssistSettings(
 function storageKey(userId: string | undefined): string {
   return `mamahjong:match-assist:${userId ?? "local"}`;
 }
-

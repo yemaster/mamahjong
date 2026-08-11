@@ -35,9 +35,7 @@ interface PlayerHand2DProps {
    * 摸到的牌直接摆在手上，不给牌山飞过来那一段留空。牌谱重演专用，对局中不传。
    */
   instantDraw?: boolean;
-  /**
-   * 手上拿起的那张牌换了。桌上摊开的同种牌要跟着点亮，找牌就不用来回数了。
-   */
+  /** 手牌焦点改变时，只命令三维牌桌更新同种牌材质，不触发场景 React 重绘。 */
   onFocusedTileChange?: (code: string | null) => void;
   /** 有浮层正在播（例如冲击麻将的杠点），播完之前手牌一律点不动。 */
   blocked?: boolean;
@@ -319,7 +317,7 @@ export function PlayerHand2D({
     [],
   );
 
-  /* 手牌一上浮就通知外面，桌上同种的明牌跟着点亮；手牌收起来就熄掉。 */
+  /* 直接命令 Three.js 改材质；父场景不存 hover 状态，避免整排手牌跟着重绘。 */
   useEffect(() => {
     onFocusedTileChange?.(focusedTileCode);
   }, [focusedTileCode, onFocusedTileChange]);

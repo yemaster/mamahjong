@@ -111,6 +111,10 @@ export function addSelfDraw(
   const endRotation = handQuaternion(0, true);
 
   const group = makeTile(runtime, tiles[index]!.code, TILE_LENGTH);
+  const facePlate = group.userData.facePlateMaterial as
+    | THREE.MeshBasicMaterial
+    | undefined;
+  facePlate?.color.set(0xefefef);
   if (
     isDoraTile(tiles[index]!.code, view.dora_indicators ?? []) ||
     isJokerTile(tiles[index]!.code, view.joker_code)

@@ -4,6 +4,9 @@ import type { MatchView } from "../../types";
 import { tableRelativeSeat } from "./geometry";
 import type { TableRuntime } from "./types";
 
+const CONSOLE_TEXTURE_SIZE = 512;
+const CONSOLE_DESIGN_SIZE = 1024;
+
 /** 桌心那块显示场风、余牌和各家点数的面板。 */
 export function addCenterConsole(runtime: TableRuntime, view: MatchView): void {
   const texture = centerConsoleTexture(
@@ -36,11 +39,15 @@ function centerConsoleTexture(
   showDifferences: boolean,
 ): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
-  canvas.width = 1024;
-  canvas.height = 1024;
+  canvas.width = CONSOLE_TEXTURE_SIZE;
+  canvas.height = CONSOLE_TEXTURE_SIZE;
   const context = canvas.getContext("2d")!;
+  context.scale(
+    CONSOLE_TEXTURE_SIZE / CONSOLE_DESIGN_SIZE,
+    CONSOLE_TEXTURE_SIZE / CONSOLE_DESIGN_SIZE,
+  );
   context.fillStyle = "#24272c";
-  context.fillRect(0, 0, 1024, 1024);
+  context.fillRect(0, 0, CONSOLE_DESIGN_SIZE, CONSOLE_DESIGN_SIZE);
 
   octagon(context, 34, "#666a70");
   octagon(context, 78, "#34373d");

@@ -3,12 +3,29 @@ import { tablePreviewView } from "./tablePreviewData";
 import {
   automaticMatchCommand,
   DEFAULT_MATCH_ASSIST_SETTINGS,
+  resetPerHandMatchAssistSettings,
 } from "./matchAssist";
 
 describe("牌局快捷操作", () => {
   it("默认只开启自动理牌", () => {
     expect(DEFAULT_MATCH_ASSIST_SETTINGS).toEqual({
       autoSort: true,
+      autoWin: false,
+      skipCalls: false,
+      autoTsumogiri: false,
+    });
+  });
+
+  it("新一局关闭和鸣切，但保留理牌选择", () => {
+    expect(
+      resetPerHandMatchAssistSettings({
+        autoSort: false,
+        autoWin: true,
+        skipCalls: true,
+        autoTsumogiri: true,
+      }),
+    ).toEqual({
+      autoSort: false,
       autoWin: false,
       skipCalls: false,
       autoTsumogiri: false,

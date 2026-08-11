@@ -20,55 +20,49 @@ export const IMPACT_SHAKE_MS = 240;
 /** 镜头颤的幅度，单位是场景里的世界坐标。 */
 export const IMPACT_SHAKE_AMPLITUDE = 0.17;
 
-const VERTEX_SHADER = `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
+/**
+ * 扬尘只需要一张很小的透明纹理。用 Canvas 预生成后交给 Three 的标准材质，既
+ * 避免不同 GPU 驱动编译自定义片元 shader 的差异，也能让多次砸牌共用一份贴图。
+ */
+export function createImpactDustTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 128;
+  canvas.height = 128;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("无法创建砸牌扬尘纹理");
+  context.translate(64, 64);
 
-const FRAGMENT_SHADER = `
-uniform float uProgress;
-varying vec2 vUv;
-void main() {
-  vec2 offset = vUv - vec2(0.5);
-  /* 以落点为心的半径，1.0 正好是这块面片的内切圆。 */
-  float r = length(offset) * 2.0;
-  if (r > 1.0) discard;
-  float angle = atan(offset.y, offset.x);
-  /* 尘头被啃得参差不齐，正圆一看就是特效。 */
-  float wobble =
-    0.80 +
-    0.11 * sin(angle * 5.0 + 1.7) +
-    0.06 * sin(angle * 9.0 - 0.6) +
-    0.04 * sin(angle * 14.0 + 2.9);
-  /* 一开始冲得急，很快就没劲了。 */
-  float spread = 1.0 - pow(1.0 - uProgress, 3.0);
-  float front = spread * wobble;
-  /* 尘头之内才有灰，外面干净。 */
-  float body = 1.0 - smoothstep(front - 0.13, front, r);
-  /* 中心先散掉，浓的部分跟着尘头往外走。 */
-  float hollow = smoothstep(front * 0.25, front * 0.92, r);
-  /* 一圈里有浓有淡，不是均匀一片。 */
-  float patch =
-    0.52 + 0.48 * sin(angle * 7.0 + 0.9) * sin(angle * 3.0 - 2.1);
-  float dust = body * mix(0.28, 1.0, hollow) * mix(0.45, 1.0, patch);
-  /* 落点底下被砸实的那一小片暗影，比灰散得还快。 */
-  float contact =
-    (1.0 - smoothstep(0.0, 0.3, r)) * pow(1.0 - min(uProgress * 2.4, 1.0), 2.0);
-  float dustAlpha = dust * 0.3 * pow(1.0 - uProgress, 1.4);
-  float shadeAlpha = contact * 0.36;
-  float alpha = dustAlpha + shadeAlpha;
-  if (alpha <= 0.001) discard;
-  /* 两层各自的颜色按各自的浓度混，暗影压在灰底下。 */
-  vec3 color =
-    (vec3(0.84, 0.82, 0.75) * dustAlpha + vec3(0.02, 0.05, 0.03) * shadeAlpha) /
-    alpha;
-  gl_FragColor = vec4(color, alpha);
-  #include <colorspace_fragment>
+  const contact = context.createRadialGradient(0, 0, 0, 0, 0, 27);
+  contact.addColorStop(0, "rgba(4, 13, 8, 0.58)");
+  contact.addColorStop(0.42, "rgba(32, 40, 31, 0.28)");
+  contact.addColorStop(1, "rgba(32, 40, 31, 0)");
+  context.fillStyle = contact;
+  context.fillRect(-64, -64, 128, 128);
+
+  /* 确定性的大小与距离起伏，边缘保持参差，不使用随机数造成每次观感不同。 */
+  for (let index = 0; index < 48; index += 1) {
+    const angle = (index / 48) * Math.PI * 2;
+    const distance = 35 + Math.sin(index * 2.17) * 7;
+    const radius = 7 + (Math.sin(index * 1.31 + 0.8) + 1) * 2.5;
+    const alpha = 0.12 + (Math.sin(index * 0.83) + 1) * 0.045;
+    context.beginPath();
+    context.fillStyle = `rgba(214, 209, 191, ${alpha})`;
+    context.arc(
+      Math.cos(angle) * distance,
+      Math.sin(angle) * distance,
+      radius,
+      0,
+      Math.PI * 2,
+    );
+    context.fill();
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.name = "table-impact-dust-texture";
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.userData.sharedImpactTexture = true;
+  return texture;
 }
-`;
 
 /**
  * 镜头被砸得偏出去多少，横竖各一份，`-1` 到 `1` 之间，按幅度放大。
@@ -100,11 +94,11 @@ export function spawnTableImpact(
   radius: number,
   startedAt: number,
 ): void {
-  const material = new THREE.ShaderMaterial({
-    uniforms: { uProgress: { value: 0 } },
-    vertexShader: VERTEX_SHADER,
-    fragmentShader: FRAGMENT_SHADER,
+  const material = new THREE.MeshBasicMaterial({
+    name: "table-impact-dust",
+    map: runtime.impactDustTexture,
     transparent: true,
+    opacity: 0,
     depthWrite: false,
     toneMapped: false,
   });
@@ -117,6 +111,7 @@ export function spawnTableImpact(
   /* 压在桌布之上、牌之下，灰是从牌底下扬出来的。 */
   mesh.renderOrder = 1;
   mesh.visible = false;
+  mesh.scale.setScalar(0.18);
   runtime.root.add(mesh);
   runtime.impacts.push({
     mesh,
@@ -152,8 +147,9 @@ export function advanceTableImpacts(
       return false;
     }
     impact.mesh.visible = true;
-    const uniform = impact.material.uniforms.uProgress;
-    if (uniform) uniform.value = progress;
+    const spread = 1 - Math.pow(1 - progress, 3);
+    impact.mesh.scale.setScalar(0.18 + spread * 0.82);
+    impact.material.opacity = 0.62 * Math.pow(1 - progress, 1.4);
     return true;
   });
 }

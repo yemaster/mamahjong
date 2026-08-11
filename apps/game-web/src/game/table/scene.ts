@@ -7,7 +7,7 @@ import { addHand } from "./hands";
 import { countCompletedKans, playerIsHoldingDrawnTile } from "./handView";
 import { addMelds } from "./melds";
 import { tableRelativeSeat } from "./geometry";
-import { disposeGroup } from "./runtime";
+import { disposeGroup, disposeTileGeometries } from "./runtime";
 import { addSelfDraw } from "./selfMotion";
 import { addTableSurface } from "./tableSurface";
 import { applyTableTileHighlight } from "./tileHighlight";
@@ -116,6 +116,10 @@ export function renderTable(
   runtime.renderedOpeningPhase = openingPhase;
   disposeGroup(runtime.root);
   runtime.root.clear();
+  if (runtime.tileGeometryWidthRatio !== runtime.tileWidthRatio) {
+    disposeTileGeometries(runtime);
+    runtime.tileGeometryWidthRatio = runtime.tileWidthRatio;
+  }
   runtime.selectable = [];
   runtime.hovered = null;
   runtime.animations = [];

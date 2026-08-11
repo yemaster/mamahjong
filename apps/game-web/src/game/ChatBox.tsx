@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -19,6 +20,40 @@ interface ChatBoxProps {
 }
 
 const COOLDOWN_MS = 8_000;
+const EMOJI_POPOVER_GAP = 8;
+
+interface StageRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/** 把表情浮层贴在输入框右侧，并在舞台四边内优先向上、空间不足时向下展开。 */
+export function chatPopoverPlacement(
+  anchor: StageRect,
+  popover: Pick<StageRect, "width" | "height">,
+  stage: Pick<StageRect, "width" | "height">,
+): { left: number; top: number } {
+  const left = clamp(
+    anchor.left + anchor.width - popover.width,
+    0,
+    Math.max(0, stage.width - popover.width),
+  );
+  const above = anchor.top - EMOJI_POPOVER_GAP - popover.height;
+  const below = anchor.top + anchor.height + EMOJI_POPOVER_GAP;
+  const top =
+    above >= 0
+      ? above
+      : below + popover.height <= stage.height
+        ? below
+        : clamp(
+            above,
+            0,
+            Math.max(0, stage.height - popover.height),
+          );
+  return { left, top };
+}
 
 export function ChatBox({
   observerSeat,
@@ -45,8 +80,15 @@ export function ChatBox({
   const popoverRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [cooldownLeft, setCooldownLeft] = useState(0);
-  /* 表情框超出屏幕时翻转到下方 */
-  const [popoverFlip, setPopoverFlip] = useState(false);
+  const [popoverPosition, setPopoverPosition] = useState<{
+    left: number;
+    top: number;
+  } | null>(null);
+
+  /* 获取当前角色的表情列表 */
+  const emotes = playerCharacterId
+    ? charactersById.get(playerCharacterId)?.emotes ?? []
+    : [];
 
   /* 冷却倒计时 */
   useEffect(() => {
@@ -82,27 +124,45 @@ export function ChatBox({
     [cooldownLeft, send, observerSeat],
   );
 
-  /* 展开表情框时检查是否超出屏幕上沿 */
   const toggleEmoji = useCallback(() => {
-    setEmojiOpen((v) => {
-      if (v) return false;
-      /* 用 requestAnimationFrame 等 popover ref 挂上再量 */
-      requestAnimationFrame(() => {
-        const popover = popoverRef.current;
-        if (!popover) return;
-        const rect = popover.getBoundingClientRect();
-        const stageTop =
-          popover.closest<HTMLElement>(".fixed-dom-stage__content")
-            ?.getBoundingClientRect().top ?? 0;
-        if (rect.top < stageTop) {
-          setPopoverFlip(true);
-        } else {
-          setPopoverFlip(false);
-        }
-      });
-      return true;
-    });
+    setEmojiOpen((open) => !open);
   }, []);
+
+  /* 浮层脱离聊天框布局；每次打开、拖动或缩放后都重新夹在舞台边界内。 */
+  useLayoutEffect(() => {
+    if (!emojiOpen) {
+      setPopoverPosition(null);
+      return;
+    }
+    const place = () => {
+      const box = boxRef.current;
+      const popover = popoverRef.current;
+      const stage = box?.offsetParent as HTMLElement | null;
+      if (!box || !popover || !stage) return;
+      const placed = chatPopoverPlacement(
+        {
+          left: box.offsetLeft,
+          top: box.offsetTop,
+          width: box.offsetWidth,
+          height: box.offsetHeight,
+        },
+        { width: popover.offsetWidth, height: popover.offsetHeight },
+        { width: stage.offsetWidth, height: stage.offsetHeight },
+      );
+      const next = {
+        left: placed.left - box.offsetLeft,
+        top: placed.top - box.offsetTop,
+      };
+      setPopoverPosition((current) =>
+        current?.left === next.left && current.top === next.top
+          ? current
+          : next,
+      );
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [emojiOpen, emotes.length, pos]);
 
   /* 拖动 */
   const onPointerDown = useCallback(
@@ -163,11 +223,6 @@ export function ChatBox({
     }
   }, [collapsed]);
 
-  /* 获取当前角色的表情列表 */
-  const emotes = playerCharacterId
-    ? charactersById.get(playerCharacterId)?.emotes ?? []
-    : [];
-
   const style: React.CSSProperties = pos
     ? { left: `${pos.x}px`, top: `${pos.y}px`, right: "auto", bottom: "auto" }
     : {};
@@ -178,11 +233,21 @@ export function ChatBox({
       className={`match-chat-box${collapsed ? " is-collapsed" : ""}`}
       style={style}
     >
-      {/* 表情选择框 — 在输入框上方显示 */}
+      {/* 表情选择框是独立浮层，不参与输入框布局。 */}
       {emojiOpen && emotes.length > 0 && (
         <div
           ref={popoverRef}
-          className={`match-chat-emoji-popover${popoverFlip ? " is-flipped" : ""}`}
+          className="match-chat-emoji-popover"
+          style={
+            popoverPosition
+              ? {
+                  left: `${popoverPosition.left}px`,
+                  top: `${popoverPosition.top}px`,
+                  right: "auto",
+                  bottom: "auto",
+                }
+              : { visibility: "hidden" }
+          }
         >
           <div className="match-chat-emoji-grid">
             {emotes.map((emote) => (
