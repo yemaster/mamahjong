@@ -315,7 +315,7 @@ RUST_LOG=info
 cargo test --workspace
 
 # 端到端机器人测试
-./run-bots.sh
+./scripts/run-bots.sh <房间号>
 
 # 前端测试
 cd apps/game-web && npm test

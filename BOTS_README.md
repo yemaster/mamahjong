@@ -2,17 +2,17 @@
 
 ## 快速启动三个机器人
 
-使用 `run-bots.sh` 脚本可以一次性启动三个测试机器人：
+使用 `scripts/run-bots.sh` 脚本可以一次性启动三个测试机器人：
 
 ```bash
-./run-bots.sh <房间号>
+./scripts/run-bots.sh <房间号>
 ```
 
 ### 示例
 
 ```bash
 # 启动三个机器人加入房间 ROOM123
-./run-bots.sh ROOM123
+./scripts/run-bots.sh ROOM123
 ```
 
 ### 机器人账号
@@ -26,7 +26,7 @@
 
 ```bash
 # 停止所有运行中的机器人
-./stop-bots.sh
+./scripts/stop-bots.sh
 
 # 或者直接按 Ctrl+C
 ```
@@ -43,7 +43,7 @@
 如果需要连接其他服务器，可以设置环境变量：
 
 ```bash
-MAMAHJONG_SERVER_URL=http://your-server:8080 ./run-bots.sh ROOM123
+MAMAHJONG_SERVER_URL=http://your-server:8080 ./scripts/run-bots.sh ROOM123
 ```
 
 ### 注意事项

@@ -1,9 +1,14 @@
 #!/bin/bash
 
 # 三机器人一键启动脚本
-# 用法: ./run-bots.sh <房间号>
+# 用法: ./scripts/run-bots.sh <房间号>
 
 set -e
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname -- "$SCRIPT_DIR")"
+
+cd "$PROJECT_ROOT"
 
 # 颜色定义
 RED='\033[0;31m'
@@ -107,7 +112,7 @@ echo ""
 echo -e "${YELLOW}提示:${NC}"
 echo -e "  - 日志保存在 logs/ 目录"
 echo -e "  - 使用 Ctrl+C 停止所有机器人"
-echo -e "  - 或运行: ${BLUE}./stop-bots.sh${NC}"
+echo -e "  - 或运行: ${BLUE}./scripts/stop-bots.sh${NC}"
 echo ""
 
 # 等待所有后台进程

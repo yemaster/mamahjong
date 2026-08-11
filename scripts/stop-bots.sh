@@ -2,6 +2,11 @@
 
 # 停止所有机器人的脚本
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname -- "$SCRIPT_DIR")"
+
+cd "$PROJECT_ROOT"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
