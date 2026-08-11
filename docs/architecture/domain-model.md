@@ -135,7 +135,7 @@ wuhan/classic
 {
   "schema_version": 1,
   "rule_set_id": "riichi/yonma",
-  "engine_version": "0.1.0",
+  "engine_version": "0.2.0",
   "preset": {
     "id": "m-league",
     "revision": 1

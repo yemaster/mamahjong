@@ -929,14 +929,14 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "mahjong-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "uuid",
 ]
 
 [[package]]
 name = "mahjong-impact"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "getrandom 0.3.4",
  "mahjong-core",
@@ -948,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "mahjong-riichi"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "getrandom 0.3.4",
  "mahjong-core",
@@ -960,7 +960,7 @@ dependencies = [
 
 [[package]]
 name = "mamahjong-application"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "getrandom 0.3.4",
@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "mamahjong-bot"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "colored",
  "reqwest",
@@ -986,7 +986,7 @@ dependencies = [
 
 [[package]]
 name = "mamahjong-console"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "crossterm",
  "futures-util",
@@ -1001,7 +1001,7 @@ dependencies = [
 
 [[package]]
 name = "mamahjong-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "futures-util",
