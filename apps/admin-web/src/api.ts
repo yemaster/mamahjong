@@ -9,9 +9,16 @@ import type {
   RoomList,
   SessionBootstrap,
   UserList,
+  AdminUser,
   AdminTablecloth,
   TableclothInput,
   TableclothList,
+  DatabaseInfo,
+  MatchList,
+  MatchRecordDetail,
+  AdminMusic,
+  MusicInput,
+  MusicList,
 } from "./types";
 
 export class ApiError extends Error {
@@ -77,6 +84,12 @@ export const adminApi = {
   identity: () => request<AdminIdentity>("/me"),
   overview: () => request<Overview>("/overview"),
   users: () => request<UserList>("/users"),
+  updateUser: (userId: string, nickname: string, csrfToken: string) =>
+    request<AdminUser>(
+      `/users/${encodeURIComponent(userId)}`,
+      { method: "PUT", body: JSON.stringify({ nickname }) },
+      csrfToken,
+    ),
   updateUserStatus: (
     userId: string,
     status: AccountStatus,
@@ -88,6 +101,9 @@ export const adminApi = {
       csrfToken,
     ),
   rooms: () => request<RoomList>("/rooms"),
+  matches: () => request<MatchList>("/matches"),
+  matchDetail: (matchId: string) =>
+    request<MatchRecordDetail>(`/matches/${encodeURIComponent(matchId)}`),
   closeRoom: (roomId: string, csrfToken: string) =>
     request<void>(
       `/rooms/${encodeURIComponent(roomId)}/close`,
@@ -133,4 +149,24 @@ export const adminApi = {
       { method: "DELETE" },
       csrfToken,
     ),
+  music: () => request<MusicList>("/music"),
+  createMusic: (music: MusicInput, csrfToken: string) =>
+    request<AdminMusic>(
+      "/music",
+      { method: "POST", body: JSON.stringify(music) },
+      csrfToken,
+    ),
+  updateMusic: (music: MusicInput, csrfToken: string) =>
+    request<AdminMusic>(
+      `/music/${encodeURIComponent(music.id)}`,
+      { method: "PUT", body: JSON.stringify(music) },
+      csrfToken,
+    ),
+  deleteMusic: (musicId: string, csrfToken: string) =>
+    request<void>(
+      `/music/${encodeURIComponent(musicId)}`,
+      { method: "DELETE" },
+      csrfToken,
+    ),
+  database: () => request<DatabaseInfo>("/database"),
 };

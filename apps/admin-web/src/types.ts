@@ -20,6 +20,10 @@ export interface Overview {
   user_count: number;
   waiting_room_count: number;
   playing_room_count: number;
+  match_count: number;
+  character_count: number;
+  tablecloth_count: number;
+  music_count: number;
   recent_audit: AuditEvent[];
 }
 
@@ -116,4 +120,81 @@ export type TableclothInput = Omit<AdminTablecloth, "version">;
 export interface TableclothList {
   schema: "admin_tablecloth_list.v1";
   tablecloths: AdminTablecloth[];
+}
+
+export type MusicScene = "lobby" | "match" | "riichi";
+
+export interface AdminMusic {
+  id: string;
+  version: number;
+  name: string;
+  scene: MusicScene;
+  audio_path: string;
+  duration_ms: number;
+  enabled: boolean;
+  is_default: boolean;
+}
+
+export type MusicInput = Omit<AdminMusic, "version">;
+
+export interface MusicList {
+  schema: "admin_music_list.v1";
+  music_tracks: AdminMusic[];
+}
+
+export interface MatchSeatSummary {
+  seat: number;
+  nickname: string;
+  rank: number;
+  points: number;
+  score_tenths: number;
+}
+
+export interface AdminMatchSummary {
+  match_id: string;
+  finished_at_ms: number;
+  friend_match?: boolean;
+  rule_family?: string;
+  variant?: string;
+  match_length?: string;
+  rule_name?: string;
+  hand_count: number;
+  seats: MatchSeatSummary[];
+}
+
+export interface MatchList {
+  schema: "admin_match_list.v1";
+  matches: AdminMatchSummary[];
+}
+
+export interface MatchRecordPlayer {
+  user_id: string;
+  nickname: string;
+  seat: number;
+}
+
+export interface MatchRecordDetail {
+  schema: "match_record.v1";
+  match_id: string;
+  version: number;
+  friend_match?: boolean;
+  rule_snapshot?: unknown;
+  players: MatchRecordPlayer[];
+  hands: unknown[];
+  result?: { placements?: Array<{ seat: number; rank: number; points: number; score_tenths: number }> };
+}
+
+export interface DatabaseTable {
+  name: string;
+  label: string;
+  records: number;
+  writable: boolean;
+}
+
+export interface DatabaseInfo {
+  schema: "admin_database.v1";
+  engine: string;
+  persistent: boolean;
+  status: string;
+  tables: DatabaseTable[];
 }

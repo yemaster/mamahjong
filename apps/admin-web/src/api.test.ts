@@ -45,4 +45,30 @@ describe("adminApi", () => {
     await expect(adminApi.users()).rejects.toBeInstanceOf(ApiError);
     expect(listener).toHaveBeenCalledOnce();
   });
+
+  it("creates music through the protected admin endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: "lobby-test" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await adminApi.createMusic(
+      {
+        id: "lobby-test",
+        name: "测试",
+        scene: "lobby",
+        audio_path: "/game/assets/music/test.mp3",
+        duration_ms: 60_000,
+        enabled: true,
+        is_default: false,
+      },
+      "csrf_2",
+    );
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/v1/admin/music");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("x-csrf-token")).toBe("csrf_2");
+  });
 });

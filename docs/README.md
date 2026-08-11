@@ -34,6 +34,7 @@
 | [对局存储设计](server/persistence.md) | 事件溯源、逻辑表设计、快照策略与当前实现 |
 | [用户注册与档案](server/identity-profile.md) | 身份与档案分离、注册流程与扩展关联 |
 | [管理台与审计](server/admin-console.md) | 管理功能、审计日志、HTTP 接口与页面约束 |
+| [管理后台 API](server/admin-api.md) | 管理接口、鉴权与资源契约 |
 | [牌谱与重演](server/match-record-replay.md) | 记录生成、归档、接口与客户端重演 |
 
 ## 客户端
@@ -44,6 +45,8 @@
 | [对局牌桌视觉规范](client/visual-spec.md) | 几何约束、动画、手牌、副露、结算演出与牌谱界面 |
 | [素材管线](client/asset-pipeline.md) | 纹理图集、角色素材、音效与降级策略 |
 | [牌效机器人](client/bot.md) | 独立 HTTP 客户端、向听数策略与受入计算 |
+| [管理后台设计](admin/design.md) | 信息架构、页面规范与交互约束 |
+| [素材导入导出](admin/import-export.md) | 角色、桌布、音乐的批量 JSON 格式与处理规则 |
 
 ## 部署
 
