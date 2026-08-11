@@ -9,6 +9,9 @@
 /data/
 /.bot_pids
 
+# 本机使用的生产镜像发布脚本，不进入版本库
+/scripts/publish-images.sh
+
 # 本机使用的第三方角色素材，不进入版本库
 /apps/game-web/public/assets/local-characters/
 

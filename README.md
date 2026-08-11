@@ -81,13 +81,15 @@
 ### 启动
 
 ```bash
-git clone https://github.com/yemaster/mamahjong.git
-cd mamahjong
+mkdir mamahjong && cd mamahjong
 
-cp .env.production.example .env.production
+wget -O compose.yaml \
+  https://raw.githubusercontent.com/yemaster/mamahjong/main/compose.yaml
+wget -O .env.production \
+  https://raw.githubusercontent.com/yemaster/mamahjong/main/.env.production.example
 # 编辑 .env.production，修改数据库密码
 
-docker compose --env-file .env.production up --detach --pull always
+docker compose --env-file .env.production up --detach --pull always --no-build
 ```
 
 访问：
@@ -106,7 +108,7 @@ docker compose --env-file .env.production down
 
 ```bash
 docker compose --env-file .env.production pull
-docker compose --env-file .env.production up --detach
+docker compose --env-file .env.production up --detach --no-build
 ```
 
 ---
@@ -246,20 +248,19 @@ Infrastructure
 
 ## 本地开发
 
+开发、测试或自行构建镜像时需要完整源码：
+
+```bash
+git clone https://github.com/yemaster/mamahjong.git
+cd mamahjong
+```
+
 ### Docker 开发环境
 
 构建并启动；代码更新后重复执行即可重建并重启：
 
 ```bash
 ./scripts/dev.sh
-```
-
-### 构建并发布生产镜像
-
-指定新版本号发布 `linux/amd64` 和 `linux/arm64` 镜像：
-
-```bash
-./scripts/publish-images.sh 0.1.1
 ```
 
 ### 后端开发
