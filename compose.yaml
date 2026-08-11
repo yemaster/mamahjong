@@ -39,7 +39,12 @@ services:
     environment:
       MAMAHJONG_BIND_ADDRESS: 0.0.0.0:8080
       MAMAHJONG_DATA_DIR: /var/lib/mamahjong
-      MAMAHJONG_DATABASE_URL: postgresql://${MAMAHJONG_DATABASE_USER:-mamahjong}:${MAMAHJONG_DATABASE_PASSWORD:-mamahjong-local-password}@database:5432/${MAMAHJONG_DATABASE_NAME:-mamahjong}
+      MAMAHJONG_DATABASE_URL: ${MAMAHJONG_DATABASE_URL:-postgresql://${MAMAHJONG_DATABASE_USER:-mamahjong}:${MAMAHJONG_DATABASE_PASSWORD:-mamahjong-local-password}@database:5432/${MAMAHJONG_DATABASE_NAME:-mamahjong}}
+      MAMAHJONG_ADMIN_LOGIN_NAME: ${MAMAHJONG_ADMIN_LOGIN_NAME:-admin}
+      MAMAHJONG_ADMIN_PASSWORD: ${MAMAHJONG_ADMIN_PASSWORD:-}
+      MAMAHJONG_ADMIN_ALLOW_INSECURE_PASSWORD: ${MAMAHJONG_ADMIN_ALLOW_INSECURE_PASSWORD:-false}
+      MAMAHJONG_ADMIN_NICKNAME: ${MAMAHJONG_ADMIN_NICKNAME:-管理员}
+      MAMAHJONG_ADMIN_COOKIE_SECURE: ${MAMAHJONG_ADMIN_COOKIE_SECURE:-false}
       RUST_LOG: ${RUST_LOG:-info}
     depends_on:
       database:
@@ -72,11 +77,50 @@ services:
     restart: unless-stopped
     environment:
       MAMAHJONG_SERVER_URL: ${MAMAHJONG_SERVER_URL:-http://server:8080}
+      MAMAHJONG_ADMIN_WEB_URL: ${MAMAHJONG_ADMIN_WEB_URL:-http://admin-web:8080}
     depends_on:
       server:
         condition: service_healthy
     ports:
       - "${MAMAHJONG_WEB_HOST:-127.0.0.1}:${MAMAHJONG_WEB_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      - /etc/nginx/conf.d:size=1m,mode=0755
+      - /var/cache/nginx:size=16m,mode=0755
+      - /var/run:size=1m,mode=0755
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  admin-web:
+    profiles: ["admin"]
+    image: ${MAMAHJONG_ADMIN_WEB_IMAGE:-mamahjong-admin-web:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: admin-web
+    restart: unless-stopped
+    environment:
+      MAMAHJONG_SERVER_URL: ${MAMAHJONG_ADMIN_SERVER_URL:-http://server:8080}
+      MAMAHJONG_GAME_WEB_URL: ${MAMAHJONG_ADMIN_GAME_WEB_URL:-http://web:8080}
+    depends_on:
+      server:
+        condition: service_healthy
+      web:
+        condition: service_started
+    expose:
+      - "8080"
     read_only: true
     tmpfs:
       - /etc/nginx/conf.d:size=1m,mode=0755

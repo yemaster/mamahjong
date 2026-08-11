@@ -28,7 +28,7 @@ curl --fail http://127.0.0.1:8080/health/ready
 健康响应：
 
 ```json
-{"status":"ok","service":"mamahjong-server","version":"0.1.0"}
+{"status":"ok","service":"mamahjong-server","version":"0.2.0"}
 ```
 
 ## 配置
@@ -45,6 +45,9 @@ cp .env.example .env
 |---|---|---|
 | `MAMAHJONG_WEB_HOST` | `127.0.0.1` | Web 出口的宿主机监听地址 |
 | `MAMAHJONG_WEB_PORT` | `8080` | Web 出口的宿主机端口 |
+| `MAMAHJONG_ADMIN_WEB_URL` | `http://admin-web:8080` | Web 容器转发 `/admin` 的内部地址 |
+| `MAMAHJONG_ADMIN_SERVER_URL` | `http://server:8080` | 管理端代理的服务端地址 |
+| `MAMAHJONG_DATABASE_URL` | Compose 数据库 | 完整 PostgreSQL 地址 |
 | `RUST_LOG` | `info` | 日志过滤规则 |
 | `MAMAHJONG_ADMIN_LOGIN_NAME` | `admin` | 管理员账号 |
 | `MAMAHJONG_ADMIN_PASSWORD` | 空 | 管理员密码；空值关闭管理登录 |
@@ -61,8 +64,16 @@ cp .env.example .env
 cp .env.example .env
 ```
 
-设置 `MAMAHJONG_ADMIN_PASSWORD` 后重新启动，访问
-`http://127.0.0.1:8080/admin/`。运行日志写入卷内 `logs/`，审计日志写入
+设置 `MAMAHJONG_ADMIN_PASSWORD` 后启动可选管理端：
+
+```bash
+docker compose --profile admin up --detach
+```
+
+访问 `http://127.0.0.1:8080/admin/`。管理端容器不暴露宿主机端口；浏览器
+通过主 Web 容器访问管理页面和同源 `/api/`，由
+管理端镜像代理到 `MAMAHJONG_ADMIN_SERVER_URL`；数据库连接由服务端负责。
+运行日志写入卷内 `logs/`，审计日志写入
 `audit/audit.jsonl`，牌局记录写入 `matches/`。
 
 如需让反向代理从其他主机访问，可以把 `MAMAHJONG_WEB_HOST` 改为内网地址。
