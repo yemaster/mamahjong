@@ -74,6 +74,7 @@ export {
   meldDisplayTiles,
   playerCompletedKan,
   playerIsHoldingDrawnTile,
+  playerReceivedDraw,
   riverDiscardEntries,
   settlementCoveringSeats,
   sortHandForDisplay,

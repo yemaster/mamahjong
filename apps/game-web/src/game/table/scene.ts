@@ -4,7 +4,12 @@ import { addCenterConsole } from "./centerConsole";
 import { addDiscards, updateLastDiscard } from "./discards";
 import { addTableDice, DICE_SETTLE_MS, DORA_FLIP_DELAY_MS } from "./dice";
 import { addHand } from "./hands";
-import { countCompletedKans, playerIsHoldingDrawnTile } from "./handView";
+import {
+  countCompletedKans,
+  playerCompletedKan,
+  playerIsHoldingDrawnTile,
+  playerReceivedDraw,
+} from "./handView";
 import { addMelds } from "./melds";
 import { tableRelativeSeat } from "./geometry";
 import { disposeGroup, disposeTileGeometries } from "./runtime";
@@ -133,6 +138,9 @@ export function renderTable(
   runtime.diceRolls = [];
   runtime.centerConsoleMesh = null;
   const previousView = runtime.previousView;
+  if (previousView && previousView.hand_index !== view.hand_index) {
+    runtime.pendingRinshanDraws.clear();
+  }
   updateHandCutGaps(runtime, view, previousView);
   updateLastDiscard(runtime, view, previousView);
   const settlementHandKey = view.hand_settlement
@@ -158,6 +166,14 @@ export function renderTable(
     ? impactWallLayout(view.progress.dealer, view.observer_seat, dice)
     : riichiWallLayout(dealerRelative, dice);
   const completedKanCount = countCompletedKans(view);
+  for (const player of view.players) {
+    const previousPlayer = previousView?.players.find(
+      (candidate) => candidate.seat === player.seat,
+    );
+    if (playerCompletedKan(player, previousPlayer)) {
+      runtime.pendingRinshanDraws.set(player.seat, completedKanCount);
+    }
+  }
   /*
    * 山上还立着几张：立直的山尾十四张是王牌，一直立着；冲击麻将立着的是翻财神
    * 那一墩，它压根不在摸牌序列里，所以只按还没摸走的张数算。
@@ -209,6 +225,12 @@ export function renderTable(
     const previousPlayer = previousView?.players.find(
       (candidate) => candidate.seat === player.seat,
     );
+    const pendingRinshanDraw = runtime.pendingRinshanDraws.get(player.seat);
+    const rinshanDrawNumber =
+      pendingRinshanDraw != null &&
+      playerReceivedDraw(view, previousView, player, previousPlayer)
+        ? pendingRinshanDraw
+        : null;
     addHand(
       runtime,
       view,
@@ -219,6 +241,7 @@ export function renderTable(
       settlementWinningTileSeats,
       wall,
       consumedTileCount,
+      rinshanDrawNumber,
     );
     if (settlementRevealSeats.includes(player.seat)) {
       runtime.revealedSettlementSeats.add(player.seat);
@@ -241,7 +264,11 @@ export function renderTable(
         openingPhase,
         wall,
         consumedTileCount,
+        rinshanDrawNumber,
       );
+    }
+    if (rinshanDrawNumber != null) {
+      runtime.pendingRinshanDraws.delete(player.seat);
     }
   }
   /* 桌子是推倒重来的，手上还拿着牌就得把点亮重新刷上去。 */

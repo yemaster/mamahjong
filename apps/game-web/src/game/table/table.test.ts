@@ -23,6 +23,7 @@ import {
   orthographicCameraBounds,
   playerIsHoldingDrawnTile,
   playerCompletedKan,
+  playerReceivedDraw,
   riichiWallLayout,
   riverDiscardEntries,
   rinshanWallSlot,
@@ -452,6 +453,64 @@ describe("杠后岭上摸牌", () => {
       ],
     };
     expect(playerCompletedKan(current, previous)).toBe(true);
+  });
+
+  it("杠动画等待帧不会被当成摸牌，补牌到达后才确认新摸入牌", () => {
+    const currentPlayer = tablePreviewView.players.find(
+      (player) => player.seat === 3,
+    )!;
+    const previousPlayer = {
+      ...currentPlayer,
+      melds: [
+        {
+          ...currentPlayer.melds[0]!,
+          kind: "pon" as const,
+          tiles: currentPlayer.melds[0]!.tiles.slice(0, 3),
+        },
+        currentPlayer.melds[1]!,
+      ],
+    };
+    const beforeKanView: MatchView = {
+      ...tablePreviewView,
+      phase: { kind: "awaiting_turn_action", seat: currentPlayer.seat },
+      players: tablePreviewView.players.map((player) =>
+        player.seat === currentPlayer.seat ? previousPlayer : player,
+      ),
+    };
+    const waitingView: MatchView = {
+      ...tablePreviewView,
+      phase: {
+        kind: "awaiting_kan_animation",
+        seat: currentPlayer.seat,
+      },
+      players: tablePreviewView.players.map((player) =>
+        player.seat === currentPlayer.seat ? previousPlayer : player,
+      ),
+    };
+    const drawnView: MatchView = {
+      ...waitingView,
+      phase: { kind: "awaiting_turn_action", seat: currentPlayer.seat },
+      players: tablePreviewView.players,
+    };
+
+    expect(
+      playerReceivedDraw(
+        waitingView,
+        beforeKanView,
+        currentPlayer,
+        previousPlayer,
+      ),
+    ).toBe(false);
+    expect(playerCompletedKan(currentPlayer, previousPlayer)).toBe(true);
+    expect(playerCompletedKan(currentPlayer, currentPlayer)).toBe(false);
+    expect(
+      playerReceivedDraw(
+        drawnView,
+        waitingView,
+        currentPlayer,
+        currentPlayer,
+      ),
+    ).toBe(true);
   });
 });
 

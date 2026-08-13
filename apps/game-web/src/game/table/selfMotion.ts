@@ -8,11 +8,7 @@ import {
   TILE_STAND_UP_MS,
 } from "./constants";
 import { handPosition, handQuaternion, screenRectAnchor } from "./geometry";
-import {
-  countCompletedKans,
-  playerCompletedKan,
-  sortHandForDisplay,
-} from "./handView";
+import { sortHandForDisplay } from "./handView";
 import { DRAW_MOVE_MS, standUpOnArrival } from "./hands";
 import { isDoraTile } from "../tileAssets";
 import { isJokerTile } from "./handView";
@@ -43,6 +39,7 @@ export function addSelfDraw(
   openingPhase: OpeningPhase,
   wall: WallLayout,
   consumedTileCount: number,
+  rinshanDrawNumber: number | null,
 ): void {
   if (openingPhase !== "play" || view.phase.kind === "ended") return;
   /*
@@ -103,9 +100,12 @@ export function addSelfDraw(
   const destination = slot?.position ?? baseline;
   const endTilt = slot?.tilt ?? standingHandTilt(false);
   const endScale = slot?.scale ?? runtime.tileScale;
-  const wallSlot = playerCompletedKan(player, previousPlayer)
-    ? wall.rinshanSlot(countCompletedKans(view))
-    : wall.drawSlot(Math.max(0, consumedTileCount - 1));
+  const wallSlot =
+    resuming && inFlight
+      ? inFlight.wallSlot
+      : rinshanDrawNumber != null
+        ? wall.rinshanSlot(rinshanDrawNumber)
+        : wall.drawSlot(Math.max(0, consumedTileCount - 1));
   const start = wall.origin(wallSlot, runtime.tileWidthRatio, runtime.tileScale);
   const startRotation = wall.quaternion(wallSlot);
   const endRotation = handQuaternion(0, true);
@@ -127,7 +127,7 @@ export function addSelfDraw(
   rootTile(runtime, group);
 
   const takeOffAt = resuming && inFlight ? inFlight.takeOffAt : now;
-  runtime.selfDraw = { tileId: drawnTileId, takeOffAt };
+  runtime.selfDraw = { tileId: drawnTileId, takeOffAt, wallSlot };
   runtime.animations.push({
     group,
     start,

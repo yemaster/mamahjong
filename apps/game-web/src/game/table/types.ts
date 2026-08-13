@@ -133,7 +133,14 @@ export interface TableRuntime {
    * `transients` 一起没了，而二维手牌那一格还空着——牌就凭空消失半秒。记下这一
    * 笔，重建时照原来的起飞时刻把它接着飞完。
    */
-  selfDraw: { tileId: number; takeOffAt: number } | null;
+  selfDraw: { tileId: number; takeOffAt: number; wallSlot: number } | null;
+  /**
+   * 已经完成杠、但岭上牌还没真正出现在视图里的座位。
+   *
+   * 冲击麻将会先停在杠点动画阶段，等四家播完才补牌；这张表把牌山末尾的来源槽位
+   * 跨过那一帧保存下来，避免补牌被误判成普通摸牌而从牌山开头飞出。
+   */
+  pendingRinshanDraws: Map<number, number>;
   /** 正在进行的镜头颤动；`null` 表示镜头是稳的。 */
   shake: CameraShake | null;
   /** 相机没被震偏时该待的地方，颤完照这个放回去。 */

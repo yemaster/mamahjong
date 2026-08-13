@@ -173,6 +173,30 @@ export function playerCompletedKan(
   );
 }
 
+/** 当前视图是否首次出现了这家的新摸入牌。 */
+export function playerReceivedDraw(
+  view: MatchView,
+  previousView: MatchView | null,
+  player: MatchPlayerView,
+  previousPlayer: MatchPlayerView | undefined,
+): boolean {
+  if (!previousView || !previousPlayer) return false;
+  if (!playerIsHoldingDrawnTile(view, player.seat)) return false;
+
+  if (player.seat === view.observer_seat) {
+    return (
+      player.drawn_tile_id != null &&
+      player.drawn_tile_id !== previousPlayer.drawn_tile_id
+    );
+  }
+
+  return (
+    !playerIsHoldingDrawnTile(previousView, player.seat) ||
+    player.concealed_tile_count > previousPlayer.concealed_tile_count ||
+    playerCompletedKan(player, previousPlayer)
+  );
+}
+
 export interface MeldDisplayTile {
   tile: TileView;
   calledRotation: number;

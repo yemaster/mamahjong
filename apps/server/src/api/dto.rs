@@ -895,6 +895,7 @@ enum PhaseResponse {
     AwaitingTurnAction { seat: u8 },
     AwaitingDiscard { seat: u8 },
     AwaitingResponses { trigger_seat: u8 },
+    AwaitingKanAnimation { seat: u8 },
     Ended { reason: &'static str },
 }
 
@@ -907,6 +908,9 @@ impl PhaseResponse {
             },
             "awaiting_responses" => Self::AwaitingResponses {
                 trigger_seat: seat.unwrap_or_default(),
+            },
+            "awaiting_kan_animation" => Self::AwaitingKanAnimation {
+                seat: seat.unwrap_or_default(),
             },
             "ended" => Self::Ended {
                 reason: reason.unwrap_or("exhaustive_draw"),
@@ -1270,4 +1274,20 @@ struct PlacementResponse {
     uma_tenths: i32,
     oka_tenths: i32,
     score_tenths: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::PhaseResponse;
+
+    #[test]
+    fn impact_kan_animation_remains_a_distinct_client_phase() {
+        let phase = PhaseResponse::impact("awaiting_kan_animation", Some(2), None);
+        assert_eq!(
+            serde_json::to_value(phase).expect("serialize phase"),
+            json!({"kind": "awaiting_kan_animation", "seat": 2}),
+        );
+    }
 }

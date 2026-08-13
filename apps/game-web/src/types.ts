@@ -516,6 +516,7 @@ export type MatchPhase =
   | { kind: "awaiting_turn_action"; seat: number }
   | { kind: "awaiting_discard"; seat: number }
   | { kind: "awaiting_responses"; trigger_seat: number }
+  | { kind: "awaiting_kan_animation"; seat: number }
   | { kind: "ended"; reason: EndReason };
 
 export type EndReason =

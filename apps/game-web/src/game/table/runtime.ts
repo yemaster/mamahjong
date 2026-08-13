@@ -91,6 +91,7 @@ export async function createRuntime(
     tilts: [],
     transients: [],
     selfDraw: null,
+    pendingRinshanDraws: new Map(),
     spinners: [],
     doraShine: createDoraShineMaterial(),
     impacts: [],

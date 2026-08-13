@@ -32,8 +32,6 @@ import {
 } from "./geometry";
 import {
   canLocalPlayerDiscard,
-  countCompletedKans,
-  playerCompletedKan,
   playerIsHoldingDrawnTile,
   sortHandForDisplay,
   winningTileIndex,
@@ -67,6 +65,7 @@ export function addHand(
   settlementWinningTileSeats: number[],
   wall: WallLayout,
   consumedTileCount: number,
+  rinshanDrawNumber: number | null,
 ): void {
   const relative = tableRelativeSeat(
     player.seat,
@@ -372,7 +371,7 @@ export function addHand(
     } else if (
       openingPhase === "play" &&
       isDrawn &&
-      (playerCompletedKan(player, previousPlayer) ||
+      (rinshanDrawNumber != null ||
         (isSelf
           ? tile.id !== previousPlayer?.drawn_tile_id
           : previousPlayer != null &&
@@ -380,8 +379,8 @@ export function addHand(
               previousPlayer.concealed_tile_count))
     ) {
       const destination = group.position.clone();
-      const wallSlot = playerCompletedKan(player, previousPlayer)
-        ? wall.rinshanSlot(countCompletedKans(view))
+      const wallSlot = rinshanDrawNumber != null
+        ? wall.rinshanSlot(rinshanDrawNumber)
         : wall.drawSlot(Math.max(0, consumedTileCount - 1));
       const start = wall.origin(
         wallSlot,
