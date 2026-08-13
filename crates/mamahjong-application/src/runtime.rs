@@ -1,8 +1,7 @@
 //! 两套规则引擎共用的运行时外壳。
 //!
-//! 房间里坐的是哪套规则，在 `GameRuntime::start` 里定下来，之后所有会话级操作
-//! （读秒、素材握手、结算放行、退出投票）都从这里分派。立直那条分支一行没改，
-//! 只是被包了一层。
+//! 房间里坐的是哪套规则，只在 `GameRuntime::start` 里决定一次。之后所有会话级
+//! 操作都走 `RuleRuntime`，新增规则不需要再为每个操作给枚举补一条分派分支。
 
 use mahjong_core::{MatchId, UserId};
 
@@ -118,69 +117,80 @@ impl MatchProjection {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) enum GameRuntime {
-    Riichi(Box<RiichiRuntime>),
-    Impact(Box<ImpactRuntime>),
+trait RuleRuntime: std::fmt::Debug + Send + Sync {
+    fn as_riichi(&self) -> Option<&RiichiRuntime> {
+        None
+    }
+
+    fn generates_record(&self) -> bool {
+        false
+    }
+
+    fn version(&self) -> u64;
+    fn event_sequence(&self) -> u64;
+    fn any_player(&self) -> Option<UserId>;
+    fn projection(&self, actor: &UserId) -> Result<MatchProjection, ApplicationError>;
+    fn events_after(
+        &self,
+        actor: &UserId,
+        after_sequence: u64,
+    ) -> Result<MatchEventPage, ApplicationError>;
+    fn execute(
+        &mut self,
+        actor: &UserId,
+        command: SubmitGameCommand,
+        now_ms: u64,
+    ) -> Result<(), ApplicationError>;
+    fn is_finished(&self) -> bool;
+    fn has_pending_settlement(&self) -> bool;
+    fn terminate_if_assets_stalled(&mut self, now_ms: u64) -> Result<bool, ApplicationError>;
+    fn advance_settlement_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError>;
+    fn open_settlement_confirm_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError>;
+    fn release_opening_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError>;
+    fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError>;
+}
+
+#[derive(Debug)]
+pub(crate) struct GameRuntime {
+    inner: Box<dyn RuleRuntime>,
 }
 
 impl GameRuntime {
     pub(crate) fn start(room: &Room, id: MatchId, now_ms: u64) -> Result<Self, ApplicationError> {
         match room.rule_snapshot() {
-            GameRuleSnapshot::Riichi(_) => Ok(Self::Riichi(Box::new(RiichiRuntime::start(
-                room, id, now_ms,
-            )?))),
-            GameRuleSnapshot::Impact(_) => Ok(Self::Impact(Box::new(ImpactRuntime::start(
-                room, id, now_ms,
-            )?))),
+            GameRuleSnapshot::Riichi(_) => Ok(Self {
+                inner: Box::new(RiichiRuntime::start(room, id, now_ms)?),
+            }),
+            GameRuleSnapshot::Impact(_) => Ok(Self {
+                inner: Box::new(ImpactRuntime::start(room, id, now_ms)?),
+            }),
         }
     }
 
-    pub(crate) const fn as_riichi(&self) -> Option<&RiichiRuntime> {
-        match self {
-            Self::Riichi(runtime) => Some(runtime),
-            Self::Impact(_) => None,
-        }
+    pub(crate) fn as_riichi(&self) -> Option<&RiichiRuntime> {
+        self.inner.as_riichi()
     }
 
     /// 这张桌子会不会出牌谱。冲击麻将本期不生成记录，归档要照这个跳过。
     pub(crate) fn generates_record(&self) -> bool {
-        matches!(self, Self::Riichi(_))
+        self.inner.generates_record()
     }
 
     pub(crate) fn version(&self) -> u64 {
-        match self {
-            Self::Riichi(runtime) => runtime.version,
-            Self::Impact(runtime) => runtime.version,
-        }
+        self.inner.version()
     }
 
     pub(crate) fn event_sequence(&self) -> u64 {
-        match self {
-            Self::Riichi(runtime) => runtime.event_sequence,
-            Self::Impact(runtime) => runtime.event_sequence,
-        }
+        self.inner.event_sequence()
     }
 
     /// 服务端广播时随便挑一个在座的人当 actor，用来复算各家的可见视图。
     pub(crate) fn any_player(&self) -> Option<UserId> {
-        match self {
-            Self::Riichi(runtime) => runtime
-                .players
-                .first()
-                .map(|player| player.user_id().clone()),
-            Self::Impact(runtime) => runtime
-                .players
-                .first()
-                .map(|player| player.user_id().clone()),
-        }
+        self.inner.any_player()
     }
 
     pub(crate) fn projection(&self, actor: &UserId) -> Result<MatchProjection, ApplicationError> {
-        match self {
-            Self::Riichi(runtime) => Ok(MatchProjection::Riichi(Box::new(runtime.view(actor)?))),
-            Self::Impact(runtime) => Ok(MatchProjection::Impact(Box::new(runtime.view(actor)?))),
-        }
+        self.inner.projection(actor)
     }
 
     pub(crate) fn events_after(
@@ -188,18 +198,7 @@ impl GameRuntime {
         actor: &UserId,
         after_sequence: u64,
     ) -> Result<MatchEventPage, ApplicationError> {
-        match self {
-            Self::Riichi(runtime) => runtime.events_after(actor, after_sequence),
-            // 冲击麻将暂不生成事件流，客户端一律走视图订阅。
-            Self::Impact(runtime) => {
-                runtime.seat_for(actor)?;
-                Ok(MatchEventPage::new(
-                    runtime.version,
-                    runtime.event_sequence,
-                    Box::new([]),
-                ))
-            }
-        }
+        self.inner.events_after(actor, after_sequence)
     }
 
     pub(crate) fn execute(
@@ -208,68 +207,183 @@ impl GameRuntime {
         command: SubmitGameCommand,
         now_ms: u64,
     ) -> Result<(), ApplicationError> {
-        match self {
-            Self::Riichi(runtime) => runtime.execute(actor, command, now_ms),
-            Self::Impact(runtime) => runtime.execute(actor, command, now_ms),
-        }
+        self.inner.execute(actor, command, now_ms)
     }
 
     pub(crate) fn is_finished(&self) -> bool {
-        match self {
-            Self::Riichi(runtime) => runtime.is_finished(),
-            Self::Impact(runtime) => runtime.is_finished(),
-        }
+        self.inner.is_finished()
     }
 
     pub(crate) fn has_pending_settlement(&self) -> bool {
-        match self {
-            Self::Riichi(runtime) => runtime.has_pending_settlement(),
-            Self::Impact(runtime) => runtime.has_pending_settlement(),
-        }
+        self.inner.has_pending_settlement()
     }
 
     pub(crate) fn terminate_if_assets_stalled(
         &mut self,
         now_ms: u64,
     ) -> Result<bool, ApplicationError> {
-        match self {
-            Self::Riichi(runtime) => runtime.terminate_if_assets_stalled(now_ms),
-            Self::Impact(runtime) => runtime.terminate_if_assets_stalled(now_ms),
-        }
+        self.inner.terminate_if_assets_stalled(now_ms)
     }
 
     pub(crate) fn advance_settlement_if_due(
         &mut self,
         now_ms: u64,
     ) -> Result<bool, ApplicationError> {
-        match self {
-            Self::Riichi(runtime) => runtime.advance_settlement_if_due(now_ms),
-            Self::Impact(runtime) => runtime.advance_settlement_if_due(now_ms),
-        }
+        self.inner.advance_settlement_if_due(now_ms)
     }
 
     pub(crate) fn open_settlement_confirm_if_due(
         &mut self,
         now_ms: u64,
     ) -> Result<bool, ApplicationError> {
-        match self {
-            Self::Riichi(runtime) => runtime.open_settlement_confirm_if_due(now_ms),
-            Self::Impact(runtime) => runtime.open_settlement_confirm_if_due(now_ms),
-        }
+        self.inner.open_settlement_confirm_if_due(now_ms)
     }
 
     pub(crate) fn release_opening_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
-        match self {
-            Self::Riichi(runtime) => runtime.release_opening_if_due(now_ms),
-            Self::Impact(runtime) => runtime.release_opening_if_due(now_ms),
-        }
+        self.inner.release_opening_if_due(now_ms)
     }
 
     pub(crate) fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError> {
-        match self {
-            Self::Riichi(runtime) => runtime.expire(now_ms),
-            Self::Impact(runtime) => runtime.expire(now_ms),
-        }
+        self.inner.expire(now_ms)
+    }
+}
+
+impl RuleRuntime for RiichiRuntime {
+    fn as_riichi(&self) -> Option<&RiichiRuntime> {
+        Some(self)
+    }
+
+    fn generates_record(&self) -> bool {
+        true
+    }
+
+    fn version(&self) -> u64 {
+        self.version
+    }
+
+    fn event_sequence(&self) -> u64 {
+        self.event_sequence
+    }
+
+    fn any_player(&self) -> Option<UserId> {
+        self.players.first().map(|player| player.user_id().clone())
+    }
+
+    fn projection(&self, actor: &UserId) -> Result<MatchProjection, ApplicationError> {
+        Ok(MatchProjection::Riichi(Box::new(self.view(actor)?)))
+    }
+
+    fn events_after(
+        &self,
+        actor: &UserId,
+        after_sequence: u64,
+    ) -> Result<MatchEventPage, ApplicationError> {
+        self.events_after(actor, after_sequence)
+    }
+
+    fn execute(
+        &mut self,
+        actor: &UserId,
+        command: SubmitGameCommand,
+        now_ms: u64,
+    ) -> Result<(), ApplicationError> {
+        self.execute(actor, command, now_ms)
+    }
+
+    fn is_finished(&self) -> bool {
+        self.is_finished()
+    }
+
+    fn has_pending_settlement(&self) -> bool {
+        self.has_pending_settlement()
+    }
+
+    fn terminate_if_assets_stalled(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.terminate_if_assets_stalled(now_ms)
+    }
+
+    fn advance_settlement_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.advance_settlement_if_due(now_ms)
+    }
+
+    fn open_settlement_confirm_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.open_settlement_confirm_if_due(now_ms)
+    }
+
+    fn release_opening_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.release_opening_if_due(now_ms)
+    }
+
+    fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError> {
+        self.expire(now_ms)
+    }
+}
+
+impl RuleRuntime for ImpactRuntime {
+    fn version(&self) -> u64 {
+        self.version
+    }
+
+    fn event_sequence(&self) -> u64 {
+        self.event_sequence
+    }
+
+    fn any_player(&self) -> Option<UserId> {
+        self.players.first().map(|player| player.user_id().clone())
+    }
+
+    fn projection(&self, actor: &UserId) -> Result<MatchProjection, ApplicationError> {
+        Ok(MatchProjection::Impact(Box::new(self.view(actor)?)))
+    }
+
+    fn events_after(
+        &self,
+        actor: &UserId,
+        _after_sequence: u64,
+    ) -> Result<MatchEventPage, ApplicationError> {
+        self.seat_for(actor)?;
+        Ok(MatchEventPage::new(
+            self.version,
+            self.event_sequence,
+            Box::new([]),
+        ))
+    }
+
+    fn execute(
+        &mut self,
+        actor: &UserId,
+        command: SubmitGameCommand,
+        now_ms: u64,
+    ) -> Result<(), ApplicationError> {
+        self.execute(actor, command, now_ms)
+    }
+
+    fn is_finished(&self) -> bool {
+        self.is_finished()
+    }
+
+    fn has_pending_settlement(&self) -> bool {
+        self.has_pending_settlement()
+    }
+
+    fn terminate_if_assets_stalled(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.terminate_if_assets_stalled(now_ms)
+    }
+
+    fn advance_settlement_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.advance_settlement_if_due(now_ms)
+    }
+
+    fn open_settlement_confirm_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.open_settlement_confirm_if_due(now_ms)
+    }
+
+    fn release_opening_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.release_opening_if_due(now_ms)
+    }
+
+    fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError> {
+        self.expire(now_ms)
     }
 }
 

@@ -1,8 +1,7 @@
 //! 冲击麻将的对局运行时。
 //!
-//! 与 `game.rs` 里的立直运行时**互不引用**：那一套一行都没动，这里从零搭一份
-//! 会话流程（素材握手、开局动画放行、结算三段式、退出投票、读秒）。两边共用的
-//! 只有 `SeatClock` 与 `presentation` 里的那几个时长常量。
+//! 这里只实现冲击麻将自己的牌局状态、合法操作、计分和投影。素材握手、开局动画
+//! 放行与结算确认由 `match_flow` 提供，整场调度则通过 `RuleRuntime` 接入应用层。
 //!
 //! 投影一律用 `u8` 座位号与牌码字符串，DTO 层直接照抄即可，不必再认识引擎类型。
 
@@ -17,10 +16,9 @@ const KAN_ANIMATION_FALLBACK_MS: u64 = 6_000;
 
 use crate::clock::SeatClock;
 use crate::game::{GameCommand, SubmitGameCommand, shuffle_players};
+use crate::match_flow::{MatchOpening, SettlementFlow};
 use crate::presentation::{
-    ANIMATION_REPORT_GRACE_MS, MATCH_ASSET_LOAD_TIMEOUT_MS, OPENING_READY_FALLBACK_MS,
-    SETTLEMENT_CONFIRM_MS, animation_grace_ms, settlement_fallback_ms,
-    settlement_reveal_fallback_ms,
+    animation_grace_ms, settlement_fallback_ms, settlement_reveal_fallback_ms,
 };
 use crate::{ApplicationError, ErrorCode, Room, RoomLifecycle};
 
@@ -231,11 +229,7 @@ struct PendingSettlement {
     /// 存在这儿，等四家点完确认、开下一局再露出去。
     dealer: u8,
     dealer_streak: u32,
-    settled_at_ms: u64,
-    played: [bool; SEATS],
-    first_played_at_ms: Option<u64>,
-    confirm_started_at_ms: Option<u64>,
-    confirmed: [bool; SEATS],
+    flow: SettlementFlow,
 }
 
 #[derive(Clone, Debug)]
@@ -251,12 +245,7 @@ pub(crate) struct ImpactRuntime {
     game: ImpactMatch,
     result: Option<ObserverImpactResult>,
     clocks: Box<[SeatClock]>,
-    opening_ready: [bool; SEATS],
-    assets_ready: [bool; SEATS],
-    assets_started_at_ms: u64,
-    terminated_by_asset_timeout: bool,
-    opening_started_at_ms: u64,
-    first_opening_ready_at_ms: Option<u64>,
+    opening: MatchOpening,
     pending: Option<PendingSettlement>,
     pending_kan_animation: Option<PendingKanAnimation>,
     last_kan: Option<ObserverKanPoints>,
@@ -318,12 +307,7 @@ impl ImpactRuntime {
                 SEATS
             ]
             .into_boxed_slice(),
-            opening_ready: [false; SEATS],
-            assets_ready: [false; SEATS],
-            assets_started_at_ms: now_ms,
-            terminated_by_asset_timeout: false,
-            opening_started_at_ms: now_ms,
-            first_opening_ready_at_ms: None,
+            opening: MatchOpening::new(SEATS, now_ms),
             pending: None,
             pending_kan_animation: None,
             last_kan: None,
@@ -355,14 +339,14 @@ impl ImpactRuntime {
     }
 
     fn assets_loading(&self) -> bool {
-        self.assets_ready.iter().any(|ready| !*ready)
+        self.opening.assets_loading()
     }
 
     fn frozen(&self) -> bool {
         self.exit_vote.is_some()
             || self.terminated_by_exit_vote
             || self.assets_loading()
-            || self.terminated_by_asset_timeout
+            || self.opening.terminated_by_asset_timeout()
     }
 
     pub(crate) fn view(&self, actor: &UserId) -> Result<ObserverImpactMatch, ApplicationError> {
@@ -544,9 +528,9 @@ impl ImpactRuntime {
             reaction_options,
             turn_actions,
             clocks: self.clocks.to_vec(),
-            opening_ready_seats: seats_with_flag(&self.opening_ready),
-            assets_ready_seats: seats_with_flag(&self.assets_ready),
-            terminated_by_asset_timeout: self.terminated_by_asset_timeout,
+            opening_ready_seats: seats_with_flag(self.opening.opening_ready_flags()),
+            assets_ready_seats: seats_with_flag(self.opening.assets_ready_flags()),
+            terminated_by_asset_timeout: self.opening.terminated_by_asset_timeout(),
             hand_settlement: self.pending.as_ref().map(|pending| {
                 let settlement = &pending.settlement;
                 let evaluation = settlement.evaluation();
@@ -572,11 +556,9 @@ impl ImpactRuntime {
                     points_after: *settlement.points_after(),
                     kan_points_after: *settlement.kan_points_after(),
                     void_hand: settlement.is_void(),
-                    played_seats: seats_with_flag(&pending.played),
-                    confirm_deadline_ms: pending
-                        .confirm_started_at_ms
-                        .map(|started_ms| started_ms.saturating_add(SETTLEMENT_CONFIRM_MS)),
-                    confirmed_seats: seats_with_flag(&pending.confirmed),
+                    played_seats: seats_with_flag(pending.flow.played_flags()),
+                    confirm_deadline_ms: pending.flow.confirm_deadline_ms(),
+                    confirmed_seats: seats_with_flag(pending.flow.confirmed_flags()),
                 }
             }),
             last_kan: self.last_kan,
@@ -584,7 +566,7 @@ impl ImpactRuntime {
             friend_match: self.friend_match,
             can_start_exit_vote: self.friend_match
                 && !self.assets_loading()
-                && !self.terminated_by_asset_timeout
+                && !self.opening.terminated_by_asset_timeout()
                 && self.exit_vote.is_none()
                 && self.exit_vote_used_hand[usize::from(observer_seat)] != Some(self.hand_index)
                 && !self.terminated_by_exit_vote
@@ -625,19 +607,18 @@ impl ImpactRuntime {
                 ),
             ));
         }
-        if self.terminated_by_asset_timeout {
+        if self.opening.terminated_by_asset_timeout() {
             return Err(ApplicationError::new(
                 ErrorCode::MatchFinished,
                 "match was terminated while waiting for players to load",
             ));
         }
         if matches!(command.command, GameCommand::MatchAssetsReady) {
-            if self.assets_ready[index] {
+            let report = self.opening.report_assets_ready(index, now_ms);
+            if !report.changed() {
                 return Ok(());
             }
-            self.assets_ready[index] = true;
-            if self.assets_ready.iter().all(|ready| *ready) {
-                self.opening_started_at_ms = now_ms;
+            if report.everyone_ready() {
                 self.rearm_clocks(now_ms)?;
             }
             return self.bump_version();
@@ -666,12 +647,11 @@ impl ImpactRuntime {
                         "the opening animation is no longer current",
                     ));
                 }
-                if self.opening_ready[index] {
+                let report = self.opening.report_opening_ready(index, now_ms);
+                if !report.changed() {
                     return Ok(());
                 }
-                self.opening_ready[index] = true;
-                self.first_opening_ready_at_ms.get_or_insert(now_ms);
-                if self.opening_ready.iter().all(|ready| *ready) {
+                if report.everyone_ready() {
                     self.rearm_clocks(now_ms)?;
                 }
                 return self.bump_version();
@@ -684,13 +664,9 @@ impl ImpactRuntime {
                     .pending
                     .as_mut()
                     .ok_or_else(|| invalid_command("there is no hand settlement being played"))?;
-                if pending.played[index] {
+                let report = pending.flow.report_played(index, now_ms);
+                if !report.changed() {
                     return Ok(());
-                }
-                pending.played[index] = true;
-                pending.first_played_at_ms.get_or_insert(now_ms);
-                if pending.played.iter().all(|played| *played) {
-                    pending.confirm_started_at_ms.get_or_insert(now_ms);
                 }
                 return self.bump_version();
             }
@@ -702,14 +678,14 @@ impl ImpactRuntime {
                     .pending
                     .as_mut()
                     .ok_or_else(|| invalid_command("there is no hand settlement to confirm"))?;
-                if pending.confirm_started_at_ms.is_none() {
+                if !pending.flow.confirmation_open() {
                     return Err(invalid_command("the settlement is still being played"));
                 }
-                if pending.confirmed[index] {
+                let report = pending.flow.report_confirmed(index);
+                if !report.changed() {
                     return Ok(());
                 }
-                pending.confirmed[index] = true;
-                if pending.confirmed.iter().all(|confirmed| *confirmed) {
+                if report.everyone_ready() {
                     self.advance_settlement(now_ms)?;
                     self.rearm_clocks(now_ms)?;
                 }
@@ -751,7 +727,7 @@ impl ImpactRuntime {
                 "waiting for all players to finish the kan animation",
             ));
         }
-        if self.opening_ready.iter().any(|ready| !*ready) {
+        if self.opening.opening_blocked() {
             return Err(invalid_command("the opening deal is still being dealt"));
         }
         let grace_ms = animation_grace_ms(&command.command);
@@ -925,11 +901,7 @@ impl ImpactRuntime {
             settlement,
             dealer,
             dealer_streak,
-            settled_at_ms: now_ms,
-            played: [false; SEATS],
-            first_played_at_ms: None,
-            confirm_started_at_ms: None,
-            confirmed: [false; SEATS],
+            flow: SettlementFlow::new(SEATS, now_ms),
         });
         Ok(())
     }
@@ -956,9 +928,7 @@ impl ImpactRuntime {
             thinking_time.base_ms(),
             thinking_time.reserve_ms(),
         ));
-        self.opening_ready = [false; SEATS];
-        self.opening_started_at_ms = now_ms;
-        self.first_opening_ready_at_ms = None;
+        self.opening.reset_hand(now_ms);
         self.last_kan = None;
         Ok(())
     }
@@ -1133,8 +1103,8 @@ impl ImpactRuntime {
             return Ok(());
         }
         if self.assets_loading()
-            || self.terminated_by_asset_timeout
-            || self.opening_ready.iter().any(|ready| !*ready)
+            || self.opening.terminated_by_asset_timeout()
+            || self.opening.opening_blocked()
         {
             for clock in &mut self.clocks {
                 clock.disarm(now_ms);
@@ -1166,16 +1136,6 @@ impl ImpactRuntime {
             HandPhase::AwaitingResponses { .. } => hand.pending_reactions().contains(&seat),
             HandPhase::AwaitingKanAnimation { .. } | HandPhase::Ended { .. } => false,
         }
-    }
-
-    fn opening_ready_deadline_passed(&self, now_ms: u64) -> bool {
-        let deadline = match self.first_opening_ready_at_ms {
-            Some(first_ready_ms) => first_ready_ms.saturating_add(ANIMATION_REPORT_GRACE_MS),
-            None => self
-                .opening_started_at_ms
-                .saturating_add(OPENING_READY_FALLBACK_MS),
-        };
-        now_ms >= deadline
     }
 
     /// 超时代打：等响应就 Pass，轮到自己就打摸上来那张，再不行就打最右边那张。
@@ -1213,7 +1173,7 @@ impl ImpactRuntime {
         if self.is_finished() || self.assets_loading() {
             return Ok(None);
         }
-        if self.opening_ready.iter().any(|ready| !*ready) {
+        if self.opening.opening_blocked() {
             return Ok(None);
         }
         // 杠点动画兜底超时。
@@ -1250,9 +1210,6 @@ impl ImpactRuntime {
         let Some(pending) = self.pending.as_mut() else {
             return Ok(false);
         };
-        if pending.confirm_started_at_ms.is_some() {
-            return Ok(false);
-        }
         // 确认窗口只在「全场都报告播完」或「兜底到期」两个时刻打开。
         // 不设短宽限：结算动画时长随役种多少波动很大，一家早到不该替全场抢跑。
         let yaku_count: usize = pending
@@ -1260,14 +1217,12 @@ impl ImpactRuntime {
             .evaluation()
             .map(|e| e.yaku().len())
             .unwrap_or(0);
-        let deadline_ms = pending
-            .settled_at_ms
-            .saturating_add(settlement_reveal_fallback_ms(yaku_count));
-        if now_ms < deadline_ms {
+        if !pending
+            .flow
+            .open_confirmation_if_due(now_ms, settlement_reveal_fallback_ms(yaku_count))
+        {
             return Ok(false);
         }
-        pending.played.fill(true);
-        pending.confirm_started_at_ms = Some(now_ms);
         self.bump_version()?;
         Ok(true)
     }
@@ -1280,17 +1235,14 @@ impl ImpactRuntime {
             return Ok(false);
         }
         let due = self.pending.as_ref().is_some_and(|pending| {
-            let confirm_due = pending.confirm_started_at_ms.is_some_and(|started_ms| {
-                now_ms.saturating_sub(started_ms) >= SETTLEMENT_CONFIRM_MS
-            });
             let yaku_count: usize = pending
                 .settlement
                 .evaluation()
                 .map(|e| e.yaku().len())
                 .unwrap_or(0);
-            confirm_due
-                || now_ms.saturating_sub(pending.settled_at_ms)
-                    >= settlement_fallback_ms(yaku_count)
+            pending
+                .flow
+                .advance_due(now_ms, settlement_fallback_ms(yaku_count))
         });
         if !due {
             return Ok(false);
@@ -1305,12 +1257,9 @@ impl ImpactRuntime {
         if self.is_finished() || self.assets_loading() {
             return Ok(false);
         }
-        if self.opening_ready.iter().all(|ready| *ready)
-            || !self.opening_ready_deadline_passed(now_ms)
-        {
+        if !self.opening.release_opening_if_due(now_ms) {
             return Ok(false);
         }
-        self.opening_ready = [true; SEATS];
         self.bump_version()?;
         self.rearm_clocks(now_ms)?;
         Ok(true)
@@ -1320,13 +1269,9 @@ impl ImpactRuntime {
         &mut self,
         now_ms: u64,
     ) -> Result<bool, ApplicationError> {
-        if self.is_finished() || !self.assets_loading() {
+        if self.is_finished() || !self.opening.terminate_if_assets_stalled(now_ms) {
             return Ok(false);
         }
-        if now_ms.saturating_sub(self.assets_started_at_ms) < MATCH_ASSET_LOAD_TIMEOUT_MS {
-            return Ok(false);
-        }
-        self.terminated_by_asset_timeout = true;
         for clock in &mut self.clocks {
             clock.disarm(now_ms);
         }
@@ -1335,8 +1280,10 @@ impl ImpactRuntime {
     }
 
     #[must_use]
-    pub(crate) const fn is_finished(&self) -> bool {
-        self.result.is_some() || self.terminated_by_exit_vote || self.terminated_by_asset_timeout
+    pub(crate) fn is_finished(&self) -> bool {
+        self.result.is_some()
+            || self.terminated_by_exit_vote
+            || self.opening.terminated_by_asset_timeout()
     }
 
     #[must_use]

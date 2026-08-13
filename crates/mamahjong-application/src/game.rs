@@ -6,10 +6,9 @@ use mahjong_riichi::{
 };
 
 use crate::clock::SeatClock;
+use crate::match_flow::{MatchOpening, SettlementFlow};
 use crate::presentation::{
-    ANIMATION_REPORT_GRACE_MS, MATCH_ASSET_LOAD_TIMEOUT_MS, OPENING_READY_FALLBACK_MS,
-    SETTLEMENT_CONFIRM_MS, animation_grace_ms, settlement_fallback_ms,
-    settlement_reveal_fallback_ms,
+    animation_grace_ms, settlement_fallback_ms, settlement_reveal_fallback_ms,
 };
 use crate::stream::{MATCH_EVENT_PAGE_LIMIT, MatchEvent, MatchEventPage};
 use crate::{ApplicationError, ErrorCode, Room, RoomLifecycle};
@@ -591,14 +590,7 @@ impl ObserverWinnerSettlement {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingHandSettlement {
     result: HandResult,
-    settled_at_ms: u64,
-    /// 各家是否已经报告「结算动画播完了」。
-    played: Box<[bool]>,
-    /// 第一家报告播完的时刻，其余人只剩一段固定的宽限。
-    first_played_at_ms: Option<u64>,
-    /// 确认窗口开启的时刻；`None` 表示还有人在播动画，确认按钮尚未下发。
-    confirm_started_at_ms: Option<u64>,
-    confirmed: Box<[bool]>,
+    flow: SettlementFlow,
 }
 
 const EXIT_VOTE_DURATION_MS: u64 = 15_000;
@@ -652,15 +644,7 @@ pub(crate) struct RiichiRuntime {
     pub(crate) events: Vec<GameEventRecord>,
     ron_evaluations: Box<[Option<WinEvaluation>]>,
     clocks: Box<[SeatClock]>,
-    opening_ready: Box<[bool]>,
-    /// 每家有没有把对局音乐这类素材load完。全场load完之前，牌局一步都不许走。
-    assets_ready: Box<[bool]>,
-    assets_started_at_ms: u64,
-    /// 有人一直没load完，整局作废。
-    terminated_by_asset_timeout: bool,
-    opening_started_at_ms: u64,
-    /// 第一家报告开局动画播完的时刻，用来给剩下的人计宽限。
-    first_opening_ready_at_ms: Option<u64>,
+    opening: MatchOpening,
     pending_settlement: Option<PendingHandSettlement>,
     pub(crate) friend_match: bool,
     exit_vote_used_hand: Box<[Option<u32>]>,
@@ -728,12 +712,7 @@ impl RiichiRuntime {
                 seat_count
             ]
             .into_boxed_slice(),
-            opening_ready: vec![false; seat_count].into_boxed_slice(),
-            assets_ready: vec![false; seat_count].into_boxed_slice(),
-            assets_started_at_ms: now_ms,
-            terminated_by_asset_timeout: false,
-            opening_started_at_ms: now_ms,
-            first_opening_ready_at_ms: None,
+            opening: MatchOpening::new(seat_count, now_ms),
             pending_settlement: None,
             friend_match: !room.is_matchmaking_room(),
             exit_vote_used_hand: vec![None; seat_count].into_boxed_slice(),
@@ -829,7 +808,7 @@ impl RiichiRuntime {
             available_reactions: if self.exit_vote.is_some()
                 || self.terminated_by_exit_vote
                 || self.assets_loading()
-                || self.terminated_by_asset_timeout
+                || self.opening.terminated_by_asset_timeout()
             {
                 Box::new([])
             } else {
@@ -840,9 +819,9 @@ impl RiichiRuntime {
             },
             turn_actions: self.available_turn_actions(actor_seat)?,
             clocks: self.clocks.clone(),
-            opening_ready: self.opening_ready.clone(),
-            assets_ready: self.assets_ready.clone(),
-            terminated_by_asset_timeout: self.terminated_by_asset_timeout,
+            opening_ready: self.opening.opening_ready_flags().into(),
+            assets_ready: self.opening.assets_ready_flags().into(),
+            terminated_by_asset_timeout: self.opening.terminated_by_asset_timeout(),
             hand_settlement: self.pending_settlement.as_ref().map(|pending| {
                 ObserverHandSettlement {
                     reason: pending.result.reason(),
@@ -869,11 +848,9 @@ impl RiichiRuntime {
                         })
                         .collect::<Vec<_>>()
                         .into_boxed_slice(),
-                    played_seats: self.seats_with_flag(&pending.played),
-                    confirm_deadline_ms: pending
-                        .confirm_started_at_ms
-                        .map(|started_ms| started_ms.saturating_add(SETTLEMENT_CONFIRM_MS)),
-                    confirmed_seats: self.seats_with_flag(&pending.confirmed),
+                    played_seats: self.seats_with_flag(pending.flow.played_flags()),
+                    confirm_deadline_ms: pending.flow.confirm_deadline_ms(),
+                    confirmed_seats: self.seats_with_flag(pending.flow.confirmed_flags()),
                     from: pending.result.from(),
                     /* 和牌谱读的是同一份，见 `finish_hand` 里存进去的那一步。 */
                     ura_dora_indicators: self.hand_ura_dora.last().cloned().unwrap_or_default(),
@@ -883,7 +860,7 @@ impl RiichiRuntime {
             friend_match: self.friend_match,
             can_start_exit_vote: self.friend_match
                 && !self.assets_loading()
-                && !self.terminated_by_asset_timeout
+                && !self.opening.terminated_by_asset_timeout()
                 && self.exit_vote.is_none()
                 && self.exit_vote_used_hand[usize::from(actor_seat.index())]
                     != Some(self.hand_index)
@@ -901,14 +878,14 @@ impl RiichiRuntime {
 
     /// 还有人没把对局素材load完。这期间桌面是冻着的。
     fn assets_loading(&self) -> bool {
-        self.assets_ready.iter().any(|ready| !*ready)
+        self.opening.assets_loading()
     }
 
     fn available_turn_actions(&self, actor: Seat) -> Result<TurnActions, ApplicationError> {
         if self.exit_vote.is_some()
             || self.terminated_by_exit_vote
             || self.assets_loading()
-            || self.terminated_by_asset_timeout
+            || self.opening.terminated_by_asset_timeout()
         {
             return Ok(TurnActions::default());
         }
@@ -1091,21 +1068,21 @@ impl RiichiRuntime {
             ));
         }
         let seat = self.seat_for(actor)?;
-        if self.terminated_by_asset_timeout {
+        if self.opening.terminated_by_asset_timeout() {
             return Err(ApplicationError::new(
                 ErrorCode::MatchFinished,
                 "match was terminated while waiting for players to load",
             ));
         }
         if assets_ready_command {
-            let ready = &mut self.assets_ready[usize::from(seat.index())];
-            if *ready {
+            let report = self
+                .opening
+                .report_assets_ready(usize::from(seat.index()), now_ms);
+            if !report.changed() {
                 return Ok(());
             }
-            *ready = true;
-            if self.assets_ready.iter().all(|ready| *ready) {
+            if report.everyone_ready() {
                 // 最后一家也load完了，开局动画从这一刻起算，牌局到这里才真的开始。
-                self.opening_started_at_ms = now_ms;
                 self.rearm_clocks(now_ms)?;
             }
             self.version = self
@@ -1146,14 +1123,13 @@ impl RiichiRuntime {
                     "the opening animation is no longer current",
                 ));
             }
-            let ready = &mut self.opening_ready[usize::from(seat.index())];
-            if *ready {
+            let report = self
+                .opening
+                .report_opening_ready(usize::from(seat.index()), now_ms);
+            if !report.changed() {
                 return Ok(());
             }
-            *ready = true;
-            // 第一家报告之后，剩下的人只有一段固定的宽限，见 expire。
-            self.first_opening_ready_at_ms.get_or_insert(now_ms);
-            if self.opening_ready.iter().all(|ready| *ready) {
+            if report.everyone_ready() {
                 self.rearm_clocks(now_ms)?;
             }
             self.version = self
@@ -1170,17 +1146,11 @@ impl RiichiRuntime {
                 .pending_settlement
                 .as_mut()
                 .ok_or_else(|| invalid_command("there is no hand settlement being played"))?;
-            let played = &mut pending.played[usize::from(seat.index())];
-            if *played {
+            let report = pending
+                .flow
+                .report_played(usize::from(seat.index()), now_ms);
+            if !report.changed() {
                 return Ok(());
-            }
-            *played = true;
-            // 第一家播完之后，剩下的人只有一段固定的宽限，见
-            // open_settlement_confirm_if_due。
-            pending.first_played_at_ms.get_or_insert(now_ms);
-            if pending.played.iter().all(|played| *played) {
-                // 全场都播完了，确认窗口现在开，五秒倒计时对所有人同时起算。
-                pending.confirm_started_at_ms.get_or_insert(now_ms);
             }
             self.version = self
                 .version
@@ -1196,16 +1166,15 @@ impl RiichiRuntime {
                 .pending_settlement
                 .as_mut()
                 .ok_or_else(|| invalid_command("there is no hand settlement to confirm"))?;
-            if pending.confirm_started_at_ms.is_none() {
+            if !pending.flow.confirmation_open() {
                 // 还有人在播结算动画，确认窗口没开，按钮也就还没下发。
                 return Err(invalid_command("the settlement is still being played"));
             }
-            let confirmed = &mut pending.confirmed[usize::from(seat.index())];
-            if *confirmed {
+            let report = pending.flow.report_confirmed(usize::from(seat.index()));
+            if !report.changed() {
                 return Ok(());
             }
-            *confirmed = true;
-            if pending.confirmed.iter().all(|confirmed| *confirmed) {
+            if report.everyone_ready() {
                 self.advance_settlement(now_ms)?;
                 self.rearm_clocks(now_ms)?;
             }
@@ -1224,7 +1193,7 @@ impl RiichiRuntime {
         // 开局的牌还在往各家手上飞，谁都还没看清自己的牌，这时候谁也不许动手。
         // 有一家播完了没多久就会全场放行（见 opening_ready_deadline_passed），
         // 所以这里拒绝的窗口很短，客户端重试一次就过了。
-        if self.opening_ready.iter().any(|ready| !*ready) {
+        if self.opening.opening_blocked() {
             return Err(invalid_command("the opening deal is still being dealt"));
         }
         // 这一步在客户端要播多久的动画，决定下一个决策者晚多久开始读秒。
@@ -1486,8 +1455,8 @@ impl RiichiRuntime {
             return Ok(());
         }
         if self.assets_loading()
-            || self.terminated_by_asset_timeout
-            || self.opening_ready.iter().any(|ready| !*ready)
+            || self.opening.terminated_by_asset_timeout()
+            || self.opening.opening_blocked()
         {
             for clock in &mut self.clocks {
                 clock.disarm(now_ms);
@@ -1509,21 +1478,6 @@ impl RiichiRuntime {
             }
         }
         Ok(())
-    }
-
-    /// 是否已经等够了开局动画，可以不管还没报告的人直接开打。
-    ///
-    /// 各家的开局动画是同时起播的，所以只要有一家播完了，其他家要么马上就到，
-    /// 要么是被浏览器挂到后台节流了，等下去没有意义。一家都没报告的时候才用
-    /// 那个长的兜底——那说明这桌上根本没有会走这个握手的客户端。
-    fn opening_ready_deadline_passed(&self, now_ms: u64) -> bool {
-        let deadline = match self.first_opening_ready_at_ms {
-            Some(first_ready_ms) => first_ready_ms.saturating_add(ANIMATION_REPORT_GRACE_MS),
-            None => self
-                .opening_started_at_ms
-                .saturating_add(OPENING_READY_FALLBACK_MS),
-        };
-        now_ms >= deadline
     }
 
     /// Whether the hand cannot advance until this seat decides.
@@ -1581,7 +1535,7 @@ impl RiichiRuntime {
             // terminate_if_assets_stalled 直接作废整局。
             return Ok(None);
         }
-        if self.opening_ready.iter().any(|ready| !*ready) {
+        if self.opening.opening_blocked() {
             // 放行走 release_opening_if_due，那条路会把新版本广播出去；客户端
             // 一直等着「全场都播完了」，没有广播就会一直等下去。
             return Ok(None);
@@ -1706,11 +1660,7 @@ impl RiichiRuntime {
         });
         self.pending_settlement = Some(PendingHandSettlement {
             result,
-            settled_at_ms: now_ms,
-            played: vec![false; self.players.len()].into_boxed_slice(),
-            first_played_at_ms: None,
-            confirm_started_at_ms: None,
-            confirmed: vec![false; self.players.len()].into_boxed_slice(),
+            flow: SettlementFlow::new(self.players.len(), now_ms),
         });
         self.ron_evaluations.fill(None);
         Ok(())
@@ -1740,9 +1690,7 @@ impl RiichiRuntime {
             thinking_time.base_ms(),
             thinking_time.reserve_ms(),
         ));
-        self.opening_ready.fill(false);
-        self.opening_started_at_ms = now_ms;
-        self.first_opening_ready_at_ms = None;
+        self.opening.reset_hand(now_ms);
         self.record_events(transition.into_events())
     }
 
@@ -1761,9 +1709,6 @@ impl RiichiRuntime {
         let Some(pending) = self.pending_settlement.as_mut() else {
             return Ok(false);
         };
-        if pending.confirm_started_at_ms.is_some() {
-            return Ok(false);
-        }
         // 确认窗口只在「全场都报告播完」或「兜底到期」两个时刻打开：
         // －全场报告 → execute() 里直接设 confirm_started_at_ms
         // －兜底到期 → 按役种条数动态计算：番种越多播报越长
@@ -1775,14 +1720,12 @@ impl RiichiRuntime {
             .iter()
             .map(|w| w.evaluation().yaku().len())
             .sum();
-        let deadline_ms = pending
-            .settled_at_ms
-            .saturating_add(settlement_reveal_fallback_ms(yaku_count));
-        if now_ms < deadline_ms {
+        if !pending
+            .flow
+            .open_confirmation_if_due(now_ms, settlement_reveal_fallback_ms(yaku_count))
+        {
             return Ok(false);
         }
-        pending.played.fill(true);
-        pending.confirm_started_at_ms = Some(now_ms);
         self.version = self
             .version
             .checked_add(1)
@@ -1799,9 +1742,6 @@ impl RiichiRuntime {
             return Ok(false);
         }
         let due = self.pending_settlement.as_ref().is_some_and(|pending| {
-            let confirm_due = pending.confirm_started_at_ms.is_some_and(|started_ms| {
-                now_ms.saturating_sub(started_ms) >= SETTLEMENT_CONFIRM_MS
-            });
             // 窗口本身也有兜底：万一没人上报也没人点，整段流程仍然有个尽头。
             let yaku_count: usize = pending
                 .result
@@ -1809,9 +1749,9 @@ impl RiichiRuntime {
                 .iter()
                 .map(|w| w.evaluation().yaku().len())
                 .sum();
-            confirm_due
-                || now_ms.saturating_sub(pending.settled_at_ms)
-                    >= settlement_fallback_ms(yaku_count)
+            pending
+                .flow
+                .advance_due(now_ms, settlement_fallback_ms(yaku_count))
         });
         if !due {
             return Ok(false);
@@ -1837,12 +1777,9 @@ impl RiichiRuntime {
             // 开局动画的计时从「全场都load完」那一刻才起算。
             return Ok(false);
         }
-        if self.opening_ready.iter().all(|ready| *ready)
-            || !self.opening_ready_deadline_passed(now_ms)
-        {
+        if !self.opening.release_opening_if_due(now_ms) {
             return Ok(false);
         }
-        self.opening_ready.fill(true);
         self.version = self
             .version
             .checked_add(1)
@@ -1898,13 +1835,9 @@ impl RiichiRuntime {
         &mut self,
         now_ms: u64,
     ) -> Result<bool, ApplicationError> {
-        if self.is_finished() || !self.assets_loading() {
+        if self.is_finished() || !self.opening.terminate_if_assets_stalled(now_ms) {
             return Ok(false);
         }
-        if now_ms.saturating_sub(self.assets_started_at_ms) < MATCH_ASSET_LOAD_TIMEOUT_MS {
-            return Ok(false);
-        }
-        self.terminated_by_asset_timeout = true;
         for clock in &mut self.clocks {
             clock.disarm(now_ms);
         }
@@ -1919,7 +1852,7 @@ impl RiichiRuntime {
     pub(crate) fn is_finished(&self) -> bool {
         self.game.result().is_some()
             || self.terminated_by_exit_vote
-            || self.terminated_by_asset_timeout
+            || self.opening.terminated_by_asset_timeout()
     }
 
     #[must_use]

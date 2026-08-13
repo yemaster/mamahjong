@@ -7,6 +7,7 @@ mod game;
 mod identity;
 mod identity_store;
 mod impact_game;
+mod match_flow;
 mod matchmaking;
 mod music;
 mod naming;
