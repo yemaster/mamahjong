@@ -219,6 +219,8 @@ Infrastructure
 
 ## 文档
 
+- [新增麻将规则接入架构](docs/adding-mahjong-rules.md)：规则引擎与通用对局、开局、结算 UI 的边界
+
 完整文档索引见 [docs/README.md](docs/README.md)。
 
 ### 架构
