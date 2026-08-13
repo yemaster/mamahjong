@@ -114,11 +114,14 @@ pub(crate) enum CommandPayload {
     NineTerminals,
     #[serde(rename = "game.assets_ready")]
     MatchAssetsReady,
-    #[serde(rename = "riichi.ready_for_hand")]
+    #[serde(rename = "game.ready_for_hand", alias = "riichi.ready_for_hand")]
     ReadyForHand { hand_index: u32 },
-    #[serde(rename = "riichi.settlement_played")]
+    #[serde(rename = "game.settlement_played", alias = "riichi.settlement_played")]
     SettlementPlayed { hand_index: u32 },
-    #[serde(rename = "riichi.confirm_settlement")]
+    #[serde(
+        rename = "game.confirm_settlement",
+        alias = "riichi.confirm_settlement"
+    )]
     ConfirmSettlement { hand_index: u32 },
     #[serde(rename = "game.request_exit_vote")]
     RequestExitVote,
@@ -318,6 +321,23 @@ mod tests {
                 .is_err(),
                 "{name} must not be sent with an empty payload object",
             );
+        }
+    }
+
+    #[test]
+    fn shared_presentation_commands_use_game_namespace_and_accept_legacy_names() {
+        for (current, legacy) in [
+            ("game.ready_for_hand", "riichi.ready_for_hand"),
+            ("game.settlement_played", "riichi.settlement_played"),
+            ("game.confirm_settlement", "riichi.confirm_settlement"),
+        ] {
+            for name in [current, legacy] {
+                let frame = format!(r#"{{"name":"{name}","payload":{{"hand_index":7}}}}"#);
+                assert!(
+                    serde_json::from_str::<CommandPayload>(&frame).is_ok(),
+                    "{name} should remain accepted",
+                );
+            }
         }
     }
 }

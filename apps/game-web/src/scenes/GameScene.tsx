@@ -11,7 +11,6 @@ import { ApiError, gameApi, apiFailure } from "../api";
 import { Modal } from "../components/Modal";
 import {
   useSceneReady,
-  useSceneWaitingPeers,
 } from "../components/SceneTransition";
 import {
   playRiichiMusic,
@@ -41,10 +40,6 @@ import {
   DEFAULT_TABLECLOTH_ASSET,
   GameTable,
   type GameTableHandle,
-  OPENING_DICE_MS,
-  TILE_STAND_UP_MS,
-  openingDealArrival,
-  openingDealDuration,
   settlementCoveringSeats,
   TSUMO_THROW_MS,
 } from "../game/table";
@@ -92,8 +87,8 @@ import {
 } from "../game/tableDisplaySettings";
 import {
   openingDice,
-  type OpeningPhase,
 } from "../game/OpeningSequence";
+import { useMatchOpening } from "../game/useMatchOpening";
 import { MatchStream } from "../ws";
 import { useAuthStore } from "../stores/authStore";
 import { useGameStore } from "../stores/gameStore";
@@ -192,23 +187,6 @@ export default function GameScene({ matchId }: GameSceneProps) {
   /* 本家的对局素材load完了没有。全场load完之前后端一条命令都不收。 */
   const [assetsLoaded, setAssetsLoaded] = useState(false);
   const assetsRequested = useRef(false);
-  const assetsReadySeats = matchView?.assets_ready_seats ?? null;
-  /* 全场都把素材load完了才轮得到发牌。 */
-  const allAssetsReady =
-    matchView == null ||
-    assetsReadySeats == null ||
-    assetsReadySeats.length >= matchView.players.length;
-  /* 本家这一次报到后端收没收到。 */
-  const localAssetsReady =
-    matchView == null ||
-    assetsReadySeats == null ||
-    assetsReadySeats.includes(matchView.observer_seat);
-  /* 有人一直没load完，这局已经作废。 */
-  const assetsTimedOut = Boolean(matchView?.terminated_by_asset_timeout);
-  const [openingPhase, setOpeningPhase] =
-    useState<OpeningPhase>("dice");
-  const [openingSequenceComplete, setOpeningSequenceComplete] =
-    useState(false);
   const [riichiSelecting, setRiichiSelecting] = useState(false);
   /*
    * 正在挑吃哪一组。存的是打开那一刻的 `version` 而不是一个开关：这一巡一过
@@ -437,6 +415,16 @@ export default function GameScene({ matchId }: GameSceneProps) {
     },
     [token, matchId, setMatchView, wsState],
   );
+  const {
+    phase: openingPhase,
+    allAssetsReady,
+    assetsTimedOut,
+  } = useMatchOpening({
+    matchId,
+    view: matchView,
+    assetsLoaded,
+    onCommand,
+  });
 
   /* 座位 → 这一家角色该喊的那条语音。
      查表塞在 ref 里，`shout` 才能保持稳定的身份：它被结算那串定时器用着，
@@ -579,7 +567,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
     const view = useGameStore.getState().matchView;
     if (!view?.hand_settlement || settlementPlayedSent.current) return;
     settlementPlayedSent.current = true;
-    onCommand("riichi.settlement_played", {
+    onCommand("game.settlement_played", {
       hand_index: view.hand_index,
     });
   }, [onCommand]);
@@ -590,7 +578,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
     if (!view?.hand_settlement || settlementConfirmSent.current) return;
     settlementConfirmSent.current = true;
     setPointsConfirmed(true);
-    onCommand("riichi.confirm_settlement", {
+    onCommand("game.confirm_settlement", {
       hand_index: view.hand_index,
     });
   }, [onCommand]);
@@ -955,132 +943,6 @@ export default function GameScene({ matchId }: GameSceneProps) {
     matchMusicPath,
     matchView,
     musicCatalog.isPending,
-  ]);
-
-  /*
-   * 素材load完之后报告服务端。报到那条命令可能赶在连上之前发出去，没回执就
-   * 隔一会儿再报一次，直到 localAssetsReady 为 true（服务端收到并在视图里
-   * 把本家加进 assets_ready_seats）。
-   */
-  useEffect(() => {
-    if (!assetsLoaded || localAssetsReady) return;
-    /* 立即发一次，然后每 2 秒重试。 */
-    onCommand("game.assets_ready");
-    const timer = window.setInterval(
-      () => onCommand("game.assets_ready"),
-      2_000,
-    );
-    return () => window.clearInterval(timer);
-  }, [assetsLoaded, localAssetsReady, onCommand]);
-
-  /* 见过一次「还有人没好」，这一局就得等人，中途别家齐了也照数报满。 */
-  const waitedForPeers = useRef(false);
-  if (
-    matchView &&
-    assetsReadySeats != null &&
-    assetsReadySeats.length < matchView.players.length
-  ) {
-    waitedForPeers.current = true;
-  }
-
-  /*
-   * 本家load完了就在云雾里报人数，一路报到全场齐（x/y 走到满）为止。
-   *
-   * 全场齐了才让云雾散，这中间不能撤回加载图；断线重连那种压根没等过人的，
-   * 也就不必闪一下人数。
-   */
-  useSceneWaitingPeers(
-    matchView && assetsLoaded && !assetsTimedOut && waitedForPeers.current
-      ? {
-          ready: assetsReadySeats?.length ?? matchView.players.length,
-          total: matchView.players.length,
-        }
-      : null,
-  );
-
-  useEffect(() => {
-    if (!matchView || matchView.id !== matchId) return;
-    /* 还有人没load完，牌一张都不能发。 */
-    if (!allAssetsReady) return;
-    const readySeats = matchView.opening_ready_seats ?? [];
-    const alreadyPlaying =
-      readySeats.includes(matchView.observer_seat) ||
-      matchView.players.some(
-        (player) => player.discards.length > 0 || player.melds.length > 0,
-      ) ||
-      matchView.hand_settlement != null ||
-      matchView.result != null;
-    if (alreadyPlaying) {
-      setOpeningPhase("waiting");
-      setOpeningSequenceComplete(true);
-      onCommand("riichi.ready_for_hand", {
-        hand_index: matchView.hand_index,
-      });
-      return;
-    }
-    setOpeningSequenceComplete(false);
-    setOpeningPhase("dice");
-    /* 骰子停稳、宝牌翻完就该取牌了，不再额外空等。 */
-    const startDealing = window.setTimeout(
-      () => setOpeningPhase("deal"),
-      OPENING_DICE_MS,
-    );
-    const finishDealing = window.setTimeout(
-      () => {
-        setOpeningPhase("waiting");
-        setOpeningSequenceComplete(true);
-        onCommand("riichi.ready_for_hand", {
-          hand_index: matchView.hand_index,
-        });
-      },
-      OPENING_DICE_MS + openingDealDuration(matchView.players.length),
-    );
-    /* 自己摸初始手牌（4+4+4+1），每批上手时响一次配牌音。 */
-    const seat = matchView.observer_seat;
-    const dealer = matchView.progress.dealer;
-    const seatCount = matchView.players.length;
-    const paisTimers: number[] = [];
-    for (const tileIndex of [0, 4, 8, 12]) {
-      const delay =
-        OPENING_DICE_MS +
-        openingDealArrival(tileIndex, seat, dealer, seatCount) +
-        TILE_STAND_UP_MS;
-      paisTimers.push(
-        window.setTimeout(() => playSfx(NEWROUND_PAIS_SFX), delay),
-      );
-    }
-    return () => {
-      window.clearTimeout(startDealing);
-      window.clearTimeout(finishDealing);
-      paisTimers.forEach(window.clearTimeout);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allAssetsReady, matchId, matchView?.hand_index, matchView?.id]);
-
-  useEffect(() => {
-    if (!matchView || !openingSequenceComplete) return;
-    const readySeats = matchView.opening_ready_seats;
-    /*
-     * 自己播完了还不算，得等全场都播完——服务端在那之前也不收出牌命令。
-     * 有人掉线不报告的话服务端会在宽限到期后替他补上，这里跟着放行。
-     */
-    const handAlreadyMoved =
-      matchView.players.some(
-        (player) => player.discards.length > 0 || player.melds.length > 0,
-      ) ||
-      matchView.hand_settlement != null ||
-      matchView.result != null;
-    if (
-      readySeats == null ||
-      readySeats.length >= matchView.players.length ||
-      handAlreadyMoved
-    ) {
-      setOpeningPhase("play");
-    }
-  }, [
-    matchView,
-    matchView?.opening_ready_seats,
-    openingSequenceComplete,
   ]);
 
   /*
