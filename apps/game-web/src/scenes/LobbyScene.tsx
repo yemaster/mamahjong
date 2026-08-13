@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleHelp,
   LogOut,
@@ -14,14 +15,15 @@ import { LobbyFunctionButton } from "../components/LobbyFunctionButton";
 import { useSceneReady } from "../components/SceneTransition";
 import { navigateTo } from "../routing";
 import {
+  LOBBY_BACKGROUND,
+  preloadLobbyImages,
+  resolveLobbyPresentation,
+} from "../lobbyAssets";
+import {
   returnToSplashForLogin,
   useAuthStore,
 } from "../stores/authStore";
 import { CreateRoomPanel } from "./lobby/CreateRoomPanel";
-
-const lobbyBackground = `${import.meta.env.BASE_URL}assets/ui/sakura-campus-empty.png`;
-const fallbackCharacter = `${import.meta.env.BASE_URL}assets/local-characters/mahjong-soul/ichihime/outfits/yiji.png`;
-const fallbackAvatar = `${import.meta.env.BASE_URL}assets/local-characters/mahjong-soul/ichihime/emotes/8.png`;
 
 type Menu = "main" | "ranked" | "friends" | "join" | "create";
 
@@ -37,11 +39,22 @@ export default function LobbyScene({
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
-  const [character, setCharacter] = useState({
-    name: "一姬",
-    illustration_path: fallbackCharacter,
-    avatar_path: fallbackAvatar,
+  const {
+    data: characterCatalog,
+    isPending: characterCatalogPending,
+  } = useQuery({
+    queryKey: ["characters"],
+    queryFn: () => gameApi.characters(),
+    staleTime: 5 * 60_000,
   });
+  const character = useMemo(
+    () =>
+      resolveLobbyPresentation(
+        characterCatalog?.characters ?? [],
+        identity?.profile,
+      ),
+    [characterCatalog, identity?.profile],
+  );
   const [characterReady, setCharacterReady] = useState(false);
   useSceneReady(characterReady);
 
@@ -55,68 +68,23 @@ export default function LobbyScene({
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const loadImage = (src: string) =>
-      new Promise<void>((resolve, reject) => {
-        const image = new Image();
-        image.onload = () => resolve();
-        image.onerror = () => reject(new Error("角色立绘加载失败"));
-        image.src = src;
-      });
+    if (characterCatalogPending) {
+      setCharacterReady(false);
+      return;
+    }
 
-    gameApi
-      .characters()
-      .then(async ({ characters }) => {
-        const selectedCharacterId = identity?.profile.selected_character?.id;
-        const nextCharacter =
-          characters.find(
-            (candidate) => candidate.id === selectedCharacterId,
-          ) ??
-          characters.find((candidate) => candidate.is_default) ??
-          characters[0];
-        if (!nextCharacter) {
-          throw new Error("没有可用角色");
-        }
-        const illustrationPath =
-          nextCharacter.outfits.find(
-            (outfit) => outfit.id === identity?.profile.selected_outfit_id,
-          )?.illustration_path ?? nextCharacter.illustration_path;
-        const avatarPath =
-          nextCharacter.emotes.find(
-            (emote) => emote.path === identity?.profile.avatar_path,
-          )?.path ??
-          nextCharacter.emotes.find((emote) => emote.name === "微笑")?.path ??
-          nextCharacter.emotes[0]?.path ??
-          illustrationPath;
-        await Promise.all([
-          loadImage(illustrationPath),
-          loadImage(avatarPath),
-        ]);
-        if (!cancelled) {
-          setCharacter({
-            name: nextCharacter.name,
-            illustration_path: illustrationPath,
-            avatar_path: avatarPath,
-          });
-          setCharacterReady(true);
-        }
-      })
-      .catch(async () => {
-        await Promise.all([
-          loadImage(fallbackCharacter).catch(() => {}),
-          loadImage(fallbackAvatar).catch(() => {}),
-        ]);
+    let cancelled = false;
+    setCharacterReady(false);
+    void preloadLobbyImages(character)
+      .catch(() => undefined)
+      .then(() => {
         if (!cancelled) setCharacterReady(true);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [
-    identity?.profile.avatar_path,
-    identity?.profile.selected_character?.id,
-    identity?.profile.selected_outfit_id,
-  ]);
+  }, [character, characterCatalogPending]);
 
   const toggleFullscreen = async () => {
     try {
@@ -181,13 +149,13 @@ export default function LobbyScene({
     <section className="game-lobby" aria-label="雀庄大厅">
       <div
         className="game-lobby__background"
-        style={{ backgroundImage: `url("${lobbyBackground}")` }}
+        style={{ backgroundImage: `url("${LOBBY_BACKGROUND}")` }}
         aria-hidden="true"
       />
       <div className="game-lobby__veil" aria-hidden="true" />
 
       <div className="game-lobby__character">
-        <img src={character.illustration_path} alt={character.name} />
+        <img src={character.illustrationPath} alt={character.name} />
       </div>
 
       <button
@@ -199,7 +167,7 @@ export default function LobbyScene({
         aria-label="查看用户详情"
       >
         <div className="game-lobby__user-avatar">
-          <img src={character.avatar_path} alt={character.name} />
+          <img src={character.avatarPath} alt={character.name} />
         </div>
         <div className="game-lobby__user-name">
           {identity?.profile.nickname || identity?.login_name}

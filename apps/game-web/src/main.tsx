@@ -24,6 +24,10 @@ import {
 } from "./stores/authStore";
 import type { MusicTrackListResponse } from "./types";
 import { useSakuraClickEffect } from "./effects/useSakuraClickEffect";
+import {
+  preloadLobbyImages,
+  resolveLobbyPresentation,
+} from "./lobbyAssets";
 import "./styles/global.css";
 
 const loadApp = () => import("./App");
@@ -101,10 +105,28 @@ function Root() {
         )
         .catch(() => undefined);
 
+      // 角色目录、所选立绘/头像和大厅背景都必须在初始加载页完成。
+      // LobbyScene 复用同一个 query key 和浏览器图片缓存，进大厅后不再补加载。
+      const lobbyImages = queryClient
+        .fetchQuery({
+          queryKey: ["characters"],
+          queryFn: () => gameApi.characters(),
+          staleTime: 5 * 60_000,
+        })
+        .then(({ characters }) =>
+          preloadLobbyImages(
+            resolveLobbyPresentation(
+              characters,
+              useAuthStore.getState().identity?.profile,
+            ),
+          ),
+        );
+
       const tasks = [
         loadApp(),
         loadLobby(),
         lobbyMusic,
+        lobbyImages,
         queryClient.prefetchQuery({
           queryKey: ["rooms"],
           queryFn: () => gameApi.rooms(authenticatedToken),
