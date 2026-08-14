@@ -3,6 +3,13 @@ import type { WsSeatCountdown, WsSeatPresence } from "./types";
 
 const PROTOCOL = "mamahjong.v1";
 
+export function websocketUrl(baseUrl: string, ticket: string): string {
+  const url = new URL("/api/v1/ws", baseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.searchParams.set("ticket", ticket);
+  return url.toString();
+}
+
 export type StreamEvent =
   | { kind: "events_arrived" }
   | { kind: "clock"; seats: WsSeatCountdown[]; version: number }
@@ -123,10 +130,7 @@ export class MatchStream {
   private async doConnect(): Promise<void> {
     try {
       const ticketResp = await gameApi.wsTicket(this.token);
-      const host = this.baseUrl
-        .replace(/^https?:\/\//, "")
-        .replace(/\/$/, "");
-      const wsUrl = `ws://${host}/api/v1/ws?ticket=${ticketResp.ticket}`;
+      const wsUrl = websocketUrl(this.baseUrl, ticketResp.ticket);
 
       const ws = new WebSocket(wsUrl);
       this.ws = ws;
