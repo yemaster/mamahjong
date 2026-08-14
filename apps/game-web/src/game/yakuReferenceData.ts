@@ -230,7 +230,7 @@ export const yakuReferenceEntries: YakuReferenceEntry[] = [
   },
   {
     name: "三色同顺",
-    value: "门前2番・副露1番",
+    value: "门前2番",
     openReduction: 1,
     description: "万、筒、索三色中各有一组相同数字的顺子。",
     tiles: tiles("234m 234p 67m 55z 234s 8m"),
@@ -239,7 +239,7 @@ export const yakuReferenceEntries: YakuReferenceEntry[] = [
   },
   {
     name: "一气通贯",
-    value: "门前2番・副露1番",
+    value: "门前2番",
     openReduction: 1,
     description: "同一花色中集齐一二三、四五六和七八九。",
     tiles: tiles("123m 789m 34p 55z 456m 5p"),
@@ -248,7 +248,7 @@ export const yakuReferenceEntries: YakuReferenceEntry[] = [
   },
   {
     name: "混全带幺九",
-    value: "门前2番・副露1番",
+    value: "门前2番",
     openReduction: 1,
     description: "每组面子和雀头都含幺九牌或字牌，且含有顺子。",
     tiles: tiles("123m 789p 99s 55z 111z 9s"),
@@ -264,7 +264,7 @@ export const yakuReferenceEntries: YakuReferenceEntry[] = [
   },
   {
     name: "混一色",
-    value: "门前3番・副露2番",
+    value: "门前3番",
     openReduction: 1,
     description: "整副牌只使用一种数牌和字牌。",
     tiles: tiles("123m 789m 11z 55z 456m 1z"),
@@ -273,7 +273,7 @@ export const yakuReferenceEntries: YakuReferenceEntry[] = [
   },
   {
     name: "纯全带幺九",
-    value: "门前3番・副露2番",
+    value: "门前3番",
     openReduction: 1,
     description: "每组面子和雀头都含幺九牌，且不含字牌。",
     tiles: tiles("123m 789m 99s 11m 111p 9s"),
@@ -282,7 +282,7 @@ export const yakuReferenceEntries: YakuReferenceEntry[] = [
   },
   {
     name: "清一色",
-    value: "门前6番・副露5番",
+    value: "门前6番",
     openReduction: 1,
     description: "整副牌只由同一种花色的数牌组成。",
     tiles: tiles("123m 789m 22m 55m 456m 2m"),

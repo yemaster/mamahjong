@@ -117,12 +117,12 @@ const REFERENCE_FAMILIES = [
   {
     key: "riichi",
     label: "立直麻将",
-    summary: "标准四人 / 三人日麻。按番数查役种，每条都配示例牌型。",
+    summary: "经典四人 / 三人立直麻将。",
   },
   {
     key: "impact",
     label: "冲击麻将",
-    summary: "只自摸、财神百搭、另有一本杠点账。规则、番种与全交。",
+    summary: "宁波余慈地区冲击麻将。",
   },
 ] as const;
 
@@ -226,7 +226,7 @@ function ImpactReference() {
         ))}
       </div>
       <div className="yaku-reference__list is-impact" role="tabpanel">
-        {activeTab === "基本规则" || activeTab === "杠点"
+        {activeTab === "基本规则"
           ? impactRuleSections[activeTab].map((section) => (
               <article className="yaku-reference__item" key={section.title}>
                 <div className="yaku-reference__title">
@@ -243,7 +243,7 @@ function ImpactReference() {
               </article>
             ))
           : null}
-        {activeTab === "番种" && (
+        {activeTab === "记分" && (
           <ImpactYakuTable
             note={IMPACT_BASE_VALUE_TEXT}
             entries={impactYakuEntries}

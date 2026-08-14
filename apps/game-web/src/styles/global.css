@@ -1027,6 +1027,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   background: #ded3d1;
   color: #211b1d;
   font-family: var(--font-game);
+  font-size: 24px;
 }
 
 .yaku-reference-modal {
@@ -1216,6 +1217,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   box-shadow: 10px 12px 0 rgba(0, 0, 0, 0.36);
   color: #211b1d;
   font-family: var(--font-game);
+  font-size: 24px;
 }
 
 .yaku-reference__header {
@@ -1279,14 +1281,14 @@ a { color: var(--pink-dark); text-decoration: none; }
 }
 
 .yaku-reference__tabs button {
-  min-width: 104px;
-  padding: 13px 18px 11px;
+  min-width: 128px;
+  padding: 16px 22px 14px;
   border: 0;
   border-right: 2px solid #625459;
   background: transparent;
   color: #4a3e42;
   font: inherit;
-  font-size: 18px;
+  font-size: 24px;
   font-weight: 900;
   cursor: pointer;
   white-space: nowrap;
@@ -1309,7 +1311,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   overflow-y: auto;
   margin: 0;
   padding: 42px;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
   align-content: start;
   list-style: none;
@@ -1343,7 +1345,7 @@ a { color: var(--pink-dark); text-decoration: none; }
 .yaku-reference__families h2 {
   margin: 0;
   color: #6f313b;
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 900;
   letter-spacing: 0.08em;
 }
@@ -1351,7 +1353,7 @@ a { color: var(--pink-dark); text-decoration: none; }
 .yaku-reference__families p {
   margin: 10px 0 0;
   color: #3a2f32;
-  font-size: 14px;
+  font-size: 24px;
   line-height: 1.7;
 }
 
@@ -1359,7 +1361,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   margin-top: auto;
   padding-top: 16px;
   color: #6f313b;
-  font-size: 14px;
+  font-size: 24px;
   font-weight: 900;
   letter-spacing: 0.06em;
 }
@@ -1371,7 +1373,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   border: 2px solid #4a3e42;
   background: rgba(111, 49, 59, 0.1);
   color: #3a2f32;
-  font-size: 15px;
+  font-size: 24px;
   line-height: 1.7;
   grid-column: 1 / -1;
 }
@@ -1384,7 +1386,7 @@ a { color: var(--pink-dark); text-decoration: none; }
 
 .impact-reference__terms dt {
   color: #6f313b;
-  font-size: 15px;
+  font-size: 24px;
   font-weight: 900;
   letter-spacing: 0.06em;
 }
@@ -1392,7 +1394,7 @@ a { color: var(--pink-dark); text-decoration: none; }
 .impact-reference__terms dd {
   margin: 3px 0 0;
   color: #3a2f32;
-  font-size: 14px;
+  font-size: 24px;
   line-height: 1.7;
 }
 
@@ -1402,7 +1404,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   flex: 1;
   overflow-y: auto;
   padding: 42px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
   overscroll-behavior: contain;
 }
@@ -1440,11 +1442,11 @@ a { color: var(--pink-dark); text-decoration: none; }
 
 .yaku-reference__tags > span {
   flex: 0 0 auto;
-  padding: 5px 10px 4px;
+  padding: 8px 14px 7px;
   border: 2px solid #6f313b;
   background: #8d404b;
   color: #fff8ee;
-  font-size: 14px;
+  font-size: 24px;
   font-weight: 900;
   line-height: 1;
   white-space: nowrap;
@@ -1461,49 +1463,49 @@ a { color: var(--pink-dark); text-decoration: none; }
 }
 
 .yaku-reference__item p {
-  min-height: 2.8em;
-  margin: 10px 0 15px;
+  min-height: 0;
+  margin: 14px 0 22px;
   color: #51464a;
   font-family: system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.4;
+  font-size: 24px;
+  line-height: 1.55;
 }
 
 .yaku-reference__example {
   display: flex;
   min-width: 0;
   align-items: flex-end;
-  gap: 1px;
-  padding-top: 6px;
+  gap: 2px;
+  padding-top: 10px;
 }
 
 .yaku-reference__tile {
   position: relative;
-  width: 28px;
-  height: 40px;
-  flex: 0 1 28px;
+  width: 48px;
+  height: 69px;
+  flex: 0 1 48px;
   min-width: 0;
 }
 
 .yaku-reference__tile.is-group-start {
-  margin-left: 5px;
+  margin-left: 9px;
 }
 
 .yaku-reference__tile.is-meld-start {
-  margin-left: 15px;
+  margin-left: 26px;
 }
 
 .yaku-reference__tile.is-winning {
-  margin-left: 15px;
+  margin-left: 26px;
 }
 
 .yaku-reference__tile.is-winning::after {
   content: "";
   position: absolute;
-  right: 3px;
-  bottom: -6px;
-  left: 3px;
-  height: 3px;
+  right: 5px;
+  bottom: -10px;
+  left: 5px;
+  height: 5px;
   background: #7c313b;
 }
 
@@ -1524,13 +1526,13 @@ a { color: var(--pink-dark); text-decoration: none; }
 .yaku-reference__tile-body::before {
   z-index: 0;
   background: #396d49;
-  transform: translateY(-4.8px);
+  transform: translateY(-8px);
 }
 
 .yaku-reference__tile-body::after {
   z-index: 1;
   background: #b0b0b4;
-  transform: translateY(-2.4px);
+  transform: translateY(-4px);
 }
 
 .yaku-reference__tile-face {
@@ -2226,7 +2228,6 @@ a { color: var(--pink-dark); text-decoration: none; }
 
 .lobby-create__choice button,
 .lobby-create__toggle,
-.lobby-create__advanced-toggle,
 .lobby-create__actions button {
   border: 2px solid #49363c;
   border-radius: 0;
@@ -2254,7 +2255,6 @@ a { color: var(--pink-dark); text-decoration: none; }
 
 .lobby-create__choice button:hover,
 .lobby-create__toggle:hover:not(:disabled),
-.lobby-create__advanced-toggle:hover,
 .lobby-create__actions button:hover:not(:disabled) {
   transform: translateY(-2px);
 }
@@ -2279,44 +2279,15 @@ a { color: var(--pink-dark); text-decoration: none; }
   text-align: right;
 }
 
-.lobby-create__advanced-toggle {
-  display: flex;
-  width: 100%;
-  min-height: 58px;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 8px;
-  padding: 0 16px;
-  background: #d6b9b1;
-  font-size: 24px;
-  letter-spacing: 0.12em;
-}
-
-.lobby-create__advanced-toggle b {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  background: #49363c;
-  color: #f3e7dc;
-  font-size: 24px;
-}
-
-.lobby-create__advanced {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding-top: 12px;
-  animation: lobbyAdvancedIn 180ms ease-out both;
-}
-
-/*
- * 间距和「高级设置」那一片取同一个值：立直这里只有一组，隔多少都看不出来；
- * 冲击麻将的五组设置全摆在这一层，不留缝的话几块深色边框会连成一整片。
- */
+/* 各设置组平铺在同一层，组内仍由玩家按需展开。 */
 .lobby-create__basic-rules {
   display: grid;
   gap: 10px;
+}
+
+/* 对局设置和后续规则组由两个相邻容器渲染，也要保持组间距。 */
+.lobby-create__basic-rules + .lobby-create__basic-rules {
+  margin-top: 10px;
 }
 
 .lobby-create__group {
@@ -2394,17 +2365,6 @@ a { color: var(--pink-dark); text-decoration: none; }
 .lobby-create__actions button:disabled {
   cursor: wait;
   opacity: 0.5;
-}
-
-@keyframes lobbyAdvancedIn {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 @keyframes lobbyBackgroundIn {

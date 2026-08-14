@@ -6,13 +6,6 @@ import {
 } from "./yakuReferenceData";
 
 describe("役种番数标签", () => {
-  it("门前与副露番数拆成两个独立标签", () => {
-    expect(yakuValueTags("门前3番・副露2番")).toEqual([
-      "门前3番",
-      "副露2番",
-    ]);
-  });
-
   it("役满倍数保持为单独标签", () => {
     expect(yakuValueTags("役满")).toEqual(["役满"]);
     expect(yakuValueTags("双倍役满")).toEqual(["双倍役满"]);
@@ -44,21 +37,6 @@ describe("役种番数标签", () => {
     )!;
     expect(yakuEntryTabs(sanshoku)).toEqual(["2番"]);
     expect(yakuEntryTabs(chinitsu)).toEqual(["6番"]);
-  });
-
-  it("所有副露减一番役种都有明确标记", () => {
-    expect(
-      yakuReferenceEntries
-        .filter((entry) => entry.value.includes("副露"))
-        .map((entry) => [entry.name, entry.openReduction]),
-    ).toEqual([
-      ["三色同顺", 1],
-      ["一气通贯", 1],
-      ["混全带幺九", 1],
-      ["混一色", 1],
-      ["纯全带幺九", 1],
-      ["清一色", 1],
-    ]);
   });
 
   it("副露示例按暗手、副露、和牌排列并保留两个间隔", () => {
