@@ -320,7 +320,11 @@ fn detect_shapes(
     let all_triplets = context.melds.iter().all(|meld| meld.kind != MeldKind::Chi)
         && shape::standard(counts, jokers, sets_needed, true, false);
 
-    let seven_pairs = melds_len == kan_melds
+    // 一杠一达、二杠二达只容许真正的杠副露；只要还碰过（包括指示牌碰）或吃过，
+    // 就不能再把杠折算成七对。逐组判断比比较计数更直接，也不会把按杠点结算但牌型
+    // 仍是刻子的 IndicatorPon / IndicatorConcealed 误当成「杠达」。
+    let only_kan_melds = context.melds.iter().all(|meld| meld.kind.is_kan());
+    let seven_pairs = only_kan_melds
         && kan_melds <= 3
         && shape::pairs_shape(counts, jokers, 7 - 2 * kan_melds, kan_melds);
 
@@ -371,7 +375,8 @@ fn pao_long(
     let spare_jokers = before_jokers - 1;
 
     let sets = shape::standard(&before_counts, spare_jokers, 4 - melds_len, false, true);
-    let pairs = melds_len == kan_melds
+    // 抛龙的七对分支与和牌形状使用同一条「副露只能有真杠」限制。
+    let pairs = context.melds.iter().all(|meld| meld.kind.is_kan())
         && kan_melds <= 3
         && shape::pairs_shape(&before_counts, spare_jokers, 6 - 2 * kan_melds, kan_melds);
 
@@ -686,6 +691,34 @@ mod tests {
         assert!(
             win.shapes().seven_pairs,
             "一杠一达：1 杠 + 5 对 + 1 张任意牌"
+        );
+    }
+
+    #[test]
+    fn kan_reached_seven_pairs_rejects_any_pon_meld() {
+        let mut one_kan = Case::new("5z", "1m 2m 3m 4p 5p 6p 7s 7s", "7s");
+        one_kan.melds = vec![
+            MeldSummary::new(MeldKind::ConcealedKan, kind("1z")),
+            MeldSummary::new(MeldKind::Pon, kind("2z")),
+        ];
+        let win = one_kan.win();
+        assert!(win.shapes().standard, "这手仍是普通和牌");
+        assert!(
+            !win.shapes().seven_pairs,
+            "一杠之后有普通碰牌，不能算一杠一达"
+        );
+
+        let mut two_kans = Case::new("5z", "1m 2m 3m 7s 7s", "7s");
+        two_kans.melds = vec![
+            MeldSummary::new(MeldKind::OpenKan, kind("1z")),
+            MeldSummary::new(MeldKind::AddedKan, kind("2z")),
+            MeldSummary::new(MeldKind::IndicatorPon, kind("3z")),
+        ];
+        let win = two_kans.win();
+        assert!(win.shapes().standard, "这手仍是普通和牌");
+        assert!(
+            !win.shapes().seven_pairs,
+            "二杠之外有指示牌碰，不能算二杠二达"
         );
     }
 

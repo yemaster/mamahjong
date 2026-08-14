@@ -157,6 +157,28 @@ fn a_kan_counts_as_two_pairs_in_seven_pairs() {
 }
 
 #[test]
+fn kan_reached_seven_pairs_allows_only_kan_melds() {
+    let mut one_kan = Win::new("5z", "1m 2m 3m 4p 5p 6p 7s 7s", "7s");
+    one_kan.melds = vec![
+        MeldSummary::new(MeldKind::ConcealedKan, kind("1z")),
+        MeldSummary::new(MeldKind::Pon, kind("2z")),
+    ];
+    let win = one_kan.win();
+    assert!(win.shapes().standard);
+    assert!(!win.shapes().seven_pairs, "有碰牌不能算一杠一达");
+
+    let mut two_kans = Win::new("5z", "1m 2m 3m 7s 7s", "7s");
+    two_kans.melds = vec![
+        MeldSummary::new(MeldKind::OpenKan, kind("1z")),
+        MeldSummary::new(MeldKind::AddedKan, kind("2z")),
+        MeldSummary::new(MeldKind::IndicatorPon, kind("3z")),
+    ];
+    let win = two_kans.win();
+    assert!(win.shapes().standard);
+    assert!(!win.shapes().seven_pairs, "有指示牌碰不能算二杠二达");
+}
+
+#[test]
 fn thirteen_unrelated_needs_every_pair_of_same_suit_tiles_more_than_two_apart() {
     let good = Win::new("9s", "1m 4m 7m 1p 4p 7p 1s 4s 1z 2z 3z 4z 5z 6z", "6z");
     assert!(good.win().shapes().thirteen_unrelated);
