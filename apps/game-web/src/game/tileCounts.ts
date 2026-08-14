@@ -29,6 +29,7 @@ export function visibleTileCounts(view: MatchView): Map<string, number> {
     for (const meld of player.melds) {
       for (const tile of meld.tiles) add(tile.code);
     }
+    for (const tile of player.nuki_tiles ?? []) add(tile.code);
   }
   return counts;
 }

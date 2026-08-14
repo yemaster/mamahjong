@@ -217,6 +217,7 @@ export type RuleConfig = RiichiRuleConfig | ImpactRuleConfig;
 export type RiichiVariant = "yonma" | "sanma";
 export type MatchLength = "east_only" | "hanchan";
 export type DealerContinuation = "win_only" | "win_or_tenpai";
+export type SanmaNorthRule = "nuki_dora" | "yakuhai";
 export type YakumanValue = "stacked_only" | "double_variants_and_stacked";
 export type KuikaeRule = "forbidden" | "same_tile_only" | "allowed";
 export type RonResolution = "head_bump" | "multiple";
@@ -239,6 +240,7 @@ export interface RiichiRuleConfig {
     tobi: boolean;
     dealer_continuation: DealerContinuation;
     agari_yame: boolean;
+    north?: SanmaNorthRule;
   };
   scoring: {
     kiriage_mangan: boolean;
@@ -275,8 +277,7 @@ export interface RiichiRuleConfig {
   };
 }
 
-/** 目前只有「瞎子麻将」，仅是模式名，不带任何额外机制。 */
-export type ImpactMode = "blind";
+export type ImpactMode = "blind" | "bright";
 
 /**
  * 冲击麻将的规则配置。
@@ -413,7 +414,11 @@ export interface MatchView extends ApiEnvelope {
   progress: ProgressView;
   phase: MatchPhase;
   remaining_live_draws: number;
+  /** 已实际摸走的岭上牌数量；拔北或杠的响应窗口中尚不增加。 */
+  completed_rinshan_draws?: number;
   dora_indicators: TileView[];
+  /** 三麻的北规则；四麻不下发。 */
+  sanma_north_rule?: SanmaNorthRule;
   /** 冲击麻将：唯一那张财神指示牌，画在左上角。 */
   joker_indicator?: TileView;
   /** 由指示牌推出来的财神牌码；手牌里凡是这张都当百搭。 */
@@ -459,7 +464,8 @@ export type KanPointsKind =
   | "four_identical_discards"
   | "four_consecutive_discards"
   | "three_indicator_discards"
-  | "three_consecutive_indicator";
+  | "three_consecutive_indicator"
+  | "chankan";
 
 export interface ExitVoteView {
   initiator_seat: number;
@@ -541,6 +547,8 @@ export interface MatchPlayerView {
   concealed_tile_count: number;
   drawn_tile_id: number | null;
   melds: MeldView[];
+  /** 三麻已经拔出的北牌。 */
+  nuki_tiles: TileView[];
   discards: DiscardView[];
   riichi_status: "none" | "pending" | "established";
   waiting_tiles: WaitingTileView[];
@@ -607,6 +615,7 @@ export interface TurnActions {
   tenpai_discard_hints: DiscardWaitHint[];
   concealed_kan_tile_ids: [number, number, number, number][];
   added_kan_options: AddedKanOption[];
+  nuki_tile_ids: number[];
   can_nine_terminals: boolean;
   /** 冲击麻将的暗杠：报牌码而不是牌号，具体哪四张由服务端挑。 */
   impact_concealed_kan_tile_codes?: string[];
@@ -672,11 +681,14 @@ export type GameCommandName =
   | "riichi.open_kan"
   | "riichi.concealed_kan"
   | "riichi.added_kan"
+  | "riichi.nuki"
   | "game.ready_for_hand"
   | "game.settlement_played"
   | "game.confirm_settlement"
   | "impact.discard"
   | "impact.tsumo"
+  | "impact.ron"
+  | "impact.chi"
   | "impact.pon"
   | "impact.open_kan"
   | "impact.concealed_kan"

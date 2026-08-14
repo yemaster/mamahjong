@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { MatchView } from "../types";
 import {
   detectMeldCalls,
+  detectNukiCalls,
   detectRiichiCalls,
   drawRevealOrder,
   isDoubleRiichiTurn,
@@ -14,6 +15,7 @@ const view = (
     riichi_status?: string;
     /** 这一家已经打出去几张，只有判两立直时才在意。 */
     discards?: number;
+    nuki?: number;
   }[],
   dealer = 0,
 ) =>
@@ -23,6 +25,10 @@ const view = (
       melds: player.melds ?? [],
       riichi_status: player.riichi_status ?? "none",
       discards: Array.from({ length: player.discards ?? 0 }, () => ({})),
+      nuki_tiles: Array.from({ length: player.nuki ?? 0 }, (_, id) => ({
+        id,
+        code: "4z",
+      })),
     })),
     progress: { dealer },
   }) as unknown as MatchView;
@@ -59,6 +65,14 @@ describe("鸣牌播报", () => {
   it("副露没变化时不播报", () => {
     const same = view([{ seat: 0, melds: [{ id: 1, kind: "chi" }] }]);
     expect(detectMeldCalls(same, same)).toEqual([]);
+  });
+});
+
+describe("拔北播报", () => {
+  it("拔出的北增加时只播报对应座位", () => {
+    const before = view([{ seat: 0 }, { seat: 1, nuki: 1 }]);
+    const after = view([{ seat: 0, nuki: 1 }, { seat: 1, nuki: 1 }]);
+    expect(detectNukiCalls(after, before)).toEqual([0]);
   });
 });
 

@@ -10,6 +10,7 @@ import {
   discardNaturalRotation,
   handPosition,
   handQuaternion,
+  nukiRiverPosition,
   rotateAroundTable,
   tableRelativeSeat,
 } from "./geometry";
@@ -44,13 +45,11 @@ export function addDiscards(
         openingPhase === "play" &&
         previousPlayer &&
         originalIndex >= previousPlayer.discards.length;
-      /* 冲击麻将摸牌多，牌河用四排；立直保持三排。 */
-      const riverMaxRow = view.variant_kind === "impact" ? 3 : 2;
       const riverPosition = discardGridPosition(
         index,
         runtime.tileWidthRatio,
         runtime.tileScale,
-        riverMaxRow,
+        3,
       );
       const group = makeTile(
         runtime,
@@ -124,6 +123,28 @@ export function addDiscards(
       }
     },
   );
+
+  for (const [index, tile] of (player.nuki_tiles ?? []).entries()) {
+    const position = nukiRiverPosition(
+      index,
+      runtime.tileWidthRatio,
+      runtime.tileScale,
+    );
+    const group = makeTile(runtime, tile.code, RIVER_TILE_LENGTH);
+    const local = new THREE.Vector3(
+      position.x,
+      (RIVER_TILE_DEPTH * runtime.tileScale) / 2 + 0.09,
+      position.z,
+    );
+    rotateAroundTable(local, relative);
+    group.position.copy(local);
+    group.rotation.y = relative * (Math.PI / 2);
+    if (isDoraTile(tile.code, view.dora_indicators ?? [])) {
+      markTileAsDora(runtime, group);
+    }
+    registerTableTile(runtime, group, tile.code);
+    rootTile(runtime, group);
+  }
 }
 
 /** 打出的那张牌原本站在手牌的哪个位置。 */

@@ -6,6 +6,7 @@ import {
   addedKanTilePosition,
   billboardHandTilt,
   canLocalPlayerDiscard,
+  completedImpactRinshanDraws,
   countCompletedKans,
   coveredHandTilt,
   doraWallTileIndex,
@@ -15,6 +16,7 @@ import {
   impactWallLayout,
   meldDisplayTiles,
   meldTilePosition,
+  nukiRiverPosition,
   openingDealArrival,
   openingDealDuration,
   openingDealOrder,
@@ -23,8 +25,10 @@ import {
   orthographicCameraBounds,
   playerIsHoldingDrawnTile,
   playerCompletedKan,
+  playerExtractedNorth,
   playerReceivedDraw,
   riichiWallLayout,
+  sanmaWallLayout,
   riverDiscardEntries,
   rinshanWallSlot,
   screenRectAnchor,
@@ -429,9 +433,15 @@ describe("冲击麻将的牌山", () => {
 
 
 describe("杠后岭上摸牌", () => {
-  it("两次杠依次从牌山末尾两张取牌", () => {
-    expect(rinshanWallSlot(42, 1)).toBe(41);
-    expect(rinshanWallSlot(42, 2)).toBe(40);
+  it("杠和拔北共用岭上序列，每墩都先取上层再取下层", () => {
+    expect(Array.from({ length: 4 }, (_, index) => rinshanWallSlot(42, index + 1))).toEqual([
+      40, 41, 38, 39,
+    ]);
+
+    const layout = riichiWallLayout(0, [1, 1]);
+    expect(Array.from({ length: 4 }, (_, index) => layout.rinshanOrderIndex(index + 1))).toEqual([
+      134, 135, 132, 133,
+    ]);
   });
 
   it("预览中的两组杠会在牌山末尾留下两个空位", () => {
@@ -472,6 +482,7 @@ describe("杠后岭上摸牌", () => {
     };
     const beforeKanView: MatchView = {
       ...tablePreviewView,
+      variant_kind: "impact",
       phase: { kind: "awaiting_turn_action", seat: currentPlayer.seat },
       players: tablePreviewView.players.map((player) =>
         player.seat === currentPlayer.seat ? previousPlayer : player,
@@ -479,19 +490,28 @@ describe("杠后岭上摸牌", () => {
     };
     const waitingView: MatchView = {
       ...tablePreviewView,
+      variant_kind: "impact",
       phase: {
         kind: "awaiting_kan_animation",
         seat: currentPlayer.seat,
       },
       players: tablePreviewView.players.map((player) =>
-        player.seat === currentPlayer.seat ? previousPlayer : player,
+        player.seat === currentPlayer.seat ? currentPlayer : player,
       ),
     };
     const drawnView: MatchView = {
       ...waitingView,
+      remaining_live_draws: waitingView.remaining_live_draws - 1,
       phase: { kind: "awaiting_turn_action", seat: currentPlayer.seat },
       players: tablePreviewView.players,
     };
+
+    expect(completedImpactRinshanDraws(waitingView)).toBe(
+      countCompletedKans(waitingView) - 1,
+    );
+    expect(completedImpactRinshanDraws(drawnView)).toBe(
+      countCompletedKans(drawnView),
+    );
 
     expect(
       playerReceivedDraw(
@@ -510,6 +530,92 @@ describe("杠后岭上摸牌", () => {
         currentPlayer,
         currentPlayer,
       ),
+    ).toBe(true);
+  });
+
+  it("别家拔北后的补牌也会被识别成共享岭上序列的一次新摸牌", () => {
+    const basePlayer = tablePreviewView.players.find(
+      (player) => player.seat !== tablePreviewView.observer_seat,
+    )!;
+    const previousPlayer = {
+      ...basePlayer,
+      nuki_tiles: [],
+    };
+    const currentPlayer = {
+      ...basePlayer,
+      nuki_tiles: [{ id: 9000, code: "4z" }],
+    };
+    const previousView: MatchView = {
+      ...tablePreviewView,
+      phase: { kind: "awaiting_turn_action", seat: currentPlayer.seat },
+      players: tablePreviewView.players.map((player) =>
+        player.seat === currentPlayer.seat ? previousPlayer : player,
+      ),
+    };
+    const currentView: MatchView = {
+      ...previousView,
+      players: previousView.players.map((player) =>
+        player.seat === currentPlayer.seat ? currentPlayer : player,
+      ),
+    };
+
+    expect(playerExtractedNorth(currentPlayer, previousPlayer)).toBe(true);
+    expect(
+      playerReceivedDraw(
+        currentView,
+        previousView,
+        currentPlayer,
+        previousPlayer,
+      ),
+    ).toBe(true);
+  });
+
+  it("加杠先落牌时不误报摸牌，岭上计数增加后才识别补摸", () => {
+    const placedPlayer = tablePreviewView.players.find(
+      (player) => player.seat !== tablePreviewView.observer_seat,
+    )!;
+    const ponPlayer = {
+      ...placedPlayer,
+      melds: placedPlayer.melds.map((meld, index) =>
+        index === 0
+          ? { ...meld, kind: "pon" as const, tiles: meld.tiles.slice(0, 3) }
+          : meld,
+      ),
+    };
+    const beforeView: MatchView = {
+      ...tablePreviewView,
+      completed_rinshan_draws: 0,
+      phase: { kind: "awaiting_turn_action", seat: placedPlayer.seat },
+      players: tablePreviewView.players.map((player) =>
+        player.seat === placedPlayer.seat ? ponPlayer : player,
+      ),
+    };
+    const responseView: MatchView = {
+      ...beforeView,
+      phase: { kind: "awaiting_responses", trigger_seat: placedPlayer.seat },
+      players: beforeView.players.map((player) =>
+        player.seat === placedPlayer.seat ? placedPlayer : player,
+      ),
+    };
+    const drawnPlayer = {
+      ...placedPlayer,
+      concealed_tile_count: placedPlayer.concealed_tile_count + 1,
+    };
+    const drawnView: MatchView = {
+      ...responseView,
+      completed_rinshan_draws: 1,
+      remaining_live_draws: responseView.remaining_live_draws - 1,
+      phase: { kind: "awaiting_turn_action", seat: placedPlayer.seat },
+      players: responseView.players.map((player) =>
+        player.seat === placedPlayer.seat ? drawnPlayer : player,
+      ),
+    };
+
+    expect(
+      playerReceivedDraw(responseView, beforeView, placedPlayer, ponPlayer),
+    ).toBe(false);
+    expect(
+      playerReceivedDraw(drawnView, responseView, drawnPlayer, placedPlayer),
     ).toBe(true);
   });
 });
@@ -670,6 +776,61 @@ describe("三麻固定座位", () => {
     expect(tableRelativeSeat(0, 1, 3)).toBe(3);
     expect(tableRelativeSeat(1, 1, 3)).toBe(0);
     expect(tableRelativeSeat(2, 1, 3)).toBe(1);
+  });
+});
+
+describe("三麻牌山", () => {
+  it("只在三名玩家面前各摆18墩，空北位没有牌", () => {
+    const layout = sanmaWallLayout(0, 0, [2, 3]);
+    const slots = Array.from({ length: layout.drawableCount }, (_, order) =>
+      layout.drawSlot(order),
+    );
+
+    expect(layout.drawableCount).toBe(108);
+    expect(new Set(slots).size).toBe(108);
+    expect(new Set(slots.map((slot) => Math.floor(slot / 36)))).toEqual(
+      new Set([0, 1, 2]),
+    );
+    for (const side of [0, 1, 2]) {
+      expect(slots.filter((slot) => Math.floor(slot / 36) === side)).toHaveLength(36);
+    }
+  });
+
+  it("换视角后仍空出绝对北位，而不是固定空屏幕左侧", () => {
+    const layout = sanmaWallLayout(0, 1, [1, 1]);
+    const sides = new Set(
+      Array.from({ length: 108 }, (_, order) =>
+        Math.floor(layout.drawSlot(order) / 36),
+      ),
+    );
+
+    expect(sides).toEqual(new Set([0, 1, 3]));
+    expect(sides.has(2)).toBe(false);
+  });
+
+  it("骰子从庄家算1并在三家之间循环，直接跳过空北位", () => {
+    // 绝对西家(2)掷出2点，应数到绝对东家(0)，不会落在空着的北位(3)。
+    const layout = sanmaWallLayout(2, 0, [1, 1]);
+    expect(Math.floor(layout.drawSlot(0) / 36)).toBe(0);
+  });
+
+  it("拔北与役牌模式分别从第9张和第5张位置开始翻宝牌", () => {
+    const nuki = sanmaWallLayout(0, 0, [2, 3], "nuki_dora");
+    const yakuhai = sanmaWallLayout(0, 0, [2, 3], "yakuhai");
+
+    expect(Array.from({ length: 5 }, (_, i) => nuki.doraOrderIndex(i))).toEqual([
+      98, 100, 102, 104, 106,
+    ]);
+    expect(Array.from({ length: 5 }, (_, i) => yakuhai.doraOrderIndex(i))).toEqual([
+      102, 100, 98, 96, 94,
+    ]);
+    const sharedRinshanOrder = [106, 107, 104, 105];
+    expect(Array.from({ length: 4 }, (_, i) => nuki.rinshanOrderIndex(i + 1))).toEqual(
+      sharedRinshanOrder,
+    );
+    expect(Array.from({ length: 4 }, (_, i) => yakuhai.rinshanOrderIndex(i + 1))).toEqual(
+      sharedRinshanOrder,
+    );
   });
 });
 
@@ -968,6 +1129,17 @@ describe("牌河排列", () => {
     expect(discardGridPosition(6).z - discardGridPosition(0).z).toBeCloseTo(
       0.5676,
     );
+  });
+
+  it("立直三麻和四麻都保留第四行，拔北从第三行第八格起向右排列", () => {
+    expect(discardGridPosition(18).z).toBeGreaterThan(discardGridPosition(12).z);
+    expect(discardGridPosition(24).z).toBe(discardGridPosition(18).z);
+    const thirdRowStart = discardGridPosition(12);
+    const columnStep = discardGridPosition(13).x - thirdRowStart.x;
+    expect(nukiRiverPosition(0).z).toBe(thirdRowStart.z);
+    expect(nukiRiverPosition(0).x).toBeCloseTo(thirdRowStart.x + 7 * columnStep);
+    expect(nukiRiverPosition(1).x).toBeGreaterThan(nukiRiverPosition(0).x);
+    expect(nukiRiverPosition(1).z).toBe(nukiRiverPosition(0).z);
   });
 
   it("牌河偏角细微且对同一张牌保持稳定", () => {

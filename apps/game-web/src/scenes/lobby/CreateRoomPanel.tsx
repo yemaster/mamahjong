@@ -11,6 +11,7 @@ import { MAHJONG_FAMILY_LABELS, mahjongFamilyOf } from "../../ruleTitle";
 import type {
   ImpactAllInRules,
   ImpactKanRules,
+  ImpactMode,
   ImpactRuleConfig,
   PlacementUma,
   RiichiRuleConfig,
@@ -30,6 +31,35 @@ function isImpactConfig(config: RuleConfig): config is ImpactRuleConfig {
   return "all_in" in config;
 }
 
+export function impactRulesForMode(
+  current: ImpactRuleConfig,
+  mode: ImpactMode,
+): ImpactRuleConfig {
+  const bright = mode === "bright";
+  return {
+    ...current,
+    mode,
+    kan: {
+      added_kan_single_payer: !bright,
+      indicator_pon_counts_as_kan: !bright,
+      first_round_repeat_discard: !bright,
+      four_identical_discards_as_kan: !bright,
+      pon_with_few_tiles_as_kan: !bright,
+    },
+    all_in: {
+      eleven_honor_streak: true,
+      all_honors: !bright,
+      pure_flush_no_joker: !bright,
+      single_wait: !bright,
+      three_kans: !bright,
+      four_jokers: true,
+      pure_seven_pairs: !bright,
+      last_tile: !bright,
+      blessing: true,
+    },
+  };
+}
+
 export function CreateRoomPanel({ token, onBack }: Props) {
   const catalog = useQuery({
     queryKey: ["ruleSets"],
@@ -40,7 +70,6 @@ export function CreateRoomPanel({ token, onBack }: Props) {
   const [ruleSetId, setRuleSetId] = useState("riichi/yonma");
   const [presetId, setPresetId] = useState("");
   const [rules, setRules] = useState<RuleConfig | null>(null);
-  const [advanced, setAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,7 +107,7 @@ export function CreateRoomPanel({ token, onBack }: Props) {
     setError(null);
   };
 
-  /** 换麻将种类，底下整片设置项跟着换成那一种的标准规则。 */
+  /** 换麻将种类，底下整片设置项跟着换成那一种的默认规则。 */
   const changeFamily = (nextFamily: string) => {
     if (nextFamily === family) return;
     const first = catalog.data?.rule_sets.find(
@@ -133,6 +162,14 @@ export function CreateRoomPanel({ token, onBack }: Props) {
           }
         : current,
     );
+  };
+
+  const changeImpactMode = (mode: ImpactMode) => {
+    markCustomRules();
+    setRules((current) => {
+      if (!current || !isImpactConfig(current)) return current;
+      return impactRulesForMode(current, mode);
+    });
   };
 
   const updateRedFive = (suit: "man" | "pin" | "sou", value: number) => {
@@ -297,7 +334,7 @@ export function CreateRoomPanel({ token, onBack }: Props) {
                 value={presetId}
                 onChange={(event) => changePreset(event.target.value)}
               >
-                <option value="">标准规则</option>
+                <option value="">默认规则</option>
                 {selectedRuleSet?.presets.map((preset) => (
                   <option key={preset.id} value={preset.id}>
                     {presetLabel(preset.id, preset.display_name)}
@@ -335,6 +372,20 @@ export function CreateRoomPanel({ token, onBack }: Props) {
                   }
                 />
               </SettingRow>
+              {riichiRules.variant === "sanma" ? (
+                <SettingRow label="北">
+                  <Choice
+                    value={riichiRules.match_rules.north ?? "nuki_dora"}
+                    options={[
+                      ["nuki_dora", "拔北宝牌"],
+                      ["yakuhai", "役牌"],
+                    ]}
+                    onChange={(north) =>
+                      updateSection("match_rules", { north })
+                    }
+                  />
+                </SettingRow>
+              ) : null}
               <SettingRow label="思考秒数">
                 <Choice
                   value={thinkingTimeValue(riichiRules)}
@@ -408,23 +459,12 @@ export function CreateRoomPanel({ token, onBack }: Props) {
           <ImpactRuleSettings
             rules={impactRules}
             onChange={updateImpactSection}
+            onModeChange={changeImpactMode}
           />
         ) : null}
 
         {riichiRules ? (
-          <button
-            type="button"
-            className="lobby-create__advanced-toggle"
-            aria-expanded={advanced}
-            onClick={() => setAdvanced((value) => !value)}
-          >
-            <span>高级设置</span>
-            <b aria-hidden="true">{advanced ? "收" : "展"}</b>
-          </button>
-        ) : null}
-
-        {advanced && riichiRules ? (
-          <div className="lobby-create__advanced">
+          <div className="lobby-create__basic-rules">
             <RuleGroup title="计分设置">
               <ToggleSetting
                 label="切上满贯"
@@ -467,7 +507,7 @@ export function CreateRoomPanel({ token, onBack }: Props) {
                 }
               />
               <ToggleSetting
-                label="国士抢暗杠"
+                label="国士无双抢暗杠"
                 checked={riichiRules.scoring.kokushi_ankan_chankan}
                 onChange={(kokushi_ankan_chankan) =>
                   updateSection("scoring", { kokushi_ankan_chankan })
@@ -660,7 +700,7 @@ type ImpactSectionUpdater = <K extends Exclude<keyof ImpactRuleConfig, "mode">>(
   patch: Partial<ImpactRuleConfig[K]>,
 ) => void;
 
-/** 杠牌设置，默认五项全开。 */
+/** 杠牌设置；瞎子默认全开，亮子默认全关。 */
 const IMPACT_KAN_LABELS: readonly (readonly [keyof ImpactKanRules, string])[] = [
   ["added_kan_single_payer", "加杠时仅单人支付"],
   ["indicator_pon_counts_as_kan", "指示牌碰牌算杠"],
@@ -669,7 +709,7 @@ const IMPACT_KAN_LABELS: readonly (readonly [keyof ImpactKanRules, string])[] = 
   ["pon_with_few_tiles_as_kan", "手牌≤4张时碰牌收杠点"],
 ];
 
-/** 全交设置，默认九项全开；关掉的那一项改为额外 +10 点。 */
+/** 全交设置；瞎子默认全开，亮子只默认开连打11风、四龙、天和地和。 */
 const IMPACT_ALL_IN_LABELS: readonly (readonly [
   keyof ImpactAllInRules,
   string,
@@ -694,9 +734,11 @@ const IMPACT_ALL_IN_LABELS: readonly (readonly [
 function ImpactRuleSettings({
   rules,
   onChange,
+  onModeChange,
 }: {
   rules: ImpactRuleConfig;
   onChange: ImpactSectionUpdater;
+  onModeChange: (mode: ImpactMode) => void;
 }) {
   return (
     <div className="lobby-create__basic-rules">
@@ -704,8 +746,11 @@ function ImpactRuleSettings({
         <SettingRow label="模式">
           <Choice
             value={rules.mode}
-            options={[["blind", "瞎子麻将"]]}
-            onChange={() => {}}
+            options={[
+              ["blind", "瞎子麻将"],
+              ["bright", "亮子麻将"],
+            ]}
+            onChange={(mode) => onModeChange(mode as ImpactMode)}
           />
         </SettingRow>
       </RuleGroup>
@@ -935,9 +980,9 @@ function parseThinkingTime(value: string): {
 
 function presetLabel(id: string, fallback: string): string {
   const labels: Record<string, string> = {
-    "jpml-a": "联盟规则甲",
+    "jpml-a": "联盟 A 规",
     saikouisen: "最高位战规则",
-    "m-league": "职业联赛规则",
+    "m-league": "ML 规",
   };
   return labels[id] ?? fallback;
 }

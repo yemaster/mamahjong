@@ -80,6 +80,7 @@ export function buildReplayView({
       concealed_tile_count: seat.concealed.length,
       drawn_tile_id: seat.drawnTileId,
       melds: seat.melds,
+      nuki_tiles: seat.nukiTiles,
       discards: seat.discards,
       riichi_status: seat.riichi,
       /*
@@ -104,6 +105,7 @@ export function buildReplayView({
     phase: replayPhase(state.activeSeat, observerSeat),
     remaining_live_draws: state.remainingLiveDraws,
     dora_indicators: state.doraIndicators,
+    sanma_north_rule: record.rule_snapshot.config?.match_rules?.north,
     players,
     available_reactions: [],
     turn_actions: {
@@ -113,6 +115,7 @@ export function buildReplayView({
       tenpai_discard_hints: [],
       concealed_kan_tile_ids: [],
       added_kan_options: [],
+      nuki_tile_ids: [],
       can_nine_terminals: false,
     },
     clocks: [],

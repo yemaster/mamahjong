@@ -5,8 +5,10 @@ import { addDiscards, updateLastDiscard } from "./discards";
 import { addTableDice, DICE_SETTLE_MS, DORA_FLIP_DELAY_MS } from "./dice";
 import { addHand } from "./hands";
 import {
+  completedImpactRinshanDraws,
   countCompletedKans,
   playerCompletedKan,
+  playerExtractedNorth,
   playerIsHoldingDrawnTile,
   playerReceivedDraw,
 } from "./handView";
@@ -18,7 +20,7 @@ import { addTableSurface } from "./tableSurface";
 import { applyTableTileHighlight } from "./tileHighlight";
 import type { TableRuntime } from "./types";
 import { addImpactWall, addWall } from "./wall";
-import { impactWallLayout, riichiWallLayout } from "./wallLayout";
+import { impactWallLayout, riichiWallLayout, sanmaWallLayout } from "./wallLayout";
 
 /**
  * 手切空隙：别家从手牌里抽走一张打出去，手牌的 3D 立姿就该缺那一格，
@@ -164,14 +166,49 @@ export function renderTable(
   const impact = view.variant_kind === "impact";
   const wall = impact
     ? impactWallLayout(view.progress.dealer, view.observer_seat, dice)
-    : riichiWallLayout(dealerRelative, dice);
+    : view.players.length === 3
+      ? sanmaWallLayout(
+          view.progress.dealer,
+          view.observer_seat,
+          dice,
+          view.sanma_north_rule,
+        )
+      : riichiWallLayout(dealerRelative, dice);
   const completedKanCount = countCompletedKans(view);
+  const completedNukiCount = view.players.reduce(
+    (count, player) => count + (player.nuki_tiles?.length ?? 0),
+    0,
+  );
+  const completedRinshanDraws =
+    impact
+      ? completedImpactRinshanDraws(view)
+      : (view.completed_rinshan_draws ?? completedKanCount + completedNukiCount);
+
+  /*
+   * 冲击麻将的岭上来源在进入杠点动画时就记下来。不能只盯副露差分：加杠可能先
+   * 经过抢杠响应，而且动画阶段的多次回执会产生若干副露完全相同的新版本。
+   */
+  if (impact && view.phase.kind === "awaiting_kan_animation") {
+    runtime.pendingRinshanDraws.set(view.phase.seat, completedKanCount);
+  }
   for (const player of view.players) {
     const previousPlayer = previousView?.players.find(
       (candidate) => candidate.seat === player.seat,
     );
-    if (playerCompletedKan(player, previousPlayer)) {
-      runtime.pendingRinshanDraws.set(player.seat, completedKanCount);
+    const replacementWasPlaced =
+      playerCompletedKan(player, previousPlayer) ||
+      playerExtractedNorth(player, previousPlayer);
+    if (replacementWasPlaced) {
+      const replacementWasAlreadyDrawn = playerReceivedDraw(
+        view,
+        previousView,
+        player,
+        previousPlayer,
+      );
+      runtime.pendingRinshanDraws.set(
+        player.seat,
+        completedRinshanDraws + (replacementWasAlreadyDrawn ? 0 : 1),
+      );
     }
   }
   /*
@@ -186,7 +223,7 @@ export function renderTable(
           view.remaining_live_draws + (impact ? 0 : 14),
         );
   const consumedTileCount =
-    wall.drawableCount - visibleWallTiles - completedKanCount;
+    wall.drawableCount - visibleWallTiles - completedRinshanDraws;
   /*
    * 顺序不能倒：骰子还在滚的时候牌山上不得已经亮着一张宝牌，所以只有掷骰这一段
    * 才把翻牌排到骰子停稳之后；其余时候（含刷新重建）宝牌本来就该是亮的。
@@ -200,7 +237,7 @@ export function renderTable(
       runtime,
       wall,
       visibleWallTiles,
-      completedKanCount,
+      completedRinshanDraws,
       view.joker_indicator,
       doraFlipAt,
     );
@@ -208,10 +245,10 @@ export function renderTable(
     addWall(
       runtime,
       wall,
-      visibleWallTiles,
+      view.remaining_live_draws,
       view.dora_indicators ?? [],
-      view.players.length,
-      completedKanCount,
+      completedRinshanDraws,
+      openingPhase === "dice",
       doraFlipAt,
     );
   }

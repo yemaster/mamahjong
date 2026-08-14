@@ -14,6 +14,7 @@ const emptyTurnActions: TurnActions = {
   tenpai_discard_hints: [],
   concealed_kan_tile_ids: [],
   added_kan_options: [],
+  nuki_tile_ids: [],
   can_nine_terminals: false,
 };
 
@@ -52,7 +53,7 @@ export function ActionPanel({
   const chiChoices = chiOptions(reactions, observerHand);
   const actions = view.turn_actions ?? emptyTurnActions;
   const hasResponse = reactions.length > 0;
-  /* 冲击麻将没有吃、没有立直、没有荣和，回合内能做的只有自摸和三种杠。 */
+  /* 可执行动作完全由后端下发，前端只负责展示并提交。 */
   const impactConcealedKanCodes =
     actions.impact_concealed_kan_tile_codes ?? [];
   const impactAddedKanMeldIds = actions.impact_added_kan_meld_ids ?? [];
@@ -66,6 +67,7 @@ export function ActionPanel({
       actions.riichi_discard_tile_ids.length > 0 ||
       actions.concealed_kan_tile_ids.length > 0 ||
       actions.added_kan_options.length > 0 ||
+      actions.nuki_tile_ids.length > 0 ||
       actions.can_nine_terminals;
 
   /* 方案框浮在手牌正上方，这一排按钮再留着只会两块板抢屏。 */
@@ -170,6 +172,17 @@ export function ActionPanel({
                   }
                 />
               ))}
+              {actions.nuki_tile_ids.length > 0 && (
+                <ActionButton
+                  label="拔北"
+                  tone="kan"
+                  onClick={() =>
+                    onCommand("riichi.nuki", {
+                      tile_id: actions.nuki_tile_ids[0],
+                    })
+                  }
+                />
+              )}
               {/*
                 按钮上只写「流局」：按下去的时候玩家要的就是流掉这一局，至于是
                 九种九牌还是别的哪一种，等真流了再由横幅在牌桌上写清楚。按钮位置
@@ -201,6 +214,26 @@ export function ActionPanel({
 
       {hasResponse && impact && (
         <>
+          {reactionOfKind(reactions, "ron") && (
+            <ActionButton
+              label="荣和"
+              tone="win"
+              onClick={() => onCommand("impact.ron")}
+            />
+          )}
+          {chiChoices.length > 0 && (
+            <ActionButton
+              label="吃"
+              tone="chi"
+              onClick={() => {
+                if (chiChoices.length > 1) {
+                  onChiSelectingChange?.(true);
+                  return;
+                }
+                onCommand("impact.chi", { tile_ids: chiChoices[0]!.tileIds });
+              }}
+            />
+          )}
           {(() => {
             const pon = reactionOfKind(reactions, "impact_pon");
             if (pon?.kind !== "impact_pon") return null;
@@ -256,7 +289,7 @@ export function ActionPanel({
             只是打开方案框。只有一种就直接吃——为一个没得选的选择开一块面板，
             等于多要玩家点一次。
           */}
-          {reactionOfKind(reactions, "chi") && (
+          {chiChoices.length > 0 && (
             <ActionButton
               label="吃"
               tone="chi"
@@ -265,12 +298,7 @@ export function ActionPanel({
                   onChiSelectingChange?.(true);
                   return;
                 }
-                /* 手上认不出那两张牌就画不出方案，退回去直接吃服务端给的第一组。 */
-                const reaction = reactionOfKind(reactions, "chi");
-                const tileIds =
-                  chiChoices[0]?.tileIds ??
-                  (reaction?.kind === "chi" ? reaction.tile_ids : null);
-                if (tileIds) onCommand("riichi.chi", { tile_ids: tileIds });
+                onCommand("riichi.chi", { tile_ids: chiChoices[0]!.tileIds });
               }}
             />
           )}

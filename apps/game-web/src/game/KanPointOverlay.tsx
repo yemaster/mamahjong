@@ -22,6 +22,7 @@ const KAN_LABELS: Record<KanPointsKind, string> = {
   four_consecutive_discards: "四张连续相同牌",
   three_indicator_discards: "三张指示牌",
   three_consecutive_indicator: "三张连续指示牌",
+  chankan: "抢杠",
 };
 
 /** 数字滚完之后停的那一拍，留给人读完自己是加是减。 */

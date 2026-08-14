@@ -2,7 +2,6 @@ import type { TileView } from "../../types";
 import { standUpEase } from "./animation";
 import { DORA_FLIP_MS } from "./dice";
 import { WALL_TILE_LENGTH } from "./constants";
-import { doraWallTileIndex } from "./geometry";
 import { makeTile, rootTile, tileBody } from "./tileMesh";
 import type { TableRuntime } from "./types";
 import type { WallLayout } from "./wallLayout";
@@ -56,31 +55,34 @@ function addWallTile(
 export function addWall(
   runtime: TableRuntime,
   layout: WallLayout,
-  visibleTileCount: number,
+  remainingLiveDraws: number,
   doraIndicators: TileView[],
-  playerCount: number,
-  completedKanCount: number,
+  completedRinshanDraws: number,
+  showEntireWall: boolean,
   doraFlipAt: number | null = null,
 ): void {
-  const consumedTileCount =
-    layout.drawableCount - visibleTileCount - completedKanCount;
+  const liveEnd = layout.drawableCount - 14;
+  const consumedTileCount = showEntireWall
+    ? 0
+    : liveEnd - remainingLiveDraws - completedRinshanDraws;
+  const removedRinshan = new Set(
+    Array.from({ length: showEntireWall ? 0 : completedRinshanDraws }, (_, index) =>
+      layout.rinshanOrderIndex(index + 1),
+    ),
+  );
   const doraByIndex = new Map(
     doraIndicators.map((tile, indicatorIndex) => [
-      doraWallTileIndex(
-        visibleTileCount,
-        playerCount,
-        indicatorIndex,
-        completedKanCount,
-      ),
+      layout.doraOrderIndex(indicatorIndex),
       tile.code,
     ]),
   );
-  for (let index = 0; index < visibleTileCount; index += 1) {
-    const doraCode = doraByIndex.get(index);
+  for (let order = consumedTileCount; order < layout.drawableCount; order += 1) {
+    if (removedRinshan.has(order)) continue;
+    const doraCode = doraByIndex.get(order);
     addWallTile(
       runtime,
       layout,
-      layout.drawSlot(consumedTileCount + index),
+      layout.drawSlot(order),
       doraCode ?? null,
       doraCode != null ? doraFlipAt : null,
     );

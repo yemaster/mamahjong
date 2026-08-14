@@ -18,6 +18,7 @@ import type {
 const STEP_EVENTS = new Set([
   "riichi.tile_drawn",
   "riichi.tile_discarded",
+  "riichi.north_extracted",
   "riichi.meld_declared",
   "riichi.kan_completed",
   "riichi.dora_indicator_revealed",
@@ -80,6 +81,8 @@ function stepLabel(event: RecordEvent): string {
       return "摸牌";
     case "riichi.tile_discarded":
       return "打牌";
+    case "riichi.north_extracted":
+      return "拔北";
     case "riichi.meld_declared":
     case "riichi.kan_completed":
       return meldLabel(event);

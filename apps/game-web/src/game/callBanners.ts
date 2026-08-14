@@ -5,6 +5,7 @@ export type CallKind =
   | "chi"
   | "pon"
   | "kan"
+  | "nuki"
   | "riichi"
   | "ron"
   | "tsumo"
@@ -38,6 +39,7 @@ export const CALL_LABELS: Record<CallKind, string> = {
   chi: "吃",
   pon: "碰",
   kan: "杠",
+  nuki: "拔北",
   riichi: "立直",
   ron: "荣和",
   tsumo: "自摸",
@@ -92,6 +94,17 @@ export function detectMeldCalls(
     }
   }
   return calls;
+}
+
+export function detectNukiCalls(view: MatchView, previous: MatchView): number[] {
+  return view.players
+    .filter((player) => {
+      const before = previous.players.find(
+        (candidate) => candidate.seat === player.seat,
+      );
+      return (player.nuki_tiles?.length ?? 0) > (before?.nuki_tiles?.length ?? 0);
+    })
+    .map((player) => player.seat);
 }
 
 /**

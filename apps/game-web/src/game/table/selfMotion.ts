@@ -73,6 +73,7 @@ export function addSelfDraw(
   /* 同一张牌只飞一次：轮询刷新拿到的还是这张，就当它已经在手上了。 */
   if (
     !resuming &&
+    rinshanDrawNumber == null &&
     (previousPlayer == null || previousPlayer.drawn_tile_id === drawnTileId)
   ) {
     return;

@@ -57,6 +57,7 @@ export {
   doraWallTileIndex,
   handPosition,
   meldTilePosition,
+  nukiRiverPosition,
   orthographicCameraBounds,
   rinshanWallSlot,
   screenRectAnchor,
@@ -69,10 +70,12 @@ export {
 } from "./geometry";
 export {
   canLocalPlayerDiscard,
+  completedImpactRinshanDraws,
   countCompletedKans,
   isJokerTile,
   meldDisplayTiles,
   playerCompletedKan,
+  playerExtractedNorth,
   playerIsHoldingDrawnTile,
   playerReceivedDraw,
   riverDiscardEntries,
@@ -81,4 +84,4 @@ export {
   winningTileIndex,
 } from "./handView";
 export type { WallLayout } from "./wallLayout";
-export { impactWallLayout, riichiWallLayout } from "./wallLayout";
+export { impactWallLayout, riichiWallLayout, sanmaWallLayout } from "./wallLayout";

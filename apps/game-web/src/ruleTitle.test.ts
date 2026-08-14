@@ -63,6 +63,20 @@ describe("roomRuleTitle", () => {
     expect(title).toBe("冲击麻将 · 瞎子麻将");
   });
 
+  it("writes the bright impact mode", () => {
+    const title = roomRuleTitle(
+      room({
+        variant_kind: "impact",
+        rule_snapshot: {
+          rule_set_id: "impact/yonma",
+          config: { mode: "bright" },
+        },
+      }),
+    );
+
+    expect(title).toBe("冲击麻将 · 亮子麻将");
+  });
+
   it("keeps the rule name for impact once it has been changed", () => {
     const title = roomRuleTitle(
       room({

@@ -10,9 +10,10 @@ export const MAHJONG_FAMILY_LABELS: Record<string, string> = {
   impact: "冲击麻将",
 };
 
-/** 冲击麻将的模式名。目前只有瞎子麻将一种，它不带任何额外机制，只是个名字。 */
+/** 冲击麻将的模式名。 */
 const IMPACT_MODE_LABELS: Record<string, string> = {
   blind: "瞎子麻将",
+  bright: "亮子麻将",
 };
 
 export function mahjongFamilyOf(ruleSetId: string): string {

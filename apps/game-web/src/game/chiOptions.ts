@@ -1,4 +1,9 @@
-import type { MatchView, ReactionOption, TileView } from "../types";
+import type {
+  GameCommandName,
+  MatchView,
+  ReactionOption,
+  TileView,
+} from "../types";
 
 /** 一种吃牌方案：要从手上拿出去的那两张牌。 */
 export interface ChiOption {
@@ -59,6 +64,13 @@ export function observerChiOptions(view: MatchView): ChiOption[] {
     view.players.find((player) => player.seat === view.observer_seat)
       ?.concealed_tiles ?? [];
   return chiOptions(view.available_reactions ?? [], hand);
+}
+
+/** 多方案选择完成后使用哪套协议命名空间。 */
+export function chiCommandName(
+  view: Pick<MatchView, "variant_kind">,
+): GameCommandName {
+  return view.variant_kind === "impact" ? "impact.chi" : "riichi.chi";
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReactionOption, TileView } from "../types";
-import { chiOptions } from "./chiOptions";
+import { chiCommandName, chiOptions } from "./chiOptions";
 
 function hand(codes: string[]): TileView[] {
   return codes.map((code, index) => ({ id: 100 + index, code }));
@@ -61,5 +61,10 @@ describe("chiOptions", () => {
   it("手上认不出那两张牌就不画这一条", () => {
     const options = chiOptions([chi(900, 901)], hand(["3s", "5s"]));
     expect(options).toEqual([]);
+  });
+
+  it("多方案选择完成后按麻将种类发送对应吃牌指令", () => {
+    expect(chiCommandName({ variant_kind: "impact" })).toBe("impact.chi");
+    expect(chiCommandName({ variant_kind: "riichi" })).toBe("riichi.chi");
   });
 });

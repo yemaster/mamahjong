@@ -47,6 +47,7 @@ import { CallBannerLayer } from "../game/CallBanner";
 import { MatchStage } from "../game/MatchStage";
 import {
   detectMeldCalls,
+  detectNukiCalls,
   detectRiichiCalls,
   drawReasonLabel,
   drawRevealOrder,
@@ -64,7 +65,7 @@ import { ActionPanel } from "../game/ActionPanel";
 import { SettingsPanel } from "../game/SettingsPanel";
 import { ChatBox, ChatMessages } from "../game/ChatBox";
 import { ChiOptionPicker } from "../game/ChiOptionPicker";
-import { observerChiOptions } from "../game/chiOptions";
+import { chiCommandName, observerChiOptions } from "../game/chiOptions";
 import { commandRejectionText } from "../game/commandErrors";
 import { ExitVotePanel } from "../game/ExitVotePanel";
 import { MatchHud } from "../game/MatchHud";
@@ -536,6 +537,10 @@ export default function GameScene({ matchId }: GameSceneProps) {
       pushBanner(call.kind, call.seat);
       shout(call.seat, call.kind);
     }
+    for (const seat of detectNukiCalls(matchView, previous)) {
+      pushBanner("nuki", seat);
+      shout(seat, "nuki");
+    }
   }, [matchView, pushBanner, shout]);
 
   /* 有玩家打出新牌时，等牌飞到牌河之后播落地音效。 */
@@ -955,6 +960,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
   const lastKan = matchView?.last_kan ?? null;
   const playedKanId = useRef<number | null>(null);
   const kanBaselineMatchId = useRef<string | null>(null);
+  const kanOverlayHandIndex = useRef<number | null>(null);
   const [playingKan, setPlayingKan] = useState<KanPointsView | null>(null);
   /*
    * 基线得在第一次拿到视图的时候就定下来，哪怕那会儿还没人杠过（`last_kan` 是
@@ -965,7 +971,17 @@ export default function GameScene({ matchId }: GameSceneProps) {
     if (!matchView || kanBaselineMatchId.current === matchView.id) return;
     kanBaselineMatchId.current = matchView.id;
     playedKanId.current = matchView.last_kan?.id ?? 0;
+    kanOverlayHandIndex.current = matchView.hand_index;
   }, [matchView]);
+  useEffect(() => {
+    if (!matchView) return;
+    const previousHand = kanOverlayHandIndex.current;
+    kanOverlayHandIndex.current = matchView.hand_index;
+    if (previousHand != null && previousHand !== matchView.hand_index) {
+      /* 上一局没来得及退场的杠点浮层绝不能挡住新一局的副露/荣和按钮。 */
+      setPlayingKan(null);
+    }
+  }, [matchView?.hand_index]);
   useEffect(() => {
     if (!lastKan) return;
     const played = playedKanId.current ?? 0;
@@ -975,7 +991,11 @@ export default function GameScene({ matchId }: GameSceneProps) {
   }, [lastKan]);
   const onKanPointsFinished = useCallback(() => {
     // 冲击麻将：动画播完后通知服务端，等四家都报告才摸岭上牌。
-    if (matchView?.variant_kind === "impact" && playingKan != null) {
+    if (
+      matchView?.variant_kind === "impact" &&
+      playingKan != null &&
+      playingKan.kind !== "chankan"
+    ) {
       onCommand("impact.kan_animation_played", { kan_id: playingKan.id });
     }
     setPlayingKan(null);
@@ -1152,7 +1172,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
             options={chiChoices}
             onSelect={(tileIds) => {
               setChiSelectingVersion(null);
-              onCommand("riichi.chi", { tile_ids: tileIds });
+              onCommand(chiCommandName(matchView), { tile_ids: tileIds });
             }}
             onCancel={() => setChiSelectingVersion(null)}
           />

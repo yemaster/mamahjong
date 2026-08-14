@@ -148,6 +148,7 @@ export interface RuleSnapshot {
     match_rules?: {
       length?: "east_only" | "hanchan";
       initial_points?: number;
+      north?: "nuki_dora" | "yakuhai";
     };
   };
 }
@@ -186,6 +187,11 @@ export interface TileDiscardedPayload {
    */
   tsumogiri?: boolean;
   riichi_declared: boolean;
+}
+
+export interface NorthExtractedPayload {
+  seat: number;
+  tile: TileView;
 }
 
 export interface MeldPayload {

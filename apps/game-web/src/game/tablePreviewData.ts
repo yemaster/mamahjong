@@ -71,6 +71,7 @@ function player(
         ? concealed.at(-1)!.id
         : null,
     melds,
+    nuki_tiles: [],
     discards: playerDiscards,
     riichi_status: riichi,
     waiting_tiles: waitingTiles,
@@ -204,6 +205,7 @@ export const tablePreviewView: MatchView = {
     tenpai_discard_hints: [],
     concealed_kan_tile_ids: [],
     added_kan_options: [],
+    nuki_tile_ids: [],
     can_nine_terminals: false,
   },
   clocks: [

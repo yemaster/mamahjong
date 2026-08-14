@@ -158,6 +158,20 @@ export function countCompletedKans(view: MatchView): number {
   );
 }
 
+/**
+ * 冲击麻将里真正已经摸走的岭上牌数。
+ *
+ * 副露会在杠点动画开始前就先变成杠；这时 `countCompletedKans` 已经加一，但岭上牌
+ * 还留在牌山末尾。只有离开 `awaiting_kan_animation` 后，这一杠才算完成补摸。
+ */
+export function completedImpactRinshanDraws(view: MatchView): number {
+  const kans = countCompletedKans(view);
+  return view.variant_kind === "impact" &&
+    view.phase.kind === "awaiting_kan_animation"
+    ? Math.max(0, kans - 1)
+    : kans;
+}
+
 export function playerCompletedKan(
   player: MatchPlayerView,
   previousPlayer: MatchPlayerView | undefined,
@@ -173,6 +187,18 @@ export function playerCompletedKan(
   );
 }
 
+/** 当前视图是否比上一帧多了一张拔北牌。 */
+export function playerExtractedNorth(
+  player: MatchPlayerView,
+  previousPlayer: MatchPlayerView | undefined,
+): boolean {
+  return (
+    previousPlayer != null &&
+    (player.nuki_tiles?.length ?? 0) >
+      (previousPlayer.nuki_tiles?.length ?? 0)
+  );
+}
+
 /** 当前视图是否首次出现了这家的新摸入牌。 */
 export function playerReceivedDraw(
   view: MatchView,
@@ -183,17 +209,42 @@ export function playerReceivedDraw(
   if (!previousView || !previousPlayer) return false;
   if (!playerIsHoldingDrawnTile(view, player.seat)) return false;
 
+  /*
+   * 冲击麻将的杠会隔着一帧杠点动画。补摸这一帧最可靠的信号不是副露再次变化，
+   * 而是「上一帧正在等这家播杠动画，这一帧牌山少了一张并轮到这家」。加杠尤其
+   * 需要这条：碰升级为杠的变化早在响应/动画帧里已经消费掉了。
+   */
+  const receivedAfterImpactKan =
+    view.variant_kind === "impact" &&
+    previousView.variant_kind === "impact" &&
+    previousView.phase.kind === "awaiting_kan_animation" &&
+    previousView.phase.seat === player.seat &&
+    view.remaining_live_draws < previousView.remaining_live_draws;
+
+  const tracksRinshanDraws =
+    view.completed_rinshan_draws != null &&
+    previousView.completed_rinshan_draws != null;
+  const receivedRinshanDraw =
+    tracksRinshanDraws &&
+    view.completed_rinshan_draws! > previousView.completed_rinshan_draws!;
+
   if (player.seat === view.observer_seat) {
     return (
       player.drawn_tile_id != null &&
-      player.drawn_tile_id !== previousPlayer.drawn_tile_id
+      (player.drawn_tile_id !== previousPlayer.drawn_tile_id ||
+        receivedAfterImpactKan ||
+        receivedRinshanDraw)
     );
   }
 
   return (
     !playerIsHoldingDrawnTile(previousView, player.seat) ||
     player.concealed_tile_count > previousPlayer.concealed_tile_count ||
-    playerCompletedKan(player, previousPlayer)
+    receivedAfterImpactKan ||
+    receivedRinshanDraw ||
+    (!tracksRinshanDraws &&
+      (playerCompletedKan(player, previousPlayer) ||
+        playerExtractedNorth(player, previousPlayer)))
   );
 }
 

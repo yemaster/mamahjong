@@ -51,7 +51,7 @@ export function automaticMatchCommand(
   view: MatchView,
   settings: MatchAssistSettings,
 ): AutomaticMatchCommand | null {
-  /* 命令名分两套；冲击麻将没有荣和，自动和牌那一支只剩自摸。 */
+  /* 动作是否合法完全由后端下发；前端只根据麻将种类选择命名空间。 */
   const impact = view.variant_kind === "impact";
   const tsumo: GameCommandName = impact ? "impact.tsumo" : "riichi.tsumo";
   const pass: GameCommandName = impact ? "impact.pass" : "riichi.pass";
@@ -62,7 +62,7 @@ export function automaticMatchCommand(
       return { name: tsumo, delayMs: 180 };
     }
     if (view.available_reactions.some((reaction) => reaction.kind === "ron")) {
-      return { name: "riichi.ron", delayMs: 180 };
+      return { name: impact ? "impact.ron" : "riichi.ron", delayMs: 180 };
     }
   }
 

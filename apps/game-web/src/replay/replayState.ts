@@ -11,6 +11,7 @@ import type {
   HandStartedPayload,
   InitialHandDealtPayload,
   MeldPayload,
+  NorthExtractedPayload,
   RiichiEstablishedPayload,
   TileDiscardedPayload,
   TileDrawnPayload,
@@ -28,6 +29,7 @@ export interface ReplaySeatState {
   seat: number;
   concealed: TileView[];
   melds: MeldView[];
+  nukiTiles: TileView[];
   discards: DiscardView[];
   riichi: "none" | "pending" | "established";
   /** 刚摸上来还没打的那张。 */
@@ -52,6 +54,7 @@ function emptySeat(seat: number): ReplaySeatState {
     seat,
     concealed: [],
     melds: [],
+    nukiTiles: [],
     discards: [],
     riichi: "none",
     drawnTileId: null,
@@ -155,6 +158,16 @@ export function foldHand(
         break;
       }
 
+      case "riichi.north_extracted": {
+        const extracted = payload as NorthExtractedPayload;
+        const seat = state.seats[extracted.seat];
+        if (!seat) break;
+        removeTile(seat.concealed, extracted.tile.id);
+        seat.nukiTiles.push(extracted.tile);
+        if (seat.drawnTileId === extracted.tile.id) seat.drawnTileId = null;
+        break;
+      }
+
       case "riichi.meld_declared":
       case "riichi.kan_completed": {
         const declared = payload as MeldPayload;
@@ -163,6 +176,11 @@ export function foldHand(
         if (!seat || !meld) break;
         const fromOther =
           meld.called_from != null && meld.called_from !== declared.seat;
+        const placedDrawnTile = meld.tiles.some(
+          (tile) =>
+            tile.id === seat.drawnTileId &&
+            !(fromOther && tile.id === meld.called_tile_id),
+        );
         for (const tile of meld.tiles) {
           /* 被鸣的那张来自别人的牌河，本来就不在手上。 */
           if (fromOther && tile.id === meld.called_tile_id) continue;
@@ -179,7 +197,13 @@ export function foldHand(
           );
           if (claimed) claimed.claimed_by = declared.seat;
         }
-        seat.drawnTileId = null;
+        if (
+          event.name === "riichi.kan_completed" ||
+          fromOther ||
+          placedDrawnTile
+        ) {
+          seat.drawnTileId = null;
+        }
         state.activeSeat = declared.seat;
         break;
       }

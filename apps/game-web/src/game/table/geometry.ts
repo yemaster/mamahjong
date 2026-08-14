@@ -90,8 +90,8 @@ export function discardGridPosition(
   index: number,
   widthRatio = TILE_WIDTH_RATIO,
   tileScale = DEFAULT_TILE_SCALE,
-  /** 末行序号（0 起）。默认 2 = 三行；冲击麻将用 3 = 四行，摸的牌多。 */
-  maxRow = 2,
+  /** 末行序号（0 起）。三套规则统一使用 3 = 四行。 */
+  maxRow = 3,
 ): { x: number; z: number } {
   const row = Math.min(maxRow, Math.floor(index / 6));
   const column = row < maxRow ? index % 6 : index - maxRow * 6;
@@ -100,6 +100,20 @@ export function discardGridPosition(
   return {
     x: (column - 2.5) * (scaledWidth + RIVER_TILE_GAP),
     z: 1.72 + row * (scaledLength + RIVER_TILE_GAP),
+  };
+}
+
+/** 拔北从牌河第三行的第八格开始，之后继续向这家视角的右侧排。 */
+export function nukiRiverPosition(
+  nukiIndex: number,
+  widthRatio = TILE_WIDTH_RATIO,
+  tileScale = DEFAULT_TILE_SCALE,
+): { x: number; z: number } {
+  const rowStart = discardGridPosition(2 * 6, widthRatio, tileScale, 3);
+  const nextColumn = discardGridPosition(2 * 6 + 1, widthRatio, tileScale, 3);
+  return {
+    x: rowStart.x + (7 + nukiIndex) * (nextColumn.x - rowStart.x),
+    z: rowStart.z,
   };
 }
 
@@ -193,11 +207,12 @@ function wallPlacementOrigin(
   placement: { side: number; stack: number; layer: number },
   widthRatio: number,
   tileScale: number,
+  stackCenter = 8,
 ): THREE.Vector3 {
   const wallTileWidth = WALL_TILE_LENGTH * widthRatio * tileScale;
   const wallTileDepth = WALL_TILE_DEPTH * tileScale;
   const origin = new THREE.Vector3(
-    (placement.stack - 8) * (wallTileWidth + WALL_STACK_GAP),
+    (placement.stack - stackCenter) * (wallTileWidth + WALL_STACK_GAP),
     0.12 +
       wallTileDepth / 2 +
       placement.layer * (wallTileDepth + 0.015),
@@ -224,6 +239,30 @@ export function wallTileOrigin(
 
 export function wallTileQuaternion(slot: number): THREE.Quaternion {
   return wallPlacementQuaternion(wallTilePlacement(slot));
+}
+
+/** 三麻槽位按“相对方位 × 36 + 墩号 × 2 + 层序”编码，每面正好 18 墩。 */
+export function sanmaWallTileOrigin(
+  slot: number,
+  widthRatio = TILE_WIDTH_RATIO,
+  tileScale = DEFAULT_TILE_SCALE,
+): THREE.Vector3 {
+  const side = Math.floor(slot / 36);
+  const local = slot % 36;
+  return wallPlacementOrigin(
+    {
+      side,
+      stack: Math.floor(local / 2),
+      layer: 1 - (local % 2),
+    },
+    widthRatio,
+    tileScale,
+    8.5,
+  );
+}
+
+export function sanmaWallTileQuaternion(slot: number): THREE.Quaternion {
+  return wallPlacementQuaternion({ side: Math.floor(slot / 36) });
 }
 
 /**
@@ -313,13 +352,12 @@ export function doraWallTileIndex(
 
 export function rinshanWallSlot(
   wallBreak: number,
-  completedKanCount: number,
+  completedDrawCount: number,
 ): number {
-  return (
-    wallBreak -
-    Math.max(1, completedKanCount) +
-    TOTAL_WALL_TILES
-  ) % TOTAL_WALL_TILES;
+  const taken = Math.max(1, completedDrawCount) - 1;
+  const stacksBack = Math.floor(taken / 2) + 1;
+  const orderIndex = TOTAL_WALL_TILES - stacksBack * 2 + (taken % 2);
+  return (wallBreak + orderIndex) % TOTAL_WALL_TILES;
 }
 
 export function tableLayoutZones() {

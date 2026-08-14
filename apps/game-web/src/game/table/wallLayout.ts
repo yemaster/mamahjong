@@ -3,12 +3,14 @@ import { TOTAL_WALL_TILES, WALL_STACKS_PER_SIDE } from "./constants";
 import {
   impactWallTileOrigin,
   impactWallTileQuaternion,
-  rinshanWallSlot,
   tableRelativeSeat,
   wallBreakSlot,
   wallTileOrigin,
   wallTileQuaternion,
+  sanmaWallTileOrigin,
+  sanmaWallTileQuaternion,
 } from "./geometry";
+import type { SanmaNorthRule } from "../../types";
 
 /**
  * 一副牌山怎么摆、按什么顺序摸。
@@ -21,8 +23,11 @@ import {
 export interface WallLayout {
   /** 第 `order` 张被摸走的牌在牌山上的位置。`0` 就是开门那一张。 */
   drawSlot(order: number): number;
-  /** 第 `completedKanCount` 个杠取到的岭上牌。 */
-  rinshanSlot(completedKanCount: number): number;
+  /** 第 `completedDrawCount` 次杠或拔北共同取到的岭上牌。 */
+  rinshanSlot(completedDrawCount: number): number;
+  /** 岭上牌与宝牌在摸牌序列中的固定下标；杠和拔北共享计数。 */
+  rinshanOrderIndex(completedDrawCount: number): number;
+  doraOrderIndex(indicatorIndex: number): number;
   origin(slot: number, widthRatio: number, tileScale: number): THREE.Vector3;
   quaternion(slot: number): THREE.Quaternion;
   /** 摸牌序列有多长。 */
@@ -42,13 +47,67 @@ export function riichiWallLayout(
   dice: [number, number],
 ): WallLayout {
   const breakSlot = wallBreakSlot(dealerRelative, dice[0] + dice[1]);
+  const drawSlot = (order: number) => (breakSlot + order) % TOTAL_WALL_TILES;
   return {
-    drawSlot: (order) => (breakSlot + order) % TOTAL_WALL_TILES,
-    rinshanSlot: (completedKanCount) =>
-      rinshanWallSlot(breakSlot, completedKanCount),
+    drawSlot,
+    rinshanSlot: (completedDrawCount) =>
+      drawSlot(rinshanOrderIndex(TOTAL_WALL_TILES, completedDrawCount)),
+    rinshanOrderIndex: (completedDrawCount) =>
+      rinshanOrderIndex(TOTAL_WALL_TILES, completedDrawCount),
+    doraOrderIndex: (indicatorIndex) =>
+      TOTAL_WALL_TILES - 14 + 8 - indicatorIndex * 2,
     origin: wallTileOrigin,
     quaternion: wallTileQuaternion,
     drawableCount: TOTAL_WALL_TILES,
+    deadSlots: [],
+    revealedSlot: null,
+  };
+}
+
+/** 三麻只在东南西三家面前摆墙，每面 18 墩；骰子计数也只在这三家间循环。 */
+export function sanmaWallLayout(
+  dealer: number,
+  observer: number,
+  dice: [number, number],
+  northRule: SanmaNorthRule = "nuki_dora",
+): WallLayout {
+  const total = 108;
+  const stacks = 18;
+  const diceTotal = dice[0] + dice[1];
+  const breakSeat = (dealer + diceTotal - 1) % 3;
+  const keptStacks = Math.min(diceTotal, stacks - 1);
+  const order: number[] = [];
+
+  const pushStack = (absoluteSeat: number, stack: number) => {
+    const relative = tableRelativeSeat(absoluteSeat, observer, 3);
+    order.push(relative * 36 + stack * 2, relative * 36 + stack * 2 + 1);
+  };
+  for (let stack = stacks - 1 - keptStacks; stack >= 0; stack -= 1) {
+    pushStack(breakSeat, stack);
+  }
+  for (let step = 1; step < 3; step += 1) {
+    const seat = (breakSeat + 3 - step) % 3;
+    for (let stack = stacks - 1; stack >= 0; stack -= 1) {
+      pushStack(seat, stack);
+    }
+  }
+  for (let stack = stacks - 1; stack >= stacks - keptStacks; stack -= 1) {
+    pushStack(breakSeat, stack);
+  }
+
+  const nukiLayout = northRule === "nuki_dora";
+  const replacementOrderIndex = (completedDrawCount: number) =>
+    rinshanOrderIndex(total, completedDrawCount);
+  return {
+    drawSlot: (drawOrder) => order[((drawOrder % total) + total) % total]!,
+    rinshanSlot: (completedDrawCount) =>
+      order[replacementOrderIndex(completedDrawCount)]!,
+    rinshanOrderIndex: replacementOrderIndex,
+    doraOrderIndex: (indicatorIndex) =>
+      total - 14 + (nukiLayout ? 4 + indicatorIndex * 2 : 8 - indicatorIndex * 2),
+    origin: sanmaWallTileOrigin,
+    quaternion: sanmaWallTileQuaternion,
+    drawableCount: total,
     deadSlots: [],
     revealedSlot: null,
   };
@@ -123,6 +182,9 @@ export function impactWallLayout(
      */
     rinshanSlot: (completedKanCount) =>
       drawOrder[rinshanOrderIndex(drawableCount, completedKanCount)]!,
+    rinshanOrderIndex: (completedDrawCount) =>
+      rinshanOrderIndex(drawableCount, completedDrawCount),
+    doraOrderIndex: () => -1,
     origin: impactWallTileOrigin,
     quaternion: impactWallTileQuaternion,
     drawableCount,
@@ -132,15 +194,15 @@ export function impactWallLayout(
 }
 
 /**
- * 第 `completedKanCount` 个杠取到的那张，在摸牌序列里的下标。
+ * 第 `completedDrawCount` 次杠或拔北取到的那张，在摸牌序列里的下标。
  *
  * 从末尾一墩一墩往回退，每墩先上层（下标为偶、排在前面那张）后下层。
  */
 export function rinshanOrderIndex(
   drawableCount: number,
-  completedKanCount: number,
+  completedDrawCount: number,
 ): number {
-  const taken = Math.max(1, completedKanCount) - 1;
+  const taken = Math.max(1, completedDrawCount) - 1;
   const stacksBack = Math.floor(taken / 2) + 1;
   return drawableCount - stacksBack * 2 + (taken % 2);
 }
