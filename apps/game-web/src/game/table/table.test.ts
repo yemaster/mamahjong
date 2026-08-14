@@ -22,6 +22,7 @@ import {
   openingDealDuration,
   openingDealOrder,
   openingDealStep,
+  openingWallTakeoffSchedule,
   opponentHandLayout,
   orthographicCameraBounds,
   playerIsHoldingDrawnTile,
@@ -64,6 +65,7 @@ import {
   cameraShakeOffset,
 } from "./impact";
 import type { TableImpact, TableRuntime } from "./types";
+import { OPENING_DEAL_STEP_MS } from "./constants";
 
 describe("手牌理牌", () => {
   it("按万筒索字排序并把摸入牌留在末端", () => {
@@ -306,6 +308,40 @@ describe("牌山增量槽位", () => {
     expect(before.filter((tile) => !afterSlots.has(tile.slot))).toHaveLength(1);
   });
 
+  it("开局包含主视角的牌都等轮到起飞时才从牌山隐藏", () => {
+    const dealer = 0;
+    const observerSeat = 2;
+    const layout = riichiWallLayout(dealer, [2, 5]);
+    const players = [0, 1, 2, 3].map((seat) => ({
+      seat,
+      concealed_tile_count: seat === dealer ? 14 : 13,
+    }));
+    const startedAt = 10_000;
+    const schedule = openingWallTakeoffSchedule(
+      layout,
+      players,
+      dealer,
+      players.length,
+      startedAt,
+    );
+    const selfFirstIndex = openingDealOrder(
+      0,
+      observerSeat,
+      dealer,
+      players.length,
+    );
+    const selfFirstStep = openingDealStep(
+      0,
+      observerSeat,
+      dealer,
+      players.length,
+    );
+
+    expect(schedule).toHaveLength(53);
+    expect(schedule.get(layout.drawSlot(selfFirstIndex))).toBe(
+      startedAt + selfFirstStep * OPENING_DEAL_STEP_MS,
+    );
+  });
 });
 
 function quarterTurn(turns: number): THREE.Quaternion {

@@ -27,6 +27,7 @@ import type { TableRuntime } from "./types";
 import {
   addWallTile,
   impactWallTiles,
+  openingWallTakeoffSchedule,
   riichiWallTiles,
   type WallTileSpec,
 } from "./wall";
@@ -220,7 +221,7 @@ export function renderTable(
    * 那一墩，它压根不在摸牌序列里，所以只按还没摸走的张数算。
    */
   const visibleWallTiles =
-    openingPhase === "dice"
+    openingPhase === "dice" || openingPhase === "deal"
       ? wall.drawableCount
       : Math.min(
           wall.drawableCount,
@@ -249,7 +250,7 @@ export function renderTable(
         view.remaining_live_draws,
         view.dora_indicators ?? [],
         completedRinshanDraws,
-        openingPhase === "dice",
+        openingPhase === "dice" || openingPhase === "deal",
         doraFlipAt,
       );
   syncWallLayers(
@@ -268,6 +269,7 @@ export function renderTable(
     ]),
     openingPhase === "dice" ? "delayed" : "settled",
   );
+  updateOpeningWallTakeoffs(runtime, view, wall, openingPhase, openingKey);
 
   if (openingPhase === "dice") {
     updateLayer(runtime, "dice", signature([openingKey, dice]), () => {
@@ -499,6 +501,34 @@ function clearPlayerLayers(
     updateLayer(runtime, `${kind}:${seat}`, `hidden:${openingKey}`, () => {});
   }
   updateLayer(runtime, "self-draw", `hidden:${openingKey}`, () => {});
+}
+
+/**
+ * 发牌阶段不预先挖空整段牌山。每一张初始手牌轮到起飞时才隐藏对应物理槽位，
+ * `waiting` 阶段再由正常牌山增量同步释放这些已经摸走的节点。
+ */
+function updateOpeningWallTakeoffs(
+  runtime: TableRuntime,
+  view: MatchView,
+  wall: WallLayout,
+  openingPhase: OpeningPhase,
+  openingKey: string,
+): void {
+  if (openingPhase !== "deal") {
+    runtime.openingWallTakeoffs.clear();
+    runtime.openingWallTakeoffKey = null;
+    return;
+  }
+  if (runtime.openingWallTakeoffKey === openingKey) return;
+
+  runtime.openingWallTakeoffKey = openingKey;
+  runtime.openingWallTakeoffs = openingWallTakeoffSchedule(
+    wall,
+    view.players,
+    view.progress.dealer,
+    view.players.length,
+    performance.now(),
+  );
 }
 
 /** 牌山按物理槽位同步：正常摸牌只会让一个槽位变空，不碰其余一百多张牌。 */

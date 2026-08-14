@@ -371,6 +371,12 @@ export async function createRuntime(
       }
       return progress < 1;
     });
+    /* 开局牌山里的牌一直保留到它真正起飞的那一帧，不能切到 deal 就整批消失。 */
+    for (const [slot, takeOffAt] of runtime.openingWallTakeoffs) {
+      if (now < takeOffAt) continue;
+      const layer = runtime.layers.get(`wall-slot:${slot}`);
+      if (layer) layer.group.visible = false;
+    }
     renderer.render(scene, runtime.camera);
     runtime.frame = requestAnimationFrame(animate);
   };
