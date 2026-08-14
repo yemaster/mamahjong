@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { visualPixelsToStage } from "../components/fixedDomStageLayout";
+import {
+  clientRectInViewport,
+  clientVectorInViewport,
+} from "../components/viewportCoordinates";
 
 export interface DragPosition {
   x: number;
@@ -90,7 +94,7 @@ export function useDragPosition(bottomMargin = 12) {
     const node = nodeRef.current;
     const origin = positionRef.current;
     if (!node || !origin) return;
-    const rect = node.getBoundingClientRect();
+    const rect = clientRectInViewport(node);
     const scale = node.offsetWidth > 0 ? rect.width / node.offsetWidth : 1;
     dragRef.current = {
       pointerId: event.pointerId,
@@ -109,8 +113,13 @@ export function useDragPosition(bottomMargin = 12) {
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
       const { maxX, maxY } = bounds();
-      const dx = visualPixelsToStage(event.clientX - drag.startX, drag.scale);
-      const dy = visualPixelsToStage(event.clientY - drag.startY, drag.scale);
+      const delta = clientVectorInViewport(
+        event.currentTarget,
+        event.clientX - drag.startX,
+        event.clientY - drag.startY,
+      );
+      const dx = visualPixelsToStage(delta.x, drag.scale);
+      const dy = visualPixelsToStage(delta.y, drag.scale);
       /* 真挪过一下才算数：光按一下把手不该把面板钉死在原地。 */
       movedRef.current = true;
       setPosition({

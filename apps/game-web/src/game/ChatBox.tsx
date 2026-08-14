@@ -7,6 +7,10 @@ import {
 } from "react";
 import { ChevronRight, SendHorizonal, Smile } from "lucide-react";
 import { visualPixelsToStage } from "../components/fixedDomStageLayout";
+import {
+  clientRectInViewport,
+  clientVectorInViewport,
+} from "../components/viewportCoordinates";
 import type { LobbyCharacter, MatchView } from "../types";
 import { useChatStore } from "../stores/chatStore";
 import { tableRelativeSeat } from "./table";
@@ -170,8 +174,8 @@ export function ChatBox({
       const box = boxRef.current;
       const stage = box?.offsetParent as HTMLElement | null;
       if (!box || !stage || e.button !== 0) return;
-      const boxRect = box.getBoundingClientRect();
-      const stageRect = stage.getBoundingClientRect();
+      const boxRect = clientRectInViewport(box);
+      const stageRect = clientRectInViewport(stage);
       const scaleX =
         stage.offsetWidth > 0 ? stageRect.width / stage.offsetWidth : 1;
       const scaleY =
@@ -197,8 +201,13 @@ export function ChatBox({
     const box = boxRef.current;
     const stage = box?.offsetParent as HTMLElement | null;
     if (!drag || drag.pointerId !== e.pointerId || !box || !stage) return;
-    const dx = visualPixelsToStage(e.clientX - drag.x, drag.scaleX);
-    const dy = visualPixelsToStage(e.clientY - drag.y, drag.scaleY);
+    const delta = clientVectorInViewport(
+      e.currentTarget,
+      e.clientX - drag.x,
+      e.clientY - drag.y,
+    );
+    const dx = visualPixelsToStage(delta.x, drag.scaleX);
+    const dy = visualPixelsToStage(delta.y, drag.scaleY);
     const maxX = Math.max(0, stage.offsetWidth - box.offsetWidth);
     const maxY = Math.max(0, stage.offsetHeight - box.offsetHeight);
     setPos({

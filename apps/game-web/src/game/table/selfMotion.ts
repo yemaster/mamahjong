@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { clientRectInViewport } from "../../components/viewportCoordinates";
 import type { MatchPlayerView, MatchView } from "../../types";
 import type { OpeningPhase } from "../OpeningSequence";
 import { billboardHandTilt, standingHandTilt } from "./animation";
@@ -187,8 +188,8 @@ function handSlotAnchor(
     `.match-hand-2d__tile[data-hand-tile-id="${tileId}"]`,
   );
   if (!slot) return null;
-  const slotRect = slot.getBoundingClientRect();
-  const canvasRect = canvas.getBoundingClientRect();
+  const slotRect = clientRectInViewport(slot);
+  const canvasRect = clientRectInViewport(canvas);
   if (
     slotRect.width <= 0 ||
     canvasRect.width <= 0 ||

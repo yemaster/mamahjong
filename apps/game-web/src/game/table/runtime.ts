@@ -1,4 +1,8 @@
 import * as THREE from "three";
+import {
+  clientPointInViewport,
+  clientRectInViewport,
+} from "../../components/viewportCoordinates";
 import { tileAssetPath, tileCodes } from "../tileAssets";
 import { settlementFallEase, tsumoThrowArc } from "./animation";
 import {
@@ -170,9 +174,14 @@ export async function createRuntime(
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
   const aim = (event: PointerEvent) => {
-    const bounds = renderer.domElement.getBoundingClientRect();
-    pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
-    pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
+    const bounds = clientRectInViewport(renderer.domElement);
+    const point = clientPointInViewport(
+      renderer.domElement,
+      event.clientX,
+      event.clientY,
+    );
+    pointer.x = ((point.x - bounds.left) / bounds.width) * 2 - 1;
+    pointer.y = -((point.y - bounds.top) / bounds.height) * 2 + 1;
     raycaster.setFromCamera(pointer, runtime.camera);
   };
   const pickTile = (): THREE.Group | null => {

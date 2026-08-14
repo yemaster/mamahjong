@@ -279,6 +279,30 @@ a { color: var(--pink-dark); text-decoration: none; }
 }
 
 /*
+ * 整个应用（包括挂在 Root 下的 fixed 登录/注册弹窗）共用这一层方向。
+ * 外层只负责把逻辑视口放在物理屏幕中央，内层旋转后仍严格落在屏幕范围内。
+ */
+.auto-rotating-viewport-host {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--stage-letterbox);
+}
+
+.auto-rotating-viewport {
+  position: relative;
+  flex: none;
+  width: var(--auto-viewport-width, 100vw);
+  height: var(--auto-viewport-height, 100vh);
+  overflow: hidden;
+  transform: rotate(var(--auto-viewport-rotation, 0deg));
+  transform-origin: center;
+}
+
+/*
  * 初始页与大厅共用 1600×900 DOM 设计舞台。视口变化只修改这一层 transform，
  * 内部不再读取设备的 vw/vh，也不会在手机、平板上触发布局重排。
  */

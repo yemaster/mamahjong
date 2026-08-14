@@ -11,6 +11,7 @@ import {
 import { LoginModal } from "./components/LoginModal";
 import { Modal } from "./components/Modal";
 import { FixedDomStage } from "./components/FixedDomStage";
+import { AutoRotatingViewport } from "./components/AutoRotatingViewport";
 import {
   SCENE_GATHER_DURATION_MS,
   SceneModuleLoaded,
@@ -345,6 +346,8 @@ function InitialGame() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <Root />
+    <AutoRotatingViewport>
+      <Root />
+    </AutoRotatingViewport>
   </React.StrictMode>,
 );
