@@ -78,6 +78,7 @@ export {
   playerExtractedNorth,
   playerIsHoldingDrawnTile,
   playerReceivedDraw,
+  resolveRinshanDrawNumber,
   riverDiscardEntries,
   settlementCoveringSeats,
   sortHandForDisplay,

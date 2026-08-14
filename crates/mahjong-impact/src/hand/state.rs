@@ -432,6 +432,12 @@ impl ImpactHand {
         self.wall.remaining_draws()
     }
 
+    /// 已经实际摸走的岭上牌数量；杠点动画等待阶段尚不增加。
+    #[must_use]
+    pub const fn completed_rinshan_draws(&self) -> usize {
+        self.wall.completed_rinshan_draws()
+    }
+
     #[must_use]
     pub const fn kan_point_deltas(&self) -> &[i32; SEATS] {
         &self.kan_point_deltas
@@ -1900,9 +1906,18 @@ mod tests {
         );
         assert_eq!(hand.player(seat(0)).kan_count(), 1);
         // 杠完先进入动画等待阶段，还没摸岭上牌。
+        assert_eq!(hand.completed_rinshan_draws(), 0);
         assert_eq!(
             hand.phase(),
             HandPhase::AwaitingKanAnimation { seat: seat(0) }
+        );
+
+        hand.advance_from_kan_animation(seat(0))
+            .expect("the replacement draw starts after the animation");
+        assert_eq!(hand.completed_rinshan_draws(), 1);
+        assert_eq!(
+            hand.phase(),
+            HandPhase::AwaitingTurnAction { seat: seat(0) }
         );
     }
 

@@ -918,6 +918,13 @@ async fn dispatch_riichi_phase(
                 }
             }
         }
+        MatchPhase::AwaitingKanAnimation { .. } => {
+            // Kan animation is handled by the outer loop via `unplayed_kan()`.
+            // This phase should never be reached because the outer loop processes
+            // the kan before dispatching to this function.
+            tokio::time::sleep(POLL_DELAY).await;
+            poll_view(client, match_id).await
+        }
         MatchPhase::Ended { .. } => {
             tokio::time::sleep(POLL_DELAY).await;
             poll_view(client, match_id).await
@@ -966,6 +973,13 @@ async fn dispatch_impact_phase(
                     Err(error) => Err(error),
                 }
             }
+        }
+        MatchPhase::AwaitingKanAnimation { .. } => {
+            // Kan animation is handled by the outer loop via `unplayed_kan()`.
+            // This phase should never be reached because the outer loop processes
+            // the kan before dispatching to this function.
+            tokio::time::sleep(POLL_DELAY).await;
+            poll_view(client, match_id).await
         }
         MatchPhase::Ended { .. } => {
             tokio::time::sleep(POLL_DELAY).await;

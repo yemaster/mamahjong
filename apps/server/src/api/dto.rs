@@ -575,7 +575,10 @@ impl MatchViewResponse {
             },
             phase: PhaseResponse::impact(value.phase_kind, value.phase_seat, value.phase_reason),
             remaining_live_draws: value.remaining_draws,
-            completed_rinshan_draws: 0,
+            completed_rinshan_draws: value
+                .completed_rinshan_draws
+                .try_into()
+                .expect("an impact hand has at most four rinshan draws"),
             dora_indicators: Vec::new(),
             sanma_north_rule: None,
             joker_indicator: value.joker_indicator.as_ref().map(TileResponse::from),

@@ -93,6 +93,12 @@ pub struct MatchView {
     /// Impact: consecutive dealer wins. Riichi uses 0.
     #[serde(default)]
     pub dealer_streak: Option<u32>,
+    /// Impact: how many rinshan tiles have actually been drawn from the back of
+    /// the wall so far this hand.  The counter only advances once a replacement
+    /// draw is complete — it stays unchanged while the table is in
+    /// `awaiting_kan_animation`.  Absent (zero) for riichi games.
+    #[serde(default)]
+    pub completed_rinshan_draws: u32,
     /// Impact: kan-point movement that may need an animation ack.
     #[serde(default)]
     pub last_kan: Option<KanPointsView>,
@@ -336,6 +342,7 @@ pub enum MatchPhase {
     AwaitingTurnAction { seat: u8 },
     AwaitingDiscard { seat: u8 },
     AwaitingResponses { trigger_seat: u8 },
+    AwaitingKanAnimation { seat: u8 },
     Ended { reason: EndReason },
 }
 

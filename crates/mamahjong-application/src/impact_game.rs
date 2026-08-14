@@ -188,6 +188,8 @@ pub struct ObserverImpactMatch {
     pub phase_seat: Option<u8>,
     pub phase_reason: Option<&'static str>,
     pub remaining_draws: usize,
+    /// 已经实际从牌山末端摸走的岭上牌数量。
+    pub completed_rinshan_draws: usize,
     pub joker_indicator: Option<ImpactTileView>,
     /// 财神本身的牌码（指示牌的下一张）。
     pub joker_code: Option<String>,
@@ -536,6 +538,8 @@ impl ImpactRuntime {
             phase_seat,
             phase_reason,
             remaining_draws: hand.map_or(0, mahjong_impact::ImpactHand::remaining_draws),
+            completed_rinshan_draws: hand
+                .map_or(0, mahjong_impact::ImpactHand::completed_rinshan_draws),
             joker_indicator: hand.map(|hand| tile_view(hand.indicator())),
             joker_code: hand.map(|hand| hand.joker().to_string()),
             players,

@@ -11,6 +11,7 @@ import {
   playerExtractedNorth,
   playerIsHoldingDrawnTile,
   playerReceivedDraw,
+  resolveRinshanDrawNumber,
 } from "./handView";
 import { addMelds } from "./melds";
 import { tableRelativeSeat } from "./geometry";
@@ -189,7 +190,10 @@ export function renderTable(
    * 经过抢杠响应，而且动画阶段的多次回执会产生若干副露完全相同的新版本。
    */
   if (impact && view.phase.kind === "awaiting_kan_animation") {
-    runtime.pendingRinshanDraws.set(view.phase.seat, completedKanCount);
+    runtime.pendingRinshanDraws.set(
+      view.phase.seat,
+      completedRinshanDraws + 1,
+    );
   }
   for (const player of view.players) {
     const previousPlayer = previousView?.players.find(
@@ -263,11 +267,25 @@ export function renderTable(
       (candidate) => candidate.seat === player.seat,
     );
     const pendingRinshanDraw = runtime.pendingRinshanDraws.get(player.seat);
-    const rinshanDrawNumber =
-      pendingRinshanDraw != null &&
-      playerReceivedDraw(view, previousView, player, previousPlayer)
-        ? pendingRinshanDraw
-        : null;
+    const receivedDraw = playerReceivedDraw(
+      view,
+      previousView,
+      player,
+      previousPlayer,
+    );
+    const previousCompletedRinshanDraws = previousView
+      ? previousView.variant_kind === "impact"
+        ? completedImpactRinshanDraws(previousView)
+        : (previousView.completed_rinshan_draws ?? 0)
+      : completedRinshanDraws;
+    /* 正常路径从等待杠动画那一帧保存来源槽位。若客户端恰好漏掉了那份快照，接口
+       的实际岭上计数跃迁仍能直接指出这是第几张，不能让牌只在山尾消失。 */
+    const rinshanDrawNumber = resolveRinshanDrawNumber(
+      receivedDraw,
+      pendingRinshanDraw,
+      completedRinshanDraws,
+      previousCompletedRinshanDraws,
+    );
     addHand(
       runtime,
       view,

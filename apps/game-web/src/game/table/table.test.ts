@@ -27,6 +27,7 @@ import {
   playerCompletedKan,
   playerExtractedNorth,
   playerReceivedDraw,
+  resolveRinshanDrawNumber,
   riichiWallLayout,
   sanmaWallLayout,
   riverDiscardEntries,
@@ -491,6 +492,7 @@ describe("杠后岭上摸牌", () => {
     const waitingView: MatchView = {
       ...tablePreviewView,
       variant_kind: "impact",
+      completed_rinshan_draws: countCompletedKans(tablePreviewView) - 1,
       phase: {
         kind: "awaiting_kan_animation",
         seat: currentPlayer.seat,
@@ -501,6 +503,7 @@ describe("杠后岭上摸牌", () => {
     };
     const drawnView: MatchView = {
       ...waitingView,
+      completed_rinshan_draws: waitingView.completed_rinshan_draws! + 1,
       remaining_live_draws: waitingView.remaining_live_draws - 1,
       phase: { kind: "awaiting_turn_action", seat: currentPlayer.seat },
       players: tablePreviewView.players,
@@ -531,6 +534,16 @@ describe("杠后岭上摸牌", () => {
         currentPlayer,
       ),
     ).toBe(true);
+    expect(resolveRinshanDrawNumber(true, 2, 2, 1)).toBe(2);
+    expect(
+      resolveRinshanDrawNumber(
+        true,
+        undefined,
+        drawnView.completed_rinshan_draws!,
+        waitingView.completed_rinshan_draws!,
+      ),
+    ).toBe(drawnView.completed_rinshan_draws);
+    expect(resolveRinshanDrawNumber(true, undefined, 2, 2)).toBeNull();
   });
 
   it("别家拔北后的补牌也会被识别成共享岭上序列的一次新摸牌", () => {

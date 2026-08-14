@@ -226,6 +226,15 @@ impl Wall {
         self.back.saturating_sub(self.front)
     }
 
+    /// 已经从牌山末端摸走的岭上牌数量。
+    ///
+    /// `back` 只会被 [`Self::draw_from_back`] 推进，因此它和普通摸牌游标 `front`
+    /// 相互独立，正好可以作为客户端判断岭上摸牌是否真正发生的稳定序号。
+    #[must_use]
+    pub const fn completed_rinshan_draws(&self) -> usize {
+        self.order.len() - self.back
+    }
+
     /// 正常摸牌：从摸牌序列的头部取。
     pub fn draw(&mut self) -> Option<Tile> {
         if self.remaining_draws() == 0 {
@@ -535,10 +544,12 @@ mod tests {
         };
 
         let first = wall.draw_from_back().expect("kan tile available");
+        assert_eq!(wall.completed_rinshan_draws(), 1);
         let second = wall.draw_from_back().expect("kan tile available");
 
         assert_eq!(first, upper, "第一个杠该摸末尾那墩靠上的一张");
         assert_eq!(second, lower, "第二个杠才轮到压在底下的一张");
+        assert_eq!(wall.completed_rinshan_draws(), 2);
         assert_eq!(wall.remaining_draws(), total - 2);
     }
 

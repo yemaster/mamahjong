@@ -165,11 +165,34 @@ export function countCompletedKans(view: MatchView): number {
  * 还留在牌山末尾。只有离开 `awaiting_kan_animation` 后，这一杠才算完成补摸。
  */
 export function completedImpactRinshanDraws(view: MatchView): number {
+  /* 新版接口直接给实际摸走数。它不会在杠点动画等待阶段抢跑，也不依赖客户端必须
+     连续收到“杠成立”和“补牌完成”两帧；断线补帧或多份回执把版本挤在中间时，
+     仍然能准确指出牌山末尾已经空了几个位置。 */
+  if (view.completed_rinshan_draws != null) {
+    return view.completed_rinshan_draws;
+  }
   const kans = countCompletedKans(view);
   return view.variant_kind === "impact" &&
     view.phase.kind === "awaiting_kan_animation"
     ? Math.max(0, kans - 1)
     : kans;
+}
+
+/**
+ * 本次摸牌若来自岭上，返回它在共享岭上序列中的编号（从 1 开始）。
+ *
+ * `pendingDrawNumber` 是正常动画等待帧留下的精确来源；计数跃迁是漏掉中间快照时
+ * 的兜底。两者都没有时必须返回 `null`，否则普通摸牌会错误地从牌山末尾起飞。
+ */
+export function resolveRinshanDrawNumber(
+  receivedDraw: boolean,
+  pendingDrawNumber: number | undefined,
+  completedDraws: number,
+  previousCompletedDraws: number,
+): number | null {
+  if (!receivedDraw) return null;
+  if (pendingDrawNumber != null) return pendingDrawNumber;
+  return completedDraws > previousCompletedDraws ? completedDraws : null;
 }
 
 export function playerCompletedKan(
