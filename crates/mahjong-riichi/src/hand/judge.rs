@@ -6,6 +6,7 @@ pub enum WinSource {
     Discard { from: Seat },
     AddedKan { from: Seat, meld_id: MeldId },
     ConcealedKan { from: Seat },
+    Nuki { from: Seat },
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -27,6 +27,8 @@ pub enum Yaku {
     PaoLong,
     /// 杠上开花。
     RinshanKaihou,
+    /// 抢杠。
+    Chankan,
     /// 单吊。
     SingleWait,
     /// 连庄，每次 +10。
@@ -65,6 +67,7 @@ impl Yaku {
             Self::PureFlush
             | Self::PaoLong
             | Self::RinshanKaihou
+            | Self::Chankan
             | Self::SingleWait
             | Self::DealerStreak
             | Self::AllHonors
@@ -92,6 +95,7 @@ impl Yaku {
             Self::PureFlush => "pure_flush",
             Self::PaoLong => "pao_long",
             Self::RinshanKaihou => "rinshan_kaihou",
+            Self::Chankan => "chankan",
             Self::SingleWait => "single_wait",
             Self::DealerStreak => "dealer_streak",
             Self::AllHonors => "all_honors",

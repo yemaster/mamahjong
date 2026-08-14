@@ -68,6 +68,7 @@ pub const fn yaku_name(value: Yaku) -> &'static str {
         Yaku::WhiteDragon => "役牌白",
         Yaku::GreenDragon => "役牌发",
         Yaku::RedDragon => "役牌中",
+        Yaku::North => "役牌北",
         Yaku::Pinfu => "平和",
         Yaku::Tanyao => "断幺九",
         Yaku::Iipeikou => "一杯口",
@@ -152,6 +153,7 @@ pub const fn impact_yaku_name(value: ImpactYaku) -> &'static str {
         ImpactYaku::PureFlush => "清一色",
         ImpactYaku::PaoLong => "抛龙",
         ImpactYaku::RinshanKaihou => "杠上开花",
+        ImpactYaku::Chankan => "抢杠",
         ImpactYaku::SingleWait => "单吊",
         ImpactYaku::DealerStreak => "连庄",
         ImpactYaku::AllHonors => "全风",
@@ -187,7 +189,7 @@ pub const fn impact_end_reason_name(value: ImpactEndReason) -> &'static str {
     value.as_str()
 }
 
-/// 冲击麻将的规则名。目前只有一份标准规则，改过任何一项就是自定义。
+/// 冲击麻将的规则名。瞎子与亮子的建房默认都叫标准规则，手调后才叫自定义。
 #[must_use]
 pub fn impact_rule_display_name(snapshot: &ImpactRuleSnapshot) -> &'static str {
     let rules = snapshot.rules();
@@ -197,7 +199,7 @@ pub fn impact_rule_display_name(snapshot: &ImpactRuleSnapshot) -> &'static str {
     {
         Some(preset) if preset.rules() == *rules => preset.short_name(),
         Some(_) => "自定义规则",
-        None if ImpactRules::standard() == *rules => "标准规则",
+        None if ImpactRules::standard() == *rules || ImpactRules::bright() == *rules => "标准规则",
         None => "自定义规则",
     }
 }

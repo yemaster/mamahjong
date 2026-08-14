@@ -87,6 +87,7 @@ pub struct ObserverImpactPlayer {
     pub kan_count: u8,
     /// 连续打出的字牌 / 财神数，连打十一风要看它。
     pub honor_streak: u32,
+    pub furiten: bool,
 }
 
 /// 轮到自己时的合法选项。
@@ -103,8 +104,10 @@ pub struct ImpactTurnActionsView {
 }
 
 /// 对别家打出的那张牌可以做的事。
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ImpactReactionOptionsView {
+    pub can_ron: bool,
+    pub chi_options: Vec<[u16; 2]>,
     pub can_pon: bool,
     pub can_open_kan: bool,
     pub pon_is_indicator: bool,
@@ -128,6 +131,8 @@ pub struct ObserverKanPoints {
 pub struct ObserverImpactSettlement {
     pub reason: &'static str,
     pub winner: Option<u8>,
+    pub payer: Option<u8>,
+    pub chankan: bool,
     /// 全交时只报这一条，其余番种一律不列。
     pub all_in: Option<&'static str>,
     pub yaku: Vec<ObserverImpactYaku>,
@@ -381,8 +386,9 @@ impl ImpactRuntime {
                     discards,
                     kan_count,
                     honor_streak,
+                    furiten,
                 ) = hand.map_or_else(
-                    || (0, None, None, Vec::new(), Vec::new(), 0, 0),
+                    || (0, None, None, Vec::new(), Vec::new(), 0, 0, false),
                     |hand| {
                         let held = hand.player(seat);
                         let mine = player.seat == observer_seat;
@@ -403,6 +409,7 @@ impl ImpactRuntime {
                                 .collect(),
                             held.kan_count(),
                             held.honor_streak(),
+                            held.temporary_furiten(),
                         )
                     },
                 );
@@ -425,6 +432,7 @@ impl ImpactRuntime {
                     discards,
                     kan_count,
                     honor_streak,
+                    furiten,
                 })
             })
             .collect::<Result<Vec<_>, ApplicationError>>()?;
@@ -492,6 +500,12 @@ impl ImpactRuntime {
                                     .collect(),
                             },
                             ImpactReactionOptionsView {
+                                can_ron: options.can_ron,
+                                chi_options: options
+                                    .chi_options
+                                    .iter()
+                                    .map(|tiles| tiles.map(TileId::value))
+                                    .collect(),
                                 can_pon: options.can_pon,
                                 can_open_kan: options.can_open_kan,
                                 pon_is_indicator: options.pon_is_indicator,
@@ -537,6 +551,8 @@ impl ImpactRuntime {
                 ObserverImpactSettlement {
                     reason: settlement.reason().as_str(),
                     winner: settlement.winner().map(Seat::index),
+                    payer: settlement.payer().map(Seat::index),
+                    chankan: settlement.is_chankan(),
                     all_in: evaluation
                         .and_then(mahjong_impact::WinEvaluation::all_in)
                         .map(all_in_code),
@@ -755,12 +771,20 @@ impl ImpactRuntime {
             for (slot, delta) in deltas.iter_mut().enumerate() {
                 *delta = kan_points_after[slot] - kan_points_before[slot];
             }
+            let kind = kan_kind
+                .or(discard_kind)
+                .unwrap_or(FIRST_ROUND_REPEAT_DISCARD);
+            let event_seat = if kind == "chankan" {
+                hand.outcome()
+                    .and_then(mahjong_impact::HandOutcome::payer)
+                    .map_or(seat, Seat::index)
+            } else {
+                seat
+            };
             self.last_kan = Some(ObserverKanPoints {
                 id: self.kan_sequence,
-                seat,
-                kind: kan_kind
-                    .or(discard_kind)
-                    .unwrap_or(FIRST_ROUND_REPEAT_DISCARD),
+                seat: event_seat,
+                kind,
                 deltas,
             });
         }
@@ -813,6 +837,22 @@ impl ImpactRuntime {
                     .map_err(invalid_command)?;
                 None
             }
+            GameCommand::ImpactRon => {
+                let chankan = hand.last_discard().is_none();
+                hand.apply_reaction(seat, ReactionKind::Ron)
+                    .map_err(invalid_command)?;
+                chankan.then_some("chankan")
+            }
+            GameCommand::ImpactChi { tile_ids } => {
+                hand.apply_reaction(
+                    seat,
+                    ReactionKind::Chi {
+                        hand_tiles: tile_ids.map(TileId::new),
+                    },
+                )
+                .map_err(invalid_command)?;
+                None
+            }
             GameCommand::ImpactConcealedKan { tile_code } => {
                 let tile = tile_code
                     .parse()
@@ -848,9 +888,11 @@ impl ImpactRuntime {
                 Some(MeldKind::OpenKan.as_str())
             }
             GameCommand::ImpactPass => {
+                let added_kan = hand.last_discard().is_none();
                 hand.apply_reaction(seat, ReactionKind::Pass)
                     .map_err(invalid_command)?;
-                None
+                (added_kan && matches!(hand.phase(), HandPhase::AwaitingKanAnimation { .. }))
+                    .then_some(MeldKind::AddedKan.as_str())
             }
             _ => {
                 return Err(invalid_command(

@@ -88,7 +88,7 @@ struct CommandRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "name", content = "payload")]
+#[serde(tag = "name", content = "payload", deny_unknown_fields)]
 pub(crate) enum CommandPayload {
     #[serde(rename = "riichi.discard")]
     Discard { tile_id: u16 },
@@ -112,6 +112,8 @@ pub(crate) enum CommandPayload {
     AddedKan { meld_id: u8, tile_id: u16 },
     #[serde(rename = "riichi.nine_terminals")]
     NineTerminals,
+    #[serde(rename = "riichi.nuki")]
+    Nuki { tile_id: u16 },
     #[serde(rename = "game.assets_ready")]
     MatchAssetsReady,
     #[serde(rename = "game.ready_for_hand", alias = "riichi.ready_for_hand")]
@@ -131,6 +133,10 @@ pub(crate) enum CommandPayload {
     ImpactDiscard { tile_id: u16 },
     #[serde(rename = "impact.tsumo")]
     ImpactTsumo,
+    #[serde(rename = "impact.ron")]
+    ImpactRon,
+    #[serde(rename = "impact.chi")]
+    ImpactChi { tile_ids: [u16; 2] },
     #[serde(rename = "impact.pon")]
     ImpactPon,
     #[serde(rename = "impact.open_kan")]
@@ -161,6 +167,7 @@ impl From<CommandPayload> for GameCommand {
             CommandPayload::ConcealedKan { tile_ids } => Self::ConcealedKan { tile_ids },
             CommandPayload::AddedKan { meld_id, tile_id } => Self::AddedKan { meld_id, tile_id },
             CommandPayload::NineTerminals => Self::NineTerminals,
+            CommandPayload::Nuki { tile_id } => Self::Nuki { tile_id },
             CommandPayload::MatchAssetsReady => Self::MatchAssetsReady,
             CommandPayload::ReadyForHand { hand_index } => Self::ReadyForHand { hand_index },
             CommandPayload::SettlementPlayed { hand_index } => {
@@ -173,6 +180,8 @@ impl From<CommandPayload> for GameCommand {
             CommandPayload::VoteExit { agree } => Self::VoteExit { agree },
             CommandPayload::ImpactDiscard { tile_id } => Self::ImpactDiscard { tile_id },
             CommandPayload::ImpactTsumo => Self::ImpactTsumo,
+            CommandPayload::ImpactRon => Self::ImpactRon,
+            CommandPayload::ImpactChi { tile_ids } => Self::ImpactChi { tile_ids },
             CommandPayload::ImpactPon => Self::ImpactPon,
             CommandPayload::ImpactOpenKan => Self::ImpactOpenKan,
             CommandPayload::ImpactConcealedKan { tile_code } => {
@@ -306,6 +315,7 @@ mod tests {
             "riichi.nine_terminals",
             "game.request_exit_vote",
             "impact.tsumo",
+            "impact.ron",
             "impact.pon",
             "impact.open_kan",
             "impact.indicator_concealed_kan",
@@ -338,6 +348,20 @@ mod tests {
                     "{name} should remain accepted",
                 );
             }
+        }
+    }
+
+    #[test]
+    fn command_payloads_reject_unrecognized_fields() {
+        for frame in [
+            r#"{"name":"impact.ron","force":true}"#,
+            r#"{"name":"impact.chi","payload":{"tile_ids":[1,2],"force":true}}"#,
+            r#"{"name":"impact.discard","payload":{"tile_id":1,"seat":2}}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<CommandPayload>(frame).is_err(),
+                "unrecognized command data must be rejected: {frame}",
+            );
         }
     }
 }

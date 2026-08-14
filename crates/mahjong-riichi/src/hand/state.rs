@@ -20,13 +20,18 @@ pub(super) struct PendingDiscard {
 pub(super) enum PendingKan {
     Concealed {
         declarer: Seat,
-        tile_ids: [TileId; 4],
+        meld: crate::Meld,
         responses: Box<[Option<Reaction>]>,
     },
     Added {
         declarer: Seat,
-        meld_id: crate::MeldId,
-        tile_id: TileId,
+        meld: crate::Meld,
+        added_tile: Tile,
+        responses: Box<[Option<Reaction>]>,
+    },
+    Nuki {
+        declarer: Seat,
+        tile: Tile,
         responses: Box<[Option<Reaction>]>,
     },
 }
@@ -34,19 +39,25 @@ pub(super) enum PendingKan {
 impl PendingKan {
     pub(super) const fn declarer(&self) -> Seat {
         match self {
-            Self::Concealed { declarer, .. } | Self::Added { declarer, .. } => *declarer,
+            Self::Concealed { declarer, .. }
+            | Self::Added { declarer, .. }
+            | Self::Nuki { declarer, .. } => *declarer,
         }
     }
 
     pub(super) fn responses(&self) -> &[Option<Reaction>] {
         match self {
-            Self::Concealed { responses, .. } | Self::Added { responses, .. } => responses,
+            Self::Concealed { responses, .. }
+            | Self::Added { responses, .. }
+            | Self::Nuki { responses, .. } => responses,
         }
     }
 
     pub(super) fn responses_mut(&mut self) -> &mut [Option<Reaction>] {
         match self {
-            Self::Concealed { responses, .. } | Self::Added { responses, .. } => responses,
+            Self::Concealed { responses, .. }
+            | Self::Added { responses, .. }
+            | Self::Nuki { responses, .. } => responses,
         }
     }
 }
@@ -105,7 +116,7 @@ impl RiichiHand {
 
         let tile_set =
             TileSet::new(rules.variant, rules.bonuses.red_fives).map_err(HandError::TileSet)?;
-        let mut wall = Wall::new(tile_set, seed);
+        let mut wall = Wall::new_with_north_rule(tile_set, seed, rules.match_rules.north);
         let mut players: Vec<_> = points.into_iter().map(PlayerHand::new).collect();
         let dealer = progress.dealer();
 
@@ -183,6 +194,11 @@ impl RiichiHand {
     #[must_use]
     pub fn remaining_live_draws(&self) -> usize {
         self.wall.remaining_live_draws()
+    }
+
+    #[must_use]
+    pub const fn completed_rinshan_draws(&self) -> u8 {
+        self.wall.rinshan_draw_count()
     }
 
     /// 本局牌山洗好之后的完整顺序，以及活牌区末尾（王牌起点）的下标。
@@ -464,6 +480,9 @@ pub enum HandError {
     AbortiveDrawNotAllowed {
         reason: &'static str,
     },
+    NukiNotAllowed {
+        reason: &'static str,
+    },
     DuplicateTileSelection,
     InvalidReaction {
         reason: &'static str,
@@ -535,6 +554,7 @@ impl Display for HandError {
                 formatter.write_str("the hand judge rejected the win declaration")
             }
             Self::AbortiveDrawNotAllowed { reason } => formatter.write_str(reason),
+            Self::NukiNotAllowed { reason } => formatter.write_str(reason),
             Self::DuplicateTileSelection => {
                 formatter.write_str("the same physical tile was selected more than once")
             }

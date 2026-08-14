@@ -1,8 +1,9 @@
 use mahjong_core::{MatchId, RoomId, UserId};
 use mahjong_riichi::{
     Discard, HandEvent, HandOutcome, HandPhase, HandResult, HandSettlement, MatchResult, Meld,
-    MeldId, MeldKind, Reaction, RiichiHand, RiichiMatch, RiichiScorer, RiichiStatus, ScoredWinner,
-    Seat, TableProgress, Tile, TileId, TileKind, WallSeed, WinEvaluation,
+    MeldId, MeldKind, Reaction, RiichiHand, RiichiMatch, RiichiScorer, RiichiStatus,
+    SanmaNorthRule, ScoredWinner, Seat, TableProgress, Tile, TileId, TileKind, WallSeed,
+    WinEvaluation,
 };
 
 use crate::clock::SeatClock;
@@ -40,12 +41,19 @@ pub enum GameCommand {
         meld_id: u8,
         tile_id: u16,
     },
+    Nuki {
+        tile_id: u16,
+    },
     NineTerminals,
     /// 冲击麻将打牌。牌型判定全在引擎里，指令只带一张牌。
     ImpactDiscard {
         tile_id: u16,
     },
     ImpactTsumo,
+    ImpactRon,
+    ImpactChi {
+        tile_ids: [u16; 2],
+    },
     /// 冲击麻将碰。引擎自己挑手上的两张，「指示牌碰」也走这一条。
     ImpactPon,
     ImpactOpenKan,
@@ -141,6 +149,7 @@ pub struct ObserverPlayer {
     concealed_tile_count: usize,
     drawn_tile_id: Option<TileId>,
     melds: Box<[Meld]>,
+    nuki_tiles: Box<[Tile]>,
     discards: Box<[Discard]>,
     riichi_status: RiichiStatus,
     waiting_tiles: Box<[WaitingTileHint]>,
@@ -194,6 +203,11 @@ impl ObserverPlayer {
     #[must_use]
     pub fn melds(&self) -> &[Meld] {
         &self.melds
+    }
+
+    #[must_use]
+    pub fn nuki_tiles(&self) -> &[Tile] {
+        &self.nuki_tiles
     }
 
     #[must_use]
@@ -262,6 +276,7 @@ pub struct TurnActions {
     tenpai_discard_hints: Box<[DiscardWaitHint]>,
     concealed_kan_tile_ids: Box<[[u16; 4]]>,
     added_kan_options: Box<[AddedKanOption]>,
+    nuki_tile_ids: Box<[u16]>,
     can_nine_terminals: bool,
 }
 
@@ -298,6 +313,11 @@ impl TurnActions {
     }
 
     #[must_use]
+    pub fn nuki_tile_ids(&self) -> &[u16] {
+        &self.nuki_tile_ids
+    }
+
+    #[must_use]
     pub const fn can_nine_terminals(&self) -> bool {
         self.can_nine_terminals
     }
@@ -314,7 +334,9 @@ pub struct ObserverMatch {
     progress: TableProgress,
     phase: HandPhase,
     remaining_live_draws: usize,
+    completed_rinshan_draws: u8,
     dora_indicators: Box<[Tile]>,
+    north_rule: SanmaNorthRule,
     players: Box<[ObserverPlayer]>,
     available_reactions: Box<[Reaction]>,
     turn_actions: TurnActions,
@@ -377,8 +399,18 @@ impl ObserverMatch {
     }
 
     #[must_use]
+    pub const fn completed_rinshan_draws(&self) -> u8 {
+        self.completed_rinshan_draws
+    }
+
+    #[must_use]
     pub fn dora_indicators(&self) -> &[Tile] {
         &self.dora_indicators
+    }
+
+    #[must_use]
+    pub const fn north_rule(&self) -> SanmaNorthRule {
+        self.north_rule
     }
 
     #[must_use]
@@ -781,6 +813,7 @@ impl RiichiRuntime {
                         .then_some(hand.drawn_tile_id())
                         .flatten(),
                     melds: hand.melds().to_vec().into_boxed_slice(),
+                    nuki_tiles: hand.nuki_tiles().to_vec().into_boxed_slice(),
                     discards: hand.discards().to_vec().into_boxed_slice(),
                     riichi_status: hand.riichi_status(),
                     waiting_tiles,
@@ -799,11 +832,13 @@ impl RiichiRuntime {
             progress: self.hand.progress(),
             phase: self.hand.phase(),
             remaining_live_draws: self.hand.remaining_live_draws(),
+            completed_rinshan_draws: self.hand.completed_rinshan_draws(),
             dora_indicators: self
                 .hand
                 .current_dora_indicators()
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
+            north_rule: self.game.rules().match_rules.north,
             players,
             available_reactions: if self.exit_vote.is_some()
                 || self.terminated_by_exit_vote
@@ -1005,6 +1040,17 @@ impl RiichiRuntime {
             }
         }
 
+        let nuki_tile_ids = player
+            .concealed()
+            .iter()
+            .filter_map(|tile| {
+                let mut hand = self.hand.clone();
+                hand.declare_nuki(actor, tile.id())
+                    .is_ok()
+                    .then_some(tile.id().value())
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         let mut nine_terminals_hand = self.hand.clone();
         Ok(TurnActions {
             can_tsumo: self.hand.evaluate_tsumo(actor).is_ok(),
@@ -1013,6 +1059,7 @@ impl RiichiRuntime {
             tenpai_discard_hints,
             concealed_kan_tile_ids,
             added_kan_options: added_kan_options.into_boxed_slice(),
+            nuki_tile_ids,
             can_nine_terminals: nine_terminals_hand.declare_nine_terminals(actor).is_ok(),
         })
     }
@@ -1250,9 +1297,12 @@ impl RiichiRuntime {
                 self.hand
                     .declare_added_kan(seat, MeldId::new(meld_id), TileId::new(tile_id))
             }
+            GameCommand::Nuki { tile_id } => self.hand.declare_nuki(seat, TileId::new(tile_id)),
             GameCommand::NineTerminals => self.hand.declare_nine_terminals(seat),
             GameCommand::ImpactDiscard { .. }
             | GameCommand::ImpactTsumo
+            | GameCommand::ImpactRon
+            | GameCommand::ImpactChi { .. }
             | GameCommand::ImpactPon
             | GameCommand::ImpactOpenKan
             | GameCommand::ImpactConcealedKan { .. }

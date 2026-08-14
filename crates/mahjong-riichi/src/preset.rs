@@ -120,6 +120,7 @@ fn competition_base() -> RiichiRules {
             tobi: false,
             dealer_continuation: DealerContinuation::WinOrTenpai,
             agari_yame: false,
+            north: crate::SanmaNorthRule::NukiDora,
         },
         scoring: ScoringRules {
             kiriage_mangan: true,

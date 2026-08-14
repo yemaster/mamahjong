@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt::{self, Debug, Display, Formatter};
 
-use crate::{MeldKind, Reaction, RiichiHand, RiichiStatus, Seat, Tile, TileId};
+use crate::{MeldKind, Reaction, RiichiHand, RiichiStatus, Seat, Tile, TileId, TileKind};
 
 use super::state::{PendingKan, Phase};
 
@@ -93,6 +93,14 @@ impl RiichiHand {
                 return Err(HandInvariantError::new("riichi.double_without_riichi"));
             }
             let mut meld_ids = HashSet::with_capacity(player.melds.len());
+            if player.nuki_tiles.len() > 4
+                || player
+                    .nuki_tiles
+                    .iter()
+                    .any(|tile| tile.kind() != TileKind::honor(crate::Honor::North))
+            {
+                return Err(HandInvariantError::new("nuki.tiles"));
+            }
             for meld in &player.melds {
                 has_meld = true;
                 if !meld_ids.insert(meld.id()) {
@@ -124,16 +132,45 @@ impl RiichiHand {
                 }
             }
         }
-        if counted_kans != self.kan_counts.iter().copied().sum::<u8>() {
+        let recorded_kans = self.kan_counts.iter().copied().sum::<u8>();
+        let placed_kan_awaiting_resolution = matches!(
+            self.phase,
+            Phase::KanResponses(PendingKan::Concealed { .. } | PendingKan::Added { .. })
+                | Phase::Ended(crate::EndReason::Ron)
+        ) && recorded_kans.checked_add(1)
+            == Some(counted_kans);
+        if counted_kans != recorded_kans && !placed_kan_awaiting_resolution {
             return Err(HandInvariantError::new("kan.count_mismatch"));
         }
-        if self.calls_occurred != has_meld {
+        let uncompleted_concealed_kan_is_only_meld = !self.calls_occurred
+            && has_meld
+            && recorded_kans == 0
+            && counted_kans == 1
+            && matches!(
+                self.phase,
+                Phase::KanResponses(PendingKan::Concealed { .. })
+                    | Phase::Ended(crate::EndReason::Ron)
+            );
+        if self.calls_occurred != has_meld && !uncompleted_concealed_kan_is_only_meld {
             return Err(HandInvariantError::new("calls.flag_mismatch"));
         }
 
         let four_kans_aborted = matches!(self.phase, Phase::Ended(crate::EndReason::FourKans));
-        let completed_kan_draws = counted_kans.saturating_sub(u8::from(four_kans_aborted));
-        if self.wall.rinshan_draw_count() != completed_kan_draws {
+        let completed_kan_draws = recorded_kans.saturating_sub(u8::from(four_kans_aborted));
+        let nuki_draws = self
+            .players
+            .iter()
+            .map(|player| u8::try_from(player.nuki_tiles.len()).unwrap_or(u8::MAX))
+            .sum::<u8>();
+        let expected_rinshan_draws = completed_kan_draws + nuki_draws;
+        let north_is_exposed_before_its_draw = matches!(
+            self.phase,
+            Phase::KanResponses(PendingKan::Nuki { .. }) | Phase::Ended(crate::EndReason::Ron)
+        ) && self.wall.rinshan_draw_count().checked_add(1)
+            == Some(expected_rinshan_draws);
+        if self.wall.rinshan_draw_count() != expected_rinshan_draws
+            && !north_is_exposed_before_its_draw
+        {
             return Err(HandInvariantError::new("kan.rinshan_count"));
         }
         let expected_dora_count = if self.rules.bonuses.kan_dora {
@@ -160,6 +197,9 @@ impl RiichiHand {
                 for tile in meld.tiles() {
                     self.register_tile(&mut located, *tile)?;
                 }
+            }
+            for tile in &player.nuki_tiles {
+                self.register_tile(&mut located, *tile)?;
             }
             for discard in &player.discards {
                 let tile = discard.tile();
@@ -229,7 +269,7 @@ impl RiichiHand {
                 ) {
                     return Err(HandInvariantError::new("phase.kan_response_owner"));
                 }
-                self.ensure_only_drawn_tile(declarer)?;
+                self.ensure_no_other_drawn_tiles(declarer)?;
                 self.validate_pending_kan_tiles(pending)?;
             }
             Phase::Ended(_) => {}
@@ -309,14 +349,28 @@ impl RiichiHand {
         Ok(())
     }
 
+    fn ensure_no_other_drawn_tiles(&self, seat: Seat) -> Result<(), HandInvariantError> {
+        for (index, player) in self.players.iter().enumerate() {
+            if index != usize::from(seat.index()) && player.drawn_tile.is_some() {
+                return Err(HandInvariantError::new("phase.drawn_tile_owner"));
+            }
+        }
+        Ok(())
+    }
+
     fn validate_pending_kan_tiles(&self, pending: &PendingKan) -> Result<(), HandInvariantError> {
         let declarer = pending.declarer();
         let player = &self.players[usize::from(declarer.index())];
         match pending {
-            PendingKan::Concealed { tile_ids, .. } => {
-                if tile_ids
-                    .iter()
-                    .all(|tile_id| player.concealed.iter().any(|tile| tile.id() == *tile_id))
+            PendingKan::Concealed { meld, .. } => {
+                if matches!(meld.kind(), MeldKind::ConcealedKan)
+                    && player.melds.iter().any(|placed| placed == meld)
+                    && !meld.tiles().iter().any(|tile| {
+                        player
+                            .concealed
+                            .iter()
+                            .any(|concealed| concealed.id() == tile.id())
+                    })
                 {
                     Ok(())
                 } else {
@@ -324,17 +378,32 @@ impl RiichiHand {
                 }
             }
             PendingKan::Added {
-                meld_id, tile_id, ..
+                meld, added_tile, ..
             } => {
-                if player.concealed.iter().any(|tile| tile.id() == *tile_id)
-                    && player
-                        .melds
+                if matches!(meld.kind(), MeldKind::AddedKan)
+                    && meld.tiles().iter().any(|tile| tile == added_tile)
+                    && player.melds.iter().any(|placed| placed == meld)
+                    && !player
+                        .concealed
                         .iter()
-                        .any(|meld| meld.id() == *meld_id && matches!(meld.kind(), MeldKind::Pon))
+                        .any(|concealed| concealed.id() == added_tile.id())
                 {
                     Ok(())
                 } else {
                     Err(HandInvariantError::new("phase.added_kan_tile"))
+                }
+            }
+            PendingKan::Nuki { tile, .. } => {
+                if tile.kind() == TileKind::honor(crate::Honor::North)
+                    && player.nuki_tiles.iter().any(|nuki| nuki == tile)
+                    && !player
+                        .concealed
+                        .iter()
+                        .any(|concealed| concealed.id() == tile.id())
+                {
+                    Ok(())
+                } else {
+                    Err(HandInvariantError::new("phase.nuki_tile"))
                 }
             }
         }

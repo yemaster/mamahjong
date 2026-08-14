@@ -45,6 +45,20 @@ fn config_of<T: Serialize>(value: &T) -> serde_json::Value {
     serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
 }
 
+fn riichi_config_of(rules: &RiichiRules) -> serde_json::Value {
+    let mut value = config_of(rules);
+    if matches!(rules.variant, RiichiVariant::Sanma) {
+        value["match_rules"]["north"] = serde_json::Value::String(
+            match rules.match_rules.north {
+                mahjong_riichi::SanmaNorthRule::NukiDora => "nuki_dora",
+                mahjong_riichi::SanmaNorthRule::Yakuhai => "yakuhai",
+            }
+            .to_owned(),
+        );
+    }
+    value
+}
+
 async fn rule_sets() -> Json<RuleSetCatalogResponse> {
     Json(RuleSetCatalogResponse {
         schema: "rule_set_catalog.v1",
@@ -54,14 +68,14 @@ async fn rule_sets() -> Json<RuleSetCatalogResponse> {
                 family: "riichi",
                 display_name: "四人日麻",
                 seat_count: 4,
-                default_config: config_of(&RiichiRules::standard(RiichiVariant::Yonma)),
+                default_config: riichi_config_of(&RiichiRules::standard(RiichiVariant::Yonma)),
                 presets: RiichiPreset::ALL
                     .into_iter()
                     .map(|preset| PresetResponse {
                         id: preset.id(),
                         revision: preset.revision().get(),
                         display_name: preset.display_name(),
-                        config: config_of(&preset.rules()),
+                        config: riichi_config_of(&preset.rules()),
                     })
                     .collect(),
             },
@@ -70,7 +84,7 @@ async fn rule_sets() -> Json<RuleSetCatalogResponse> {
                 family: "riichi",
                 display_name: "三人日麻",
                 seat_count: 3,
-                default_config: config_of(&RiichiRules::standard(RiichiVariant::Sanma)),
+                default_config: riichi_config_of(&RiichiRules::standard(RiichiVariant::Sanma)),
                 presets: Vec::new(),
             },
             RuleSetResponse {

@@ -24,6 +24,8 @@ pub struct HandSettlement {
     reason: EndReason,
     winner: Option<Seat>,
     evaluation: Option<WinEvaluation>,
+    payer: Option<Seat>,
+    chankan: bool,
     point_deltas: [i32; SEATS],
     kan_point_deltas: [i32; SEATS],
     points_after: [i32; SEATS],
@@ -45,6 +47,16 @@ impl HandSettlement {
     #[must_use]
     pub const fn evaluation(&self) -> Option<&WinEvaluation> {
         self.evaluation.as_ref()
+    }
+
+    #[must_use]
+    pub const fn payer(&self) -> Option<Seat> {
+        self.payer
+    }
+
+    #[must_use]
+    pub const fn is_chankan(&self) -> bool {
+        self.chankan
     }
 
     /// 本局点数增减。全交时是「胜者补到 400、其余三家扣到 0」的差值。
@@ -199,7 +211,9 @@ impl ImpactMatch {
         }
 
         let point_deltas = match (outcome.winner(), outcome.evaluation()) {
-            (Some(winner), Some(evaluation)) => self.pay_winner(winner, evaluation),
+            (Some(winner), Some(evaluation)) => {
+                self.pay_winner_for(winner, evaluation, outcome.payer(), outcome.is_chankan())
+            }
             // 荒牌：本局不算，点数不动、庄位不动。
             _ => [0; SEATS],
         };
@@ -222,6 +236,8 @@ impl ImpactMatch {
             reason: outcome.reason(),
             winner: outcome.winner(),
             evaluation: outcome.evaluation().cloned(),
+            payer: outcome.payer(),
+            chankan: outcome.is_chankan(),
             point_deltas,
             kan_point_deltas,
             points_after: self.points,
@@ -231,7 +247,18 @@ impl ImpactMatch {
     }
 
     /// 算出本局的点数增减，但先不落账。
+    #[cfg(test)]
     fn pay_winner(&self, winner: Seat, evaluation: &WinEvaluation) -> [i32; SEATS] {
+        self.pay_winner_for(winner, evaluation, None, false)
+    }
+
+    fn pay_winner_for(
+        &self,
+        winner: Seat,
+        evaluation: &WinEvaluation,
+        payer: Option<Seat>,
+        chankan: bool,
+    ) -> [i32; SEATS] {
         let mut deltas = [0; SEATS];
 
         if evaluation.is_all_in() {
@@ -253,8 +280,15 @@ impl ImpactMatch {
             if seat == winner {
                 continue;
             }
+            let owed = match payer {
+                None => value,
+                Some(discarder) if chankan && seat == discarder => value.saturating_mul(3),
+                Some(discarder) if seat == discarder => value,
+                Some(_) if chankan => 0,
+                Some(_) => value.saturating_add(1) / 2,
+            };
             // 付不起就把剩下的点数全给胜者，点数不为负。
-            let paid = value.min(self.points[slot(seat)].max(0));
+            let paid = owed.min(self.points[slot(seat)].max(0));
             deltas[slot(seat)] = -paid;
             collected += paid;
         }
@@ -356,6 +390,22 @@ mod tests {
         let deltas = table.pay_winner(seat(0), &win(20));
 
         assert_eq!(deltas, [60, -20, -20, -20]);
+    }
+
+    #[test]
+    fn bright_ron_charges_the_discarder_full_and_the_others_half_rounded_up() {
+        let table = table();
+        let deltas = table.pay_winner_for(seat(0), &win(13), Some(seat(1)), false);
+
+        assert_eq!(deltas, [27, -13, -7, -7]);
+    }
+
+    #[test]
+    fn chankan_charges_only_the_kan_declarer_three_times_the_hand_value() {
+        let table = table();
+        let deltas = table.pay_winner_for(seat(2), &win(13), Some(seat(0)), true);
+
+        assert_eq!(deltas, [-39, 0, 39, 0]);
     }
 
     #[test]

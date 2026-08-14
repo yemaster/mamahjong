@@ -383,6 +383,15 @@ mod tests {
         assert_eq!(sanma["family"], "riichi");
         assert_eq!(sanma["seat_count"], 3);
         assert_eq!(sanma["default_config"]["bonuses"]["red_fives"]["man"], 0);
+        assert_eq!(sanma["default_config"]["match_rules"]["north"], "nuki_dora");
+        assert_eq!(
+            sanma["default_config"]["settlement"]["noten_payment"],
+            2_000
+        );
+        assert_eq!(
+            sanma["default_config"]["scoring"]["kokushi_ankan_chankan"],
+            true
+        );
         assert_eq!(sanma["presets"], json!([]));
 
         // 冲击麻将的默认值就是建房面板打开时该勾上的那一套：杠牌三项全开、
@@ -589,6 +598,9 @@ mod tests {
         assert!(view["turn_actions"]["riichi_discard_hints"].is_array());
         assert!(view["turn_actions"]["concealed_kan_tile_ids"].is_array());
         assert!(view["turn_actions"]["added_kan_options"].is_array());
+        assert!(view["turn_actions"]["nuki_tile_ids"].is_array());
+        assert_eq!(view["sanma_north_rule"], "nuki_dora");
+        assert!(view["players"][observer_seat]["nuki_tiles"].is_array());
         assert!(view["turn_actions"]["can_nine_terminals"].is_boolean());
         assert!(view["players"][observer_seat]["waiting_tiles"].is_array());
         assert!(view["players"][observer_seat]["furiten"].is_boolean());

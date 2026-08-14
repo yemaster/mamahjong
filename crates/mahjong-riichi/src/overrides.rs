@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     DealerContinuation, KuikaeRule, MatchLength, PlacementUma, RedFives, RiichiPreset, RiichiRules,
-    RiichiVariant, RonResolution, ScoringRules, ThinkingTimeRules, ValidationErrors, YakumanValue,
+    RiichiVariant, RonResolution, SanmaNorthRule, ScoringRules, ThinkingTimeRules,
+    ValidationErrors, YakumanValue,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -54,6 +55,7 @@ pub struct MatchRuleOverrides {
     pub tobi: Option<bool>,
     pub dealer_continuation: Option<DealerContinuation>,
     pub agari_yame: Option<bool>,
+    pub north: Option<SanmaNorthRule>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -174,6 +176,7 @@ impl RiichiRuleOverrides {
                 overrides.dealer_continuation,
             );
             apply_if_some(&mut rules.match_rules.agari_yame, overrides.agari_yame);
+            apply_if_some(&mut rules.match_rules.north, overrides.north);
         }
 
         if let Some(overrides) = self.scoring {

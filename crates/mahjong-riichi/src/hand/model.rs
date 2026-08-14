@@ -148,6 +148,7 @@ pub struct PlayerHand {
     pub(super) concealed: Vec<Tile>,
     pub(super) drawn_tile: Option<TileId>,
     pub(super) melds: Vec<Meld>,
+    pub(super) nuki_tiles: Vec<Tile>,
     pub(super) discards: Vec<Discard>,
     pub(super) riichi: RiichiStatus,
     pub(super) double_riichi: bool,
@@ -163,6 +164,7 @@ impl PlayerHand {
             concealed: Vec::with_capacity(14),
             drawn_tile: None,
             melds: Vec::with_capacity(4),
+            nuki_tiles: Vec::with_capacity(4),
             discards: Vec::with_capacity(24),
             riichi: RiichiStatus::None,
             double_riichi: false,
@@ -190,6 +192,11 @@ impl PlayerHand {
     #[must_use]
     pub fn melds(&self) -> &[Meld] {
         &self.melds
+    }
+
+    #[must_use]
+    pub fn nuki_tiles(&self) -> &[Tile] {
+        &self.nuki_tiles
     }
 
     #[must_use]
@@ -232,6 +239,11 @@ impl PlayerHand {
     #[cfg(test)]
     pub(crate) fn add_scoring_fixture_discard(&mut self, tile: Tile) {
         self.discards.push(Discard::new(tile, false, false));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn add_scoring_fixture_nuki(&mut self, tile: Tile) {
+        self.nuki_tiles.push(tile);
     }
 
     #[cfg(test)]

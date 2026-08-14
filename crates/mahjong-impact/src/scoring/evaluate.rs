@@ -8,17 +8,25 @@ use crate::scoring::shape::{self, KindCounts};
 use crate::scoring::yaku::{AllInKind, Yaku, YakuValue};
 use crate::tile::{Suit, TileKind};
 
-/// 算点只关心副露的种类和牌种。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// 算点关心副露种类及其中每一张牌；吃牌的三张并不相同。
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MeldSummary {
     pub kind: MeldKind,
-    pub tile: TileKind,
+    pub tiles: Vec<TileKind>,
 }
 
 impl MeldSummary {
     #[must_use]
-    pub const fn new(kind: MeldKind, tile: TileKind) -> Self {
-        Self { kind, tile }
+    pub fn new(kind: MeldKind, tile: TileKind) -> Self {
+        Self {
+            kind,
+            tiles: vec![tile; usize::from(kind.tile_count())],
+        }
+    }
+
+    #[must_use]
+    pub fn from_tiles(kind: MeldKind, tiles: Vec<TileKind>) -> Self {
+        Self { kind, tiles }
     }
 }
 
@@ -37,6 +45,8 @@ pub struct WinContext<'a> {
     pub dealer_streak: u32,
     /// 和的是岭上牌。
     pub rinshan: bool,
+    /// 加杠牌被抢和。
+    pub chankan: bool,
     /// 和的是牌山最后一张。
     pub last_tile: bool,
     /// 天和 / 地和。
@@ -132,9 +142,11 @@ pub fn evaluate(context: &WinContext<'_>) -> Option<WinEvaluation> {
     let melded_jokers: u8 = context
         .melds
         .iter()
-        .filter(|meld| meld.tile == context.joker)
-        .map(|meld| meld.kind.tile_count())
-        .sum();
+        .flat_map(|meld| meld.tiles.iter())
+        .filter(|tile| **tile == context.joker)
+        .count()
+        .try_into()
+        .expect("at most sixteen meld tiles");
     let jokers_total = concealed_jokers + melded_jokers;
 
     let melds_len = u8::try_from(context.melds.len()).expect("at most four melds");
@@ -271,6 +283,9 @@ pub fn evaluate(context: &WinContext<'_>) -> Option<WinEvaluation> {
     if context.rinshan {
         yaku.push(YakuValue::single(Yaku::RinshanKaihou));
     }
+    if context.chankan {
+        yaku.push(YakuValue::single(Yaku::Chankan));
+    }
 
     // 全交项关闭时，对应牌型改记 +10。单吊、无龙清一色的 +10 就是规则表里的那一条，不重复。
     for (kind, holds, enabled) in conditions {
@@ -302,7 +317,8 @@ fn detect_shapes(
 ) -> HandShapes {
     let sets_needed = 4 - melds_len;
     let standard = shape::standard(counts, jokers, sets_needed, true, true);
-    let all_triplets = shape::standard(counts, jokers, sets_needed, true, false);
+    let all_triplets = context.melds.iter().all(|meld| meld.kind != MeldKind::Chi)
+        && shape::standard(counts, jokers, sets_needed, true, false);
 
     let seven_pairs = melds_len == kan_melds
         && kan_melds <= 3
@@ -412,9 +428,10 @@ fn non_joker_kinds<'a>(context: &'a WinContext<'a>) -> impl Iterator<Item = Tile
         .iter()
         .copied()
         .chain(
-            context.melds.iter().flat_map(|meld| {
-                std::iter::repeat_n(meld.tile, usize::from(meld.kind.tile_count()))
-            }),
+            context
+                .melds
+                .iter()
+                .flat_map(|meld| meld.tiles.iter().copied()),
         )
         .filter(move |kind| *kind != joker)
 }
@@ -448,6 +465,7 @@ mod tests {
         winning_tile: TileKind,
         dealer_streak: u32,
         rinshan: bool,
+        chankan: bool,
         last_tile: bool,
         blessing: bool,
         honor_streak: u32,
@@ -463,6 +481,7 @@ mod tests {
                 winning_tile: kind(winning_tile),
                 dealer_streak: 0,
                 rinshan: false,
+                chankan: false,
                 last_tile: false,
                 blessing: false,
                 honor_streak: 0,
@@ -478,6 +497,7 @@ mod tests {
                 winning_tile: self.winning_tile,
                 dealer_streak: self.dealer_streak,
                 rinshan: self.rinshan,
+                chankan: self.chankan,
                 last_tile: self.last_tile,
                 blessing: self.blessing,
                 honor_streak: self.honor_streak,
@@ -513,6 +533,16 @@ mod tests {
         let case = Case::new("5m", "1m 2m 3m 4p 5p 6p 7s 8s 9s 1z 1z 2z 3z 4z", "4z");
 
         assert!(case.evaluate().is_none());
+    }
+
+    #[test]
+    fn an_open_sequence_is_scored_as_a_sequence_not_a_triplet() {
+        let mut case = Case::new("5m", "4p 4p 4p 7s 7s 7s 1z 1z 1z 2z 2z", "2z");
+        case.melds = vec![MeldSummary::from_tiles(MeldKind::Chi, kinds("1m 2m 3m"))];
+
+        let win = case.win();
+        assert!(win.shapes().standard);
+        assert!(!win.shapes().all_triplets);
     }
 
     #[test]

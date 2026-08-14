@@ -193,6 +193,63 @@ mod tests {
     }
 
     #[test]
+    fn sanma_yakuhai_north_triplet_is_one_han() {
+        let mut fixture = Fixture::ron("4z 4z 4z 1p 2p 3p 1s 2s 3s 7p 8p 9p 5s", "5s");
+        fixture.rules = RiichiRules::standard(RiichiVariant::Sanma);
+        fixture.rules.match_rules.north = crate::SanmaNorthRule::Yakuhai;
+        fixture.winner = Seat::new(RiichiVariant::Sanma, 1).expect("winner");
+        fixture.progress = TableProgress::east_one(
+            RiichiVariant::Sanma,
+            Seat::new(RiichiVariant::Sanma, 0).expect("dealer"),
+        )
+        .expect("progress");
+        fixture.wall = Wall::new_with_north_rule(
+            TileSet::standard(RiichiVariant::Sanma),
+            &WallSeed::from_bytes([71; 32]),
+            crate::SanmaNorthRule::Yakuhai,
+        );
+
+        let result = RiichiScorer
+            .evaluate(fixture.query())
+            .expect("north is yaku");
+
+        assert!(
+            result
+                .yaku()
+                .iter()
+                .any(|value| value.yaku() == Yaku::North)
+        );
+    }
+
+    #[test]
+    fn every_extracted_north_adds_one_bonus_han() {
+        let mut fixture = Fixture::ron("2p 3p 4p 3p 4p 5p 4s 5s 6s 6s 7s 8s 2s", "2s");
+        fixture.rules = RiichiRules::standard(RiichiVariant::Sanma);
+        fixture.winner = Seat::new(RiichiVariant::Sanma, 1).expect("winner");
+        fixture.progress = TableProgress::east_one(
+            RiichiVariant::Sanma,
+            Seat::new(RiichiVariant::Sanma, 0).expect("dealer"),
+        )
+        .expect("progress");
+        fixture.wall = Wall::new_with_north_rule(
+            TileSet::standard(RiichiVariant::Sanma),
+            &WallSeed::from_bytes([72; 32]),
+            crate::SanmaNorthRule::NukiDora,
+        );
+        fixture.player.add_scoring_fixture_nuki(
+            Tile::new(TileId::new(500), "4z".parse().expect("north"), false).expect("tile"),
+        );
+
+        let result = RiichiScorer.evaluate(fixture.query()).expect("tanyao win");
+
+        assert_eq!(result.bonuses().nuki_dora(), 1);
+        assert_eq!(
+            result.bonuses().total(),
+            result.bonuses().dora() + result.bonuses().red_dora() + result.bonuses().ura_dora() + 1
+        );
+    }
+
+    #[test]
     fn own_discard_on_any_current_wait_prevents_ron() {
         let mut fixture = Fixture::ron("1m 2m 3m 1p 2p 3p 1s 2s 3s 4s 5s 7p 7p", "6s");
         let discarded_wait =
@@ -219,6 +276,27 @@ mod tests {
         disabled.rules.scoring.kokushi_ankan_chankan = false;
         let disabled_query = disabled.query_with_source(WinSource::ConcealedKan { from });
         assert!(!RiichiScorer.can_win(disabled_query));
+    }
+
+    #[test]
+    fn a_declared_north_can_be_robbed_but_does_not_grant_chankan() {
+        let from = Seat::new(RiichiVariant::Yonma, 1).expect("north declarer");
+        let fixture = Fixture::ron("1m 2m 3m 1p 2p 3p 1s 2s 3s 5z 5z 5z 4z", "4z");
+        let query = fixture.query_with_source(WinSource::Nuki { from });
+
+        assert!(RiichiScorer.can_win(query));
+        let result = RiichiScorer
+            .evaluate(query)
+            .expect("valid robbed-north win");
+        assert!(
+            !result
+                .yaku()
+                .iter()
+                .any(|value| value.yaku() == Yaku::Chankan)
+        );
+
+        let no_yaku = Fixture::ron("1p 2p 3p 4p 5p 6p 1s 2s 3s 7s 8s 9s 4z", "4z");
+        assert!(!RiichiScorer.can_win(no_yaku.query_with_source(WinSource::Nuki { from })));
     }
 
     #[test]

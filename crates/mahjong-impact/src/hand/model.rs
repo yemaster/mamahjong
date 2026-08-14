@@ -21,13 +21,14 @@ impl MeldId {
     }
 }
 
-/// 副露种类。冲击麻将没有吃。
+/// 副露种类。吃只在亮子麻将开放。
 ///
 /// `IndicatorPon` / `IndicatorConcealed` 是「指示牌碰牌算杠」开启后的两种特例：
 /// **杠点按明杠 / 暗杠结算，但牌型仍然是刻子**——不摸岭上牌、不算杠上开花、
 /// 也不计入三杠。
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MeldKind {
+    Chi,
     Pon,
     OpenKan,
     ConcealedKan,
@@ -64,6 +65,7 @@ impl MeldKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Chi => "chi",
             Self::Pon => "pon",
             Self::OpenKan => "open_kan",
             Self::ConcealedKan => "concealed_kan",
@@ -103,7 +105,7 @@ impl Meld {
         called_tile: Option<TileId>,
     ) -> Self {
         debug_assert_eq!(tiles.len(), usize::from(kind.tile_count()));
-        debug_assert!(tiles.iter().all(|held| held.kind() == tile));
+        debug_assert!(kind == MeldKind::Chi || tiles.iter().all(|held| held.kind() == tile));
         Self {
             id,
             kind,
@@ -193,11 +195,13 @@ pub enum DrawSource {
     Replacement,
 }
 
-/// 单局结束的原因。冲击麻将只自摸，没有荣和。
+/// 单局结束的原因。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EndReason {
     /// 自摸和牌。
     Tsumo,
+    /// 荣和（含抢杠）。
+    Ron,
     /// 牌山摸完无人和牌：本局不算，同一庄重开。
     ExhaustiveDraw,
 }
@@ -207,6 +211,7 @@ impl EndReason {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Tsumo => "tsumo",
+            Self::Ron => "ron",
             Self::ExhaustiveDraw => "exhaustive_draw",
         }
     }
@@ -254,9 +259,11 @@ impl HandPhase {
     }
 }
 
-/// 对别家打出的牌可以做的反应。没有吃、没有荣和。
+/// 对别家打出的牌（或加杠牌）可以做的反应。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReactionKind {
+    Ron,
+    Chi { hand_tiles: [TileId; 2] },
     Pon,
     OpenKan,
     Pass,

@@ -128,6 +128,8 @@ pub fn animation_grace_ms(command: &GameCommand) -> u64 {
         | GameCommand::Pon { .. }
         | GameCommand::OpenKan { .. }
         | GameCommand::ConcealedKan { .. }
+        | GameCommand::Nuki { .. }
+        | GameCommand::ImpactChi { .. }
         | GameCommand::ImpactPon
         | GameCommand::ImpactOpenKan
         | GameCommand::ImpactConcealedKan { .. }
@@ -140,6 +142,7 @@ pub fn animation_grace_ms(command: &GameCommand) -> u64 {
         | GameCommand::Ron
         | GameCommand::NineTerminals
         | GameCommand::ImpactTsumo
+        | GameCommand::ImpactRon
         | GameCommand::ImpactPass
         | GameCommand::ImpactKanAnimationPlayed { .. }
         | GameCommand::MatchAssetsReady

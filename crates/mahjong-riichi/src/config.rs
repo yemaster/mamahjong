@@ -16,6 +16,23 @@ pub enum DealerContinuation {
     WinOrTenpai,
 }
 
+/// How the north tiles behave in three-player riichi mahjong.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SanmaNorthRule {
+    /// A north tile may be extracted for one bonus han and a rinshan draw.
+    #[default]
+    NukiDora,
+    /// North is an unconditional value tile and cannot be extracted.
+    Yakuhai,
+}
+
+impl SanmaNorthRule {
+    fn is_nuki_dora(value: &Self) -> bool {
+        matches!(value, Self::NukiDora)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum YakumanValue {
@@ -94,6 +111,8 @@ pub struct MatchRules {
     pub tobi: bool,
     pub dealer_continuation: DealerContinuation,
     pub agari_yame: bool,
+    #[serde(default, skip_serializing_if = "SanmaNorthRule::is_nuki_dora")]
+    pub north: SanmaNorthRule,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -156,7 +175,7 @@ pub struct RiichiRules {
 impl RiichiRules {
     #[must_use]
     pub fn standard(variant: RiichiVariant) -> Self {
-        let (abortive_draws, uma) = match variant {
+        let (abortive_draws, uma, noten_payment) = match variant {
             RiichiVariant::Yonma => (
                 AbortiveDrawRules {
                     four_winds: false,
@@ -167,6 +186,7 @@ impl RiichiRules {
                 PlacementUma::Fixed {
                     values: vec![30, 10, -10, -30],
                 },
+                3_000,
             ),
             RiichiVariant::Sanma => (
                 AbortiveDrawRules {
@@ -178,6 +198,7 @@ impl RiichiRules {
                 PlacementUma::Fixed {
                     values: vec![30, 0, -30],
                 },
+                2_000,
             ),
         };
 
@@ -192,6 +213,7 @@ impl RiichiRules {
                 tobi: true,
                 dealer_continuation: DealerContinuation::WinOrTenpai,
                 agari_yame: true,
+                north: SanmaNorthRule::NukiDora,
             },
             scoring: ScoringRules {
                 kiriage_mangan: false,
@@ -214,7 +236,7 @@ impl RiichiRules {
             abortive_draws,
             settlement: SettlementRules {
                 uma,
-                noten_payment: 3_000,
+                noten_payment,
                 ron_resolution: RonResolution::Multiple,
             },
         }
@@ -242,6 +264,9 @@ mod tests {
         assert_eq!(rules.match_rules.thinking_time.base_seconds, 5);
         assert_eq!(rules.match_rules.thinking_time.reserve_seconds, 20);
         assert!(rules.match_rules.tobi);
+        assert!(rules.scoring.kokushi_ankan_chankan);
+        assert_eq!(rules.match_rules.north, crate::SanmaNorthRule::NukiDora);
+        assert_eq!(rules.settlement.noten_payment, 3_000);
         assert_eq!(
             rules.match_rules.dealer_continuation,
             DealerContinuation::WinOrTenpai
@@ -264,6 +289,9 @@ mod tests {
         let rules = RiichiRules::standard(RiichiVariant::Sanma);
 
         assert_eq!(rules.bonuses.red_fives.for_suit(Suit::Man), 0);
+        assert_eq!(rules.match_rules.north, crate::SanmaNorthRule::NukiDora);
+        assert_eq!(rules.settlement.noten_payment, 2_000);
+        assert!(rules.scoring.kokushi_ankan_chankan);
         assert_eq!(rules.bonuses.red_fives.total(), 2);
         assert!(!rules.abortive_draws.four_winds);
         assert!(!rules.abortive_draws.four_riichi);

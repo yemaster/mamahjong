@@ -255,18 +255,42 @@ impl RiichiHand {
             });
         }
 
+        let mut tiles = remove_tiles(
+            &mut self.players[usize::from(actor.index())].concealed,
+            &tile_ids,
+        );
+        tiles.sort_unstable_by_key(|tile| tile.id());
+        let meld = Meld::new(
+            next_meld_id(&self.players[usize::from(actor.index())]),
+            MeldKind::ConcealedKan,
+            tiles,
+            None,
+            None,
+        );
+        let player = &mut self.players[usize::from(actor.index())];
+        if player
+            .drawn_tile
+            .is_some_and(|drawn| tile_ids.contains(&drawn))
+        {
+            player.drawn_tile = None;
+        }
+        player.melds.push(meld.clone());
+
         let mut responses = self.empty_responses(actor);
         responses[usize::from(actor.index())] = Some(Reaction::Pass);
         self.phase = Phase::KanResponses(PendingKan::Concealed {
             declarer: actor,
-            tile_ids,
+            meld: meld.clone(),
             responses,
         });
-        Ok(HandTransition::new(vec![HandEvent::KanProposed {
-            seat: actor,
-            kind: MeldKind::ConcealedKan,
-            tile_kind: tiles[0].kind(),
-        }]))
+        Ok(HandTransition::new(vec![
+            HandEvent::KanProposed {
+                seat: actor,
+                kind: MeldKind::ConcealedKan,
+                tile_kind: meld.tile_kind(),
+            },
+            HandEvent::MeldDeclared { seat: actor, meld },
+        ]))
     }
 
     pub fn declare_added_kan(
@@ -297,19 +321,49 @@ impl RiichiHand {
             });
         }
 
+        let added_tile = remove_tiles(
+            &mut self.players[usize::from(actor.index())].concealed,
+            &[tile_id],
+        )
+        .pop()
+        .expect("validated added-kan tile exists");
+        let player = &mut self.players[usize::from(actor.index())];
+        if player.drawn_tile == Some(tile_id) {
+            player.drawn_tile = None;
+        }
+        let completed_meld = {
+            let meld = player
+                .melds
+                .iter_mut()
+                .find(|meld| meld.id() == meld_id)
+                .expect("validated pon still exists");
+            let mut tiles = std::mem::take(&mut meld.tiles).into_vec();
+            tiles.push(added_tile);
+            tiles.sort_unstable_by_key(|tile| tile.id());
+            meld.tiles = tiles.into_boxed_slice();
+            meld.kind = MeldKind::AddedKan;
+            meld.clone()
+        };
+
         let mut responses = self.empty_responses(actor);
         responses[usize::from(actor.index())] = Some(Reaction::Pass);
         self.phase = Phase::KanResponses(PendingKan::Added {
             declarer: actor,
-            meld_id,
-            tile_id,
+            meld: completed_meld.clone(),
+            added_tile,
             responses,
         });
-        Ok(HandTransition::new(vec![HandEvent::KanProposed {
-            seat: actor,
-            kind: MeldKind::AddedKan,
-            tile_kind: tile.kind(),
-        }]))
+        Ok(HandTransition::new(vec![
+            HandEvent::KanProposed {
+                seat: actor,
+                kind: MeldKind::AddedKan,
+                tile_kind: tile.kind(),
+            },
+            HandEvent::MeldDeclared {
+                seat: actor,
+                meld: completed_meld,
+            },
+        ]))
     }
 
     fn validate_discard_reaction(
@@ -450,7 +504,7 @@ impl RiichiHand {
                 .map(|_| ())
                 .ok_or(HandError::WinNotAllowed),
             _ => Err(HandError::InvalidReaction {
-                reason: "only ron or pass can respond to a kan",
+                reason: "only ron or pass can respond to a kan or north extraction",
             }),
         }
     }
@@ -629,37 +683,22 @@ impl RiichiHand {
 
     fn pending_kan_win_data(&self, pending: &PendingKan) -> (Tile, WinSource) {
         match pending {
-            PendingKan::Concealed {
-                declarer, tile_ids, ..
-            } => {
-                let tile = self.players[usize::from(declarer.index())]
-                    .concealed
-                    .iter()
-                    .find(|tile| tile.id() == tile_ids[0])
-                    .copied()
-                    .expect("pending concealed-kan tile remains in hand");
-                (tile, WinSource::ConcealedKan { from: *declarer })
+            PendingKan::Concealed { declarer, meld, .. } => {
+                (meld.tiles()[0], WinSource::ConcealedKan { from: *declarer })
             }
             PendingKan::Added {
                 declarer,
-                meld_id,
-                tile_id,
+                meld,
+                added_tile,
                 ..
-            } => {
-                let tile = self.players[usize::from(declarer.index())]
-                    .concealed
-                    .iter()
-                    .find(|tile| tile.id() == *tile_id)
-                    .copied()
-                    .expect("pending added-kan tile remains in hand");
-                (
-                    tile,
-                    WinSource::AddedKan {
-                        from: *declarer,
-                        meld_id: *meld_id,
-                    },
-                )
-            }
+            } => (
+                *added_tile,
+                WinSource::AddedKan {
+                    from: *declarer,
+                    meld_id: meld.id(),
+                },
+            ),
+            PendingKan::Nuki { declarer, tile, .. } => (*tile, WinSource::Nuki { from: *declarer }),
         }
     }
 
@@ -770,7 +809,7 @@ impl RiichiHand {
         if self.wall.remaining_live_draws() == 0 {
             return Err(HandError::KanNotAllowedOnLastDraw);
         }
-        if self.kan_counts.iter().copied().sum::<u8>() >= 4 {
+        if self.wall.rinshan_draw_count() >= 4 {
             return Err(HandError::KanLimitReached);
         }
         Ok(())
@@ -782,53 +821,9 @@ impl RiichiHand {
 
     fn complete_pending_kan(&mut self, pending: PendingKan) -> HandTransition {
         match pending {
-            PendingKan::Concealed {
-                declarer, tile_ids, ..
-            } => {
-                let mut tiles = remove_tiles(
-                    &mut self.players[usize::from(declarer.index())].concealed,
-                    &tile_ids,
-                );
-                tiles.sort_unstable_by_key(|tile| tile.id());
-                let meld = Meld::new(
-                    next_meld_id(&self.players[usize::from(declarer.index())]),
-                    MeldKind::ConcealedKan,
-                    tiles,
-                    None,
-                    None,
-                );
-                self.players[usize::from(declarer.index())]
-                    .melds
-                    .push(meld.clone());
-                self.finish_kan(declarer, meld)
-            }
-            PendingKan::Added {
-                declarer,
-                meld_id,
-                tile_id,
-                ..
-            } => {
-                let tile = remove_tiles(
-                    &mut self.players[usize::from(declarer.index())].concealed,
-                    &[tile_id],
-                )
-                .pop()
-                .expect("validated added-kan tile exists");
-                let completed_meld = {
-                    let meld = self.players[usize::from(declarer.index())]
-                        .melds
-                        .iter_mut()
-                        .find(|meld| meld.id() == meld_id)
-                        .expect("validated pon still exists");
-                    let mut tiles = std::mem::take(&mut meld.tiles).into_vec();
-                    tiles.push(tile);
-                    tiles.sort_unstable_by_key(|tile| tile.id());
-                    meld.tiles = tiles.into_boxed_slice();
-                    meld.kind = MeldKind::AddedKan;
-                    meld.clone()
-                };
-                self.finish_kan(declarer, completed_meld)
-            }
+            PendingKan::Concealed { declarer, meld, .. }
+            | PendingKan::Added { declarer, meld, .. } => self.finish_kan(declarer, meld),
+            PendingKan::Nuki { declarer, .. } => self.complete_nuki(declarer),
         }
     }
 
@@ -1086,6 +1081,31 @@ mod tests {
         )
         .expect("start")
         .0
+    }
+
+    fn sanma_with_dealer_north() -> (RiichiHand, Seat, TileId) {
+        let variant = RiichiVariant::Sanma;
+        let dealer = Seat::new(variant, 0).expect("dealer");
+        let progress = TableProgress::east_one(variant, dealer).expect("progress");
+        for seed in 0_u8..=u8::MAX {
+            let hand = RiichiHand::start(
+                RiichiRules::standard(variant),
+                progress,
+                [25_000; 3],
+                &WallSeed::from_bytes([seed; 32]),
+            )
+            .expect("start")
+            .0;
+            if let Some(tile_id) = hand.players[0]
+                .concealed
+                .iter()
+                .find(|tile| tile.kind() == TileKind::honor(crate::Honor::North))
+                .map(|tile| tile.id())
+            {
+                return (hand, dealer, tile_id);
+            }
+        }
+        panic!("one deterministic seed should deal north to the dealer");
     }
 
     fn find_matching_scenario(required: usize) -> (RiichiHand, Seat, TileId, Vec<TileId>) {
@@ -1409,7 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn concealed_and_added_kan_wait_for_responses_before_mutation() {
+    fn concealed_and_added_kan_are_placed_before_responses_and_draw_after_passes() {
         let (mut concealed_hand, actor, dealer_tile_id, matching) = find_matching_scenario(3);
         let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
         let dealer_index = concealed_hand.players[usize::from(dealer.index())]
@@ -1423,6 +1443,7 @@ mod tests {
         concealed_hand.players[usize::from(actor.index())]
             .concealed
             .push(fourth);
+        concealed_hand.players[usize::from(dealer.index())].drawn_tile = None;
         concealed_hand.players[usize::from(actor.index())].drawn_tile = Some(fourth.id());
         concealed_hand.phase = Phase::TurnAction {
             seat: actor,
@@ -1436,18 +1457,20 @@ mod tests {
                 &RejectAllHandJudge,
             )
             .expect("propose concealed kan");
-        assert!(
-            concealed_hand
-                .player(actor)
-                .expect("actor")
-                .melds()
-                .is_empty()
+        assert_eq!(
+            concealed_hand.player(actor).expect("actor").melds()[0].kind(),
+            MeldKind::ConcealedKan
         );
+        assert_eq!(concealed_hand.wall.rinshan_draw_count(), 0);
+        concealed_hand
+            .validate_invariants()
+            .expect("placed concealed kan remains valid during responses");
         pass_remaining(&mut concealed_hand, actor, &[]);
         assert_eq!(
             concealed_hand.player(actor).expect("actor").melds()[0].kind(),
             MeldKind::ConcealedKan
         );
+        assert_eq!(concealed_hand.wall.rinshan_draw_count(), 1);
 
         let (mut added_hand, caller, discard_id, matching) = find_matching_scenario(3);
         added_hand.discard(dealer, discard_id).expect("discard");
@@ -1472,17 +1495,22 @@ mod tests {
             .expect("propose added kan");
         assert_eq!(
             added_hand.player(caller).expect("caller").melds()[0].kind(),
-            MeldKind::Pon
+            MeldKind::AddedKan
         );
+        assert_eq!(added_hand.wall.rinshan_draw_count(), 0);
+        added_hand
+            .validate_invariants()
+            .expect("placed added kan remains valid during responses");
         pass_remaining(&mut added_hand, caller, &[]);
         assert_eq!(
             added_hand.player(caller).expect("caller").melds()[0].kind(),
             MeldKind::AddedKan
         );
+        assert_eq!(added_hand.wall.rinshan_draw_count(), 1);
     }
 
     #[test]
-    fn ron_on_added_kan_prevents_kan_completion() {
+    fn ron_on_added_kan_keeps_placed_tile_and_prevents_rinshan_draw() {
         let (mut hand, declarer, discard_id, matching) = find_matching_scenario(3);
         let dealer = Seat::new(RiichiVariant::Yonma, 0).expect("dealer");
         hand.discard(dealer, discard_id).expect("discard");
@@ -1515,9 +1543,10 @@ mod tests {
         );
         assert_eq!(
             hand.player(declarer).expect("declarer").melds()[0].kind(),
-            MeldKind::Pon
+            MeldKind::AddedKan
         );
         assert_eq!(hand.kan_counts[usize::from(declarer.index())], 0);
+        assert_eq!(hand.wall.rinshan_draw_count(), 0);
         assert!(matches!(
             transition.events().last(),
             Some(HandEvent::RonDeclared {
@@ -1525,6 +1554,56 @@ mod tests {
                 ..
             }) if *from == declarer
         ));
+        hand.validate_invariants()
+            .expect("robbed added kan remains a valid placed state");
+    }
+
+    #[test]
+    fn ron_on_nuki_keeps_extracted_north_and_prevents_replacement_draw() {
+        let (mut hand, declarer, north_id) = sanma_with_dealer_north();
+        let responder = Seat::new(RiichiVariant::Sanma, 1).expect("responder");
+        let other = Seat::new(RiichiVariant::Sanma, 2).expect("other responder");
+        let remaining = hand.remaining_live_draws();
+
+        hand.declare_nuki(declarer, north_id)
+            .expect("propose north extraction");
+        assert_eq!(
+            hand.available_reactions(responder, &AcceptWins)
+                .expect("reaction options"),
+            vec![Reaction::Ron]
+        );
+        hand.respond(responder, Reaction::Ron, &AcceptWins)
+            .expect("rob north");
+        let transition = hand.pass(other, &AcceptWins).expect("other player passes");
+
+        assert_eq!(
+            hand.phase(),
+            HandPhase::Ended {
+                reason: EndReason::Ron
+            }
+        );
+        assert_eq!(
+            hand.player(declarer).expect("declarer").nuki_tiles()[0].id(),
+            north_id
+        );
+        assert!(
+            !hand.players[usize::from(declarer.index())]
+                .concealed
+                .iter()
+                .any(|tile| tile.id() == north_id)
+        );
+        assert_eq!(hand.wall.rinshan_draw_count(), 0);
+        assert_eq!(hand.remaining_live_draws(), remaining);
+        assert!(matches!(
+            transition.events().last(),
+            Some(HandEvent::RonDeclared {
+                source: WinSource::Nuki { from },
+                tile,
+                ..
+            }) if *from == declarer && tile.id() == north_id
+        ));
+        hand.validate_invariants()
+            .expect("robbed north remains a valid extracted state");
     }
 
     #[test]

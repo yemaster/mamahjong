@@ -1,12 +1,12 @@
 //! 单局状态机。
 //!
-//! 冲击麻将没有吃、没有荣和、没有立直、没有振听。一局里能做的事只有：
-//! 摸牌 → 自摸 / 暗杠 / 加杠 / 指示牌暗杠 / 打牌，以及对别家打出的牌碰 / 明杠 / 过。
+//! 瞎子麻将保持只自摸、不能吃；亮子麻将开放吃、荣和、抢杠与同巡振听。
+//! 两种模式共用摸打、碰杠、杠点与全交状态机。
 //!
 //! 杠点是一本独立于点数的账，**可以为负、不设下限**，本局的增减由
 //! [`ImpactHand::kan_point_deltas`] 报给上层。
 
-use crate::config::{ImpactRules, SEAT_COUNT};
+use crate::config::{ImpactMode, ImpactRules, SEAT_COUNT};
 use crate::hand::model::{
     Discard, DrawSource, EndReason, HandError, HandPhase, Meld, MeldId, MeldKind, ReactionKind,
 };
@@ -85,8 +85,10 @@ impl TurnActions {
 }
 
 /// 对别家打出的牌可以做的事。
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ReactionOptions {
+    pub can_ron: bool,
+    pub chi_options: Vec<[TileId; 2]>,
     pub can_pon: bool,
     pub can_open_kan: bool,
     /// 这次碰会按「指示牌碰」结算杠点。
@@ -95,8 +97,8 @@ pub struct ReactionOptions {
 
 impl ReactionOptions {
     #[must_use]
-    pub const fn is_empty(self) -> bool {
-        !self.can_pon && !self.can_open_kan
+    pub fn is_empty(&self) -> bool {
+        !self.can_ron && self.chi_options.is_empty() && !self.can_pon && !self.can_open_kan
     }
 }
 
@@ -112,6 +114,8 @@ pub struct PlayerHand {
     kan_count: u8,
     /// 自己连续打出的字牌或财神数。
     honor_streak: u32,
+    /// 放弃过一次合法荣和后，到自己下一次打出牌为止保持同巡振听。
+    temporary_furiten: bool,
 }
 
 impl PlayerHand {
@@ -123,6 +127,7 @@ impl PlayerHand {
             discards: Vec::new(),
             kan_count: 0,
             honor_streak: 0,
+            temporary_furiten: false,
         }
     }
 
@@ -154,6 +159,11 @@ impl PlayerHand {
     #[must_use]
     pub const fn honor_streak(&self) -> u32 {
         self.honor_streak
+    }
+
+    #[must_use]
+    pub const fn temporary_furiten(&self) -> bool {
+        self.temporary_furiten
     }
 
     fn insert(&mut self, tile: Tile) {
@@ -203,16 +213,23 @@ impl PlayerHand {
         let melded: u8 = self
             .melds
             .iter()
-            .filter(|meld| meld.tile() == kind)
-            .map(|meld| meld.kind().tile_count())
-            .sum();
+            .flat_map(|meld| meld.tiles().iter())
+            .filter(|tile| tile.kind() == kind)
+            .count()
+            .try_into()
+            .expect("a hand has at most sixteen meld tiles");
         self.count_of(kind) + melded
     }
 
     fn meld_summaries(&self) -> Vec<MeldSummary> {
         self.melds
             .iter()
-            .map(|meld| MeldSummary::new(meld.kind(), meld.tile()))
+            .map(|meld| {
+                MeldSummary::from_tiles(
+                    meld.kind(),
+                    meld.tiles().iter().copied().map(Tile::kind).collect(),
+                )
+            })
             .collect()
     }
 
@@ -236,6 +253,8 @@ pub struct HandOutcome {
     reason: EndReason,
     winner: Option<Seat>,
     evaluation: Option<WinEvaluation>,
+    payer: Option<Seat>,
+    chankan: bool,
     kan_point_deltas: [i32; SEATS],
 }
 
@@ -256,6 +275,16 @@ impl HandOutcome {
     }
 
     #[must_use]
+    pub const fn payer(&self) -> Option<Seat> {
+        self.payer
+    }
+
+    #[must_use]
+    pub const fn is_chankan(&self) -> bool {
+        self.chankan
+    }
+
+    #[must_use]
     pub const fn kan_point_deltas(&self) -> &[i32; SEATS] {
         &self.kan_point_deltas
     }
@@ -271,6 +300,13 @@ struct RepeatDiscardStreak {
     remaining: u8,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PendingAddedKan {
+    declarer: Seat,
+    meld_id: MeldId,
+    tile: Tile,
+}
+
 #[derive(Clone, Debug)]
 pub struct ImpactHand {
     rules: ImpactRules,
@@ -283,6 +319,7 @@ pub struct ImpactHand {
     phase: HandPhase,
     kan_point_deltas: [i32; SEATS],
     last_discard: Option<(Seat, Tile)>,
+    pending_added_kan: Option<PendingAddedKan>,
     reaction_eligible: [bool; SEATS],
     reaction_answers: [Option<ReactionKind>; SEATS],
     next_meld_id: u16,
@@ -338,6 +375,7 @@ impl ImpactHand {
             },
             kan_point_deltas: [0; SEATS],
             last_discard: None,
+            pending_added_kan: None,
             reaction_eligible: [false; SEATS],
             reaction_answers: [None; SEATS],
             next_meld_id: 0,
@@ -485,28 +523,118 @@ impl ImpactHand {
         if seat == discarder || self.reaction_answers[slot(seat)].is_some() {
             return ReactionOptions::default();
         }
-        let Some((_, tile)) = self.last_discard else {
-            return ReactionOptions::default();
-        };
-        self.reaction_options_for(seat, tile.kind())
+        if let Some(pending) = self.pending_added_kan {
+            return self.reaction_options_for(seat, discarder, pending.tile, true);
+        }
+        self.last_discard
+            .map_or_else(ReactionOptions::default, |(_, tile)| {
+                self.reaction_options_for(seat, discarder, tile, false)
+            })
     }
 
-    fn reaction_options_for(&self, seat: Seat, kind: TileKind) -> ReactionOptions {
-        // 打出来的是财神，谁也鸣不了：财神只做百搭，不进副露。
-        if kind == self.joker {
-            return ReactionOptions::default();
+    fn reaction_options_for(
+        &self,
+        seat: Seat,
+        source: Seat,
+        tile: Tile,
+        chankan: bool,
+    ) -> ReactionOptions {
+        let kind = tile.kind();
+        let player = &self.players[slot(seat)];
+        let bright = self.rules.mode == ImpactMode::Bright;
+        let can_ron = bright
+            && !player.temporary_furiten
+            && self.ron_evaluation(seat, kind, chankan).is_some();
+        if chankan {
+            return ReactionOptions {
+                can_ron,
+                ..ReactionOptions::default()
+            };
         }
-        // 海底：最后四张牌各人摸一张，这个阶段不许副露。
-        if self.wall.remaining_draws() <= 4 {
-            return ReactionOptions::default();
+
+        let remaining_draws = self.wall.remaining_draws();
+        let call_allowed = kind != self.joker
+            && if bright {
+                /* 和立直麻将一致：最后一张摸完后的弃牌只能荣和，不能再副露。 */
+                remaining_draws > 0 && self.calls_from(seat, source) < 2
+            } else {
+                /* 瞎子麻将原有的末四张保护保持不变。 */
+                remaining_draws > 4
+            };
+        if !call_allowed {
+            return ReactionOptions {
+                can_ron,
+                ..ReactionOptions::default()
+            };
         }
-        let held = self.players[slot(seat)].count_of(kind);
+        let held = player.count_of(kind);
         ReactionOptions {
+            can_ron,
+            chi_options: if bright && seat == source.next() {
+                self.chi_options(seat, kind)
+            } else {
+                Vec::new()
+            },
             can_pon: held >= 2,
             can_open_kan: held >= 3 && self.wall.remaining_draws() > 0,
             pon_is_indicator: self.rules.kan.indicator_pon_counts_as_kan
                 && kind == self.indicator.kind(),
         }
+    }
+
+    fn calls_from(&self, caller: Seat, source: Seat) -> usize {
+        self.players[slot(caller)]
+            .melds()
+            .iter()
+            .filter(|meld| meld.called_from() == Some(source))
+            .count()
+    }
+
+    fn chi_options(&self, seat: Seat, called: TileKind) -> Vec<[TileId; 2]> {
+        let Some(called_suit) = called.suit() else {
+            return Vec::new();
+        };
+        if called == self.joker {
+            return Vec::new();
+        }
+
+        /*
+         * 和立直麻将一样枚举手中两张实体牌，再校验是否组成同花色连续三张。
+         * 财神在这里连“本牌身份”也不能使用：只要三张中的任何一张是财神，
+         * 这一组就不是合法吃牌。
+         */
+        let concealed = self.players[slot(seat)].concealed();
+        let mut options = Vec::new();
+        for left in 0..concealed.len() {
+            for right in left + 1..concealed.len() {
+                let selected = [concealed[left], concealed[right]];
+                if selected.iter().any(|tile| tile.kind() == self.joker)
+                    || selected
+                        .iter()
+                        .any(|tile| tile.kind().suit() != Some(called_suit))
+                {
+                    continue;
+                }
+                let mut ranks = [
+                    called.rank().expect("suited tile has rank").value(),
+                    selected[0]
+                        .kind()
+                        .rank()
+                        .expect("same-suit tile has rank")
+                        .value(),
+                    selected[1]
+                        .kind()
+                        .rank()
+                        .expect("same-suit tile has rank")
+                        .value(),
+                ];
+                ranks.sort_unstable();
+                if ranks[1] == ranks[0] + 1 && ranks[2] == ranks[1] + 1 {
+                    options.push([selected[0].id(), selected[1].id()]);
+                }
+            }
+        }
+        options
     }
 
     /// # Errors
@@ -550,14 +678,29 @@ impl ImpactHand {
             return Err(HandError::UnexpectedAction);
         }
 
-        let (_, tile) = self.last_discard.ok_or(HandError::UnexpectedAction)?;
-        let options = self.reaction_options_for(seat, tile.kind());
+        let (tile, chankan) = if let Some(pending) = self.pending_added_kan {
+            (pending.tile, true)
+        } else {
+            (
+                self.last_discard.ok_or(HandError::UnexpectedAction)?.1,
+                false,
+            )
+        };
+        let options = self.reaction_options_for(seat, discarder, tile, chankan);
         match kind {
+            ReactionKind::Ron if !options.can_ron => return Err(HandError::NotAWinningHand),
+            ReactionKind::Chi { hand_tiles } if !options.chi_options.contains(&hand_tiles) => {
+                return Err(HandError::MeldNotAvailable);
+            }
             ReactionKind::Pon if !options.can_pon => return Err(HandError::MeldNotAvailable),
             ReactionKind::OpenKan if !options.can_open_kan => {
                 return Err(HandError::MeldNotAvailable);
             }
             _ => {}
+        }
+
+        if kind != ReactionKind::Ron && options.can_ron {
+            self.players[slot(seat)].temporary_furiten = true;
         }
 
         self.reaction_answers[slot(seat)] = Some(kind);
@@ -571,6 +714,7 @@ impl ImpactHand {
         let tile = self.players[slot(seat)].remove_id(tile)?;
         let player = &mut self.players[slot(seat)];
         player.drawn = None;
+        player.temporary_furiten = false;
         player.discards.push(Discard::new(tile));
 
         if tile.kind().is_honor() || tile.kind() == self.joker {
@@ -591,7 +735,7 @@ impl ImpactHand {
         self.track_repeat_discard(seat, tile.kind());
         self.check_four_identical_as_kan(seat, tile.kind());
         self.last_discard = Some((seat, tile));
-        self.open_reactions(seat, tile.kind());
+        self.open_reactions(seat);
         Ok(())
     }
 
@@ -599,7 +743,7 @@ impl ImpactHand {
         let evaluation = self
             .tsumo_evaluation(seat)
             .ok_or(HandError::NotAWinningHand)?;
-        self.finish(EndReason::Tsumo, Some(seat), Some(evaluation));
+        self.finish(EndReason::Tsumo, Some(seat), Some(evaluation), None, false);
         Ok(())
     }
 
@@ -622,10 +766,60 @@ impl ImpactHand {
             winning_tile,
             dealer_streak: self.dealer_streak,
             rinshan: self.last_draw_was_replacement,
+            chankan: false,
             last_tile: self.last_draw_was_final,
             blessing: !self.interrupted && self.turns_taken <= u32::from(SEAT_COUNT),
             honor_streak: player.honor_streak,
         })
+    }
+
+    fn ron_evaluation(
+        &self,
+        seat: Seat,
+        winning_tile: TileKind,
+        chankan: bool,
+    ) -> Option<WinEvaluation> {
+        let player = &self.players[slot(seat)];
+        let mut concealed = player.concealed_kinds();
+        concealed.push(winning_tile);
+        let melds = player.meld_summaries();
+        evaluate(&WinContext {
+            rules: &self.rules,
+            joker: self.joker,
+            concealed: &concealed,
+            melds: &melds,
+            winning_tile,
+            dealer_streak: self.dealer_streak,
+            rinshan: false,
+            chankan,
+            last_tile: !chankan && self.wall.remaining_draws() == 0,
+            blessing: false,
+            honor_streak: player.honor_streak,
+        })
+    }
+
+    fn ron(&mut self, winner: Seat, payer: Seat, chankan: bool) {
+        let tile = self.pending_added_kan.map_or_else(
+            || self.last_discard.expect("ron on a discard has a tile").1,
+            |pending| pending.tile,
+        );
+        let evaluation = self
+            .ron_evaluation(winner, tile.kind(), chankan)
+            .expect("ron eligibility was checked");
+        if chankan {
+            for receiver in Seat::all() {
+                if receiver != payer {
+                    self.transfer_kan_points(receiver, payer, 1);
+                }
+            }
+        }
+        self.finish(
+            EndReason::Ron,
+            Some(winner),
+            Some(evaluation),
+            Some(payer),
+            chankan,
+        );
     }
 
     /// 「打哪张能听」：有摸牌时，对每一种可以打出的牌种，返回打出后所有能和的牌种。
@@ -673,6 +867,7 @@ impl ImpactHand {
                         winning_tile: candidate,
                         dealer_streak: self.dealer_streak,
                         rinshan: false,
+                        chankan: false,
                         last_tile: false,
                         blessing: false,
                         honor_streak: player.honor_streak,
@@ -742,12 +937,64 @@ impl ImpactHand {
             return Err(HandError::MeldNotAvailable);
         }
         let kind = meld.tile();
-        let source = meld.called_from();
-
         let tile = self.players[slot(seat)]
-            .remove_kind(kind, 1)?
-            .pop()
-            .expect("remove_kind returned the requested tile");
+            .concealed()
+            .iter()
+            .find(|tile| tile.kind() == kind)
+            .copied()
+            .ok_or(HandError::MeldNotAvailable)?;
+        self.pending_added_kan = Some(PendingAddedKan {
+            declarer: seat,
+            meld_id,
+            tile,
+        });
+
+        if self.rules.mode == ImpactMode::Bright {
+            self.open_chankan_reactions(seat, tile);
+            if matches!(self.phase, HandPhase::AwaitingResponses { .. }) {
+                return Ok(());
+            }
+        }
+        self.complete_added_kan();
+        Ok(())
+    }
+
+    fn open_chankan_reactions(&mut self, declarer: Seat, tile: Tile) {
+        self.reaction_answers = [None; SEATS];
+        self.reaction_eligible = [false; SEATS];
+        let mut any = false;
+        for seat in Seat::all() {
+            if seat == declarer {
+                continue;
+            }
+            let eligible = self
+                .reaction_options_for(seat, declarer, tile, true)
+                .can_ron;
+            self.reaction_eligible[slot(seat)] = eligible;
+            any |= eligible;
+        }
+        if any {
+            self.phase = HandPhase::AwaitingResponses {
+                discarder: declarer,
+            };
+        }
+    }
+
+    fn complete_added_kan(&mut self) {
+        let pending = self
+            .pending_added_kan
+            .take()
+            .expect("an added kan is pending");
+        let seat = pending.declarer;
+        let meld_id = pending.meld_id;
+        let source = self.players[slot(seat)]
+            .melds
+            .iter()
+            .find(|meld| meld.id() == meld_id)
+            .and_then(Meld::called_from);
+        let tile = self.players[slot(seat)]
+            .remove_id(pending.tile.id())
+            .expect("the pending added-kan tile remains in hand");
         let player = &mut self.players[slot(seat)];
         let meld = player
             .melds
@@ -773,14 +1020,13 @@ impl ImpactHand {
         self.interrupted = true;
         self.repeat_discard = None;
         if self.finish_kan_triggers(seat) {
-            return Ok(());
+            return;
         }
         // 加杠也先等四家把杠点动画播完，再摸岭上牌。
         self.phase = HandPhase::AwaitingKanAnimation { seat };
-        Ok(())
     }
 
-    fn open_reactions(&mut self, discarder: Seat, kind: TileKind) {
+    fn open_reactions(&mut self, discarder: Seat) {
         self.reaction_answers = [None; SEATS];
         self.reaction_eligible = [false; SEATS];
 
@@ -789,7 +1035,13 @@ impl ImpactHand {
             if seat == discarder {
                 continue;
             }
-            let eligible = !self.reaction_options_for(seat, kind).is_empty();
+            let tile = self
+                .last_discard
+                .expect("discard reactions always have a tile")
+                .1;
+            let eligible = !self
+                .reaction_options_for(seat, discarder, tile, false)
+                .is_empty();
             self.reaction_eligible[slot(seat)] = eligible;
             any |= eligible;
         }
@@ -806,21 +1058,40 @@ impl ImpactHand {
         for offset in 1..SEAT_COUNT {
             let seat = discarder.offset_by(offset);
             match self.reaction_answers[slot(seat)] {
-                Some(ReactionKind::OpenKan) => {
-                    chosen = Some((seat, ReactionKind::OpenKan));
+                Some(ReactionKind::Ron) => {
+                    chosen = Some((seat, ReactionKind::Ron));
                     break;
                 }
-                Some(ReactionKind::Pon) if chosen.is_none() => {
+                Some(ReactionKind::OpenKan) => {
+                    if !matches!(chosen, Some((_, ReactionKind::OpenKan))) {
+                        chosen = Some((seat, ReactionKind::OpenKan));
+                    }
+                }
+                Some(ReactionKind::Pon)
+                    if chosen.is_none()
+                        || matches!(chosen, Some((_, ReactionKind::Chi { .. }))) =>
+                {
                     chosen = Some((seat, ReactionKind::Pon));
+                }
+                Some(ReactionKind::Chi { .. }) if chosen.is_none() => {
+                    chosen = Some((seat, self.reaction_answers[slot(seat)].expect("present")));
                 }
                 _ => {}
             }
         }
 
         let Some((seat, kind)) = chosen else {
-            self.advance_turn(discarder);
+            if self.pending_added_kan.is_some() {
+                self.complete_added_kan();
+            } else {
+                self.advance_turn(discarder);
+            }
             return;
         };
+        if kind == ReactionKind::Ron {
+            self.ron(seat, discarder, self.pending_added_kan.is_some());
+            return;
+        }
         self.execute_call(discarder, seat, kind);
     }
 
@@ -834,17 +1105,26 @@ impl ImpactHand {
 
         let from_hand = match kind {
             ReactionKind::OpenKan => 3,
+            ReactionKind::Chi { .. } | ReactionKind::Pon => 2,
             _ => 2,
         };
-        let mut tiles = self.players[slot(caller)]
-            .remove_kind(tile_kind, from_hand)
-            .expect("eligibility was checked when the reaction was accepted");
+        let mut tiles = match kind {
+            ReactionKind::Chi { hand_tiles } => hand_tiles
+                .into_iter()
+                .map(|tile| self.players[slot(caller)].remove_id(tile))
+                .collect::<Result<Vec<_>, _>>()
+                .expect("eligibility was checked when the reaction was accepted"),
+            _ => self.players[slot(caller)]
+                .remove_kind(tile_kind, from_hand)
+                .expect("eligibility was checked when the reaction was accepted"),
+        };
         tiles.push(called_tile);
 
         let indicator_pon = self.rules.kan.indicator_pon_counts_as_kan
             && tile_kind == self.indicator.kind()
             && kind == ReactionKind::Pon;
         let meld_kind = match kind {
+            ReactionKind::Chi { .. } => MeldKind::Chi,
             ReactionKind::OpenKan => MeldKind::OpenKan,
             _ if indicator_pon => MeldKind::IndicatorPon,
             _ => MeldKind::Pon,
@@ -972,7 +1252,7 @@ impl ImpactHand {
             DrawSource::Replacement => self.wall.draw_from_back().ok(),
         };
         let Some(tile) = drawn else {
-            self.finish(EndReason::ExhaustiveDraw, None, None);
+            self.finish(EndReason::ExhaustiveDraw, None, None, None, false);
             return;
         };
 
@@ -1110,6 +1390,8 @@ impl ImpactHand {
             EndReason::Tsumo,
             Some(seat),
             Some(WinEvaluation::from_trigger(kind)),
+            None,
+            false,
         );
     }
 
@@ -1118,8 +1400,11 @@ impl ImpactHand {
         reason: EndReason,
         winner: Option<Seat>,
         evaluation: Option<WinEvaluation>,
+        payer: Option<Seat>,
+        chankan: bool,
     ) {
         self.last_discard = None;
+        self.pending_added_kan = None;
         self.reaction_eligible = [false; SEATS];
         self.reaction_answers = [None; SEATS];
         self.repeat_discard = None;
@@ -1128,6 +1413,8 @@ impl ImpactHand {
             reason,
             winner,
             evaluation,
+            payer,
+            chankan,
             kan_point_deltas: self.kan_point_deltas,
         });
     }
@@ -1142,7 +1429,7 @@ impl ImpactHand {
         kan_point_deltas: [i32; SEATS],
     ) {
         self.kan_point_deltas = kan_point_deltas;
-        self.finish(reason, winner, evaluation);
+        self.finish(reason, winner, evaluation, None, false);
     }
 }
 
@@ -1150,10 +1437,10 @@ impl ImpactHand {
 mod tests {
     use super::{ImpactHand, ReactionKind, TurnAction, slot};
     use crate::config::ImpactRules;
-    use crate::hand::model::{EndReason, HandPhase, MeldKind};
+    use crate::hand::model::{DrawSource, EndReason, HandPhase, MeldKind};
     use crate::progress::Seat;
     use crate::scoring::AllInKind;
-    use crate::tile::{Tile, TileKind};
+    use crate::tile::{Tile, TileId, TileKind};
     use crate::wall::WallSeed;
 
     fn seat(index: u8) -> Seat {
@@ -1166,6 +1453,362 @@ mod tests {
 
     fn opening() -> ImpactHand {
         ImpactHand::new(ImpactRules::standard(), seat(0), 0, &seed(7))
+    }
+
+    fn bright_opening() -> ImpactHand {
+        ImpactHand::new(
+            ImpactRules::bright(),
+            seat(0),
+            0,
+            &WallSeed::from_bytes([7; 32]),
+        )
+    }
+
+    #[test]
+    fn bright_mode_allows_chi_only_from_the_player_on_the_right() {
+        let mut hand = bright_opening();
+        hand.joker = "9s".parse().expect("valid tile code");
+        let called: TileKind = "3m".parse().expect("valid tile code");
+        let caller = kinds("1m 2m 4m 5m 6p 6p 7p 7p 8s 8s 1z 1z 2z");
+        set_hand(&mut hand, seat(1), &caller);
+        set_hand(
+            &mut hand,
+            seat(0),
+            &kinds("3m 1p 1p 2p 2p 3p 3p 4p 4p 5p 5p 6p 6p 7p"),
+        );
+
+        discard_kind(&mut hand, seat(0), called);
+
+        assert!(!hand.reaction_options(seat(1)).chi_options.is_empty());
+        assert!(hand.reaction_options(seat(2)).chi_options.is_empty());
+        assert!(hand.reaction_options(seat(3)).chi_options.is_empty());
+    }
+
+    #[test]
+    fn bright_chi_requires_two_natural_non_joker_tiles() {
+        let mut hand = bright_opening();
+        hand.joker = "2m".parse().expect("valid tile code");
+        let called: TileKind = "1m".parse().expect("valid tile code");
+        set_hand(
+            &mut hand,
+            seat(1),
+            &kinds("2m 3m 4p 4p 5p 5p 6p 6p 7s 7s 1z 1z 2z"),
+        );
+        set_hand(
+            &mut hand,
+            seat(0),
+            &kinds("1m 1p 1p 2p 2p 3p 3p 4p 4p 5p 5p 6p 6p 7p"),
+        );
+
+        discard_kind(&mut hand, seat(0), called);
+
+        assert!(
+            hand.reaction_options(seat(1)).chi_options.is_empty(),
+            "财神即使本身就是顺子所需牌种，也不能拿来吃"
+        );
+    }
+
+    #[test]
+    fn forged_bright_chi_is_rejected_without_changing_the_hand() {
+        let mut hand = bright_opening();
+        hand.joker = "9s".parse().expect("valid tile code");
+        let called: TileKind = "3m".parse().expect("valid tile code");
+        set_hand(
+            &mut hand,
+            seat(1),
+            &kinds("1m 2m 4m 5m 6p 6p 7p 7p 8s 8s 1z 1z 2z"),
+        );
+        set_hand(
+            &mut hand,
+            seat(0),
+            &kinds("3m 1p 1p 2p 2p 3p 3p 4p 4p 5p 5p 6p 6p 7p"),
+        );
+        discard_kind(&mut hand, seat(0), called);
+        assert!(!hand.reaction_options(seat(1)).chi_options.is_empty());
+
+        let before = format!("{hand:?}");
+        let forged = [TileId::new(u16::MAX - 1), TileId::new(u16::MAX)];
+        assert_eq!(
+            hand.apply_reaction(seat(1), ReactionKind::Chi { hand_tiles: forged },),
+            Err(crate::hand::model::HandError::MeldNotAvailable),
+        );
+        assert_eq!(format!("{hand:?}"), before);
+    }
+
+    #[test]
+    fn blind_mode_rejects_forged_chi_and_ron_without_changing_the_hand() {
+        let mut hand = opening();
+        hand.joker = "9s".parse().expect("valid tile code");
+        let called: TileKind = "3m".parse().expect("valid tile code");
+        set_hand(
+            &mut hand,
+            seat(1),
+            &kinds("1m 2m 3m 3m 4p 4p 5p 5p 6s 6s 1z 1z 2z"),
+        );
+        set_hand(
+            &mut hand,
+            seat(0),
+            &kinds("3m 1p 1p 2p 2p 3p 3p 4p 4p 5p 5p 6p 6p 7p"),
+        );
+        discard_kind(&mut hand, seat(0), called);
+        let options = hand.reaction_options(seat(1));
+        assert!(options.can_pon, "合法碰让该座位进入响应窗口");
+        assert!(options.chi_options.is_empty());
+        assert!(!options.can_ron);
+
+        let first = hand.players[slot(seat(1))]
+            .concealed()
+            .iter()
+            .find(|tile| tile.kind() == "1m".parse().expect("valid tile code"))
+            .expect("planted tile")
+            .id();
+        let second = hand.players[slot(seat(1))]
+            .concealed()
+            .iter()
+            .find(|tile| tile.kind() == "2m".parse().expect("valid tile code"))
+            .expect("planted tile")
+            .id();
+        let before = format!("{hand:?}");
+        assert_eq!(
+            hand.apply_reaction(
+                seat(1),
+                ReactionKind::Chi {
+                    hand_tiles: [first, second],
+                },
+            ),
+            Err(crate::hand::model::HandError::MeldNotAvailable),
+        );
+        assert_eq!(format!("{hand:?}"), before);
+        assert_eq!(
+            hand.apply_reaction(seat(1), ReactionKind::Ron),
+            Err(crate::hand::model::HandError::NotAWinningHand),
+        );
+        assert_eq!(format!("{hand:?}"), before);
+    }
+
+    #[test]
+    fn blind_mode_still_offers_neither_chi_nor_ron_and_never_sets_furiten() {
+        let mut hand = opening();
+        hand.joker = "5m".parse().expect("valid tile code");
+        let winning: TileKind = "3m".parse().expect("valid tile code");
+        set_hand(
+            &mut hand,
+            seat(1),
+            &kinds("1m 2m 4p 5p 6p 7s 8s 9s 1z 1z 1z 2z 2z"),
+        );
+        set_hand(
+            &mut hand,
+            seat(0),
+            &kinds("3m 1p 1p 2p 2p 3p 3p 4p 4p 5p 5p 6p 6p 7p"),
+        );
+
+        discard_kind(&mut hand, seat(0), winning);
+
+        let options = hand.reaction_options(seat(1));
+        assert!(!options.can_ron);
+        assert!(options.chi_options.is_empty());
+        assert!(!hand.player(seat(1)).temporary_furiten());
+    }
+
+    #[test]
+    fn bright_chi_stays_available_until_the_last_draw_is_taken() {
+        let mut hand = bright_opening();
+        hand.joker = "9s".parse().expect("valid tile code");
+        let called: TileKind = "3m".parse().expect("valid tile code");
+        set_hand(
+            &mut hand,
+            seat(1),
+            &kinds("1m 2m 4p 4p 5p 5p 6p 6p 7s 7s 1z 1z 2z"),
+        );
+        set_hand(
+            &mut hand,
+            seat(0),
+            &kinds("3m 1p 1p 2p 2p 3p 3p 4p 4p 5p 5p 6p 6p 7p"),
+        );
+        while hand.wall.remaining_draws() > 1 {
+            let _ = hand.wall.draw();
+        }
+
+        discard_kind(&mut hand, seat(0), called);
+
+        assert_eq!(hand.wall.remaining_draws(), 1);
+        assert!(!hand.reaction_options(seat(1)).chi_options.is_empty());
+    }
+
+    #[test]
+    fn bright_mode_limits_calls_from_each_player_to_two() {
+        let mut hand = bright_opening();
+        hand.joker = "9s".parse().expect("valid tile code");
+        let called: TileKind = "3m".parse().expect("valid tile code");
+        set_hand(
+            &mut hand,
+            seat(1),
+            &kinds("1m 2m 3m 3m 3m 4m 5m 6p 7p 8p 1z 2z 3z"),
+        );
+        for nth in 0..2 {
+            let tiles = (0..3)
+                .map(|offset| spare_tile(called, nth * 3 + offset))
+                .collect();
+            hand.push_meld(seat(1), MeldKind::Pon, called, tiles, Some(seat(0)), None);
+        }
+        let options = hand.reaction_options_for(seat(1), seat(0), spare_tile(called, 20), false);
+
+        assert!(options.chi_options.is_empty());
+        assert!(!options.can_pon);
+        assert!(!options.can_open_kan);
+    }
+
+    #[test]
+    fn call_limit_does_not_block_ron_and_a_new_hand_starts_with_no_call_history() {
+        let mut hand = bright_opening();
+        hand.joker = "9s".parse().expect("valid tile code");
+        let winning: TileKind = "7s".parse().expect("valid tile code");
+        set_hand(&mut hand, seat(1), &kinds("1m 2m 3m 4p 5p 6p 7s"));
+        for (nth, kind) in ["1z", "2z"].into_iter().enumerate() {
+            let kind: TileKind = kind.parse().expect("valid tile code");
+            hand.push_meld(
+                seat(1),
+                MeldKind::Pon,
+                kind,
+                (0..3)
+                    .map(|offset| spare_tile(kind, nth * 3 + offset))
+                    .collect(),
+                Some(seat(0)),
+                None,
+            );
+        }
+        set_hand(
+            &mut hand,
+            seat(0),
+            &kinds("7s 1p 1p 2p 2p 3p 3p 4p 4p 5p 5p 6p 6p 7p"),
+        );
+
+        discard_kind(&mut hand, seat(0), winning);
+        let options = hand.reaction_options(seat(1));
+        assert!(options.can_ron, "两次副露上限只禁继续副露，不能禁荣和");
+        assert!(options.chi_options.is_empty());
+        assert!(!options.can_pon);
+        assert!(!options.can_open_kan);
+        hand.apply_reaction(seat(1), ReactionKind::Ron)
+            .expect("ron remains legal after reaching the call limit");
+        assert_eq!(
+            hand.outcome().and_then(super::HandOutcome::winner),
+            Some(seat(1))
+        );
+
+        let fresh = bright_opening();
+        assert!(
+            fresh
+                .players
+                .iter()
+                .all(|player| player.melds().is_empty() && !player.temporary_furiten()),
+            "新一局不能继承上一局的副露次数或同巡振听",
+        );
+    }
+
+    #[test]
+    fn bright_ron_and_tsumo_use_the_same_winning_shape_evaluation() {
+        let mut hand = bright_opening();
+        hand.joker = "5m".parse().expect("valid tile code");
+        let winning: TileKind = "2z".parse().expect("valid tile code");
+        set_hand(
+            &mut hand,
+            seat(2),
+            &kinds("1m 2m 3m 4p 5p 6p 7s 8s 9s 1z 1z 1z 2z"),
+        );
+        hand.interrupted = true;
+
+        let ron = hand
+            .ron_evaluation(seat(2), winning, false)
+            .expect("the discard completes the hand");
+
+        let drawn = spare_tile(winning, 90);
+        hand.players[slot(seat(2))].insert(drawn);
+        hand.players[slot(seat(2))].drawn = Some(drawn.id());
+        let tsumo = hand
+            .tsumo_evaluation(seat(2))
+            .expect("the same tile completes the same hand by self draw");
+
+        assert_eq!(ron.shapes(), tsumo.shapes());
+        assert_eq!(ron.yaku(), tsumo.yaku());
+        assert_eq!(ron.points(), tsumo.points());
+    }
+
+    #[test]
+    fn passing_a_bright_ron_clears_furiten_after_the_next_discard() {
+        let mut hand = bright_opening();
+        hand.joker = "5m".parse().expect("valid tile code");
+        let winning: TileKind = "2z".parse().expect("valid tile code");
+        set_hand(
+            &mut hand,
+            seat(2),
+            &kinds("1m 2m 3m 4p 5p 6p 7s 8s 9s 1z 1z 1z 2z"),
+        );
+        set_hand(
+            &mut hand,
+            seat(0),
+            &kinds("2z 1p 1p 2p 2p 3p 3p 4p 4p 5p 5p 6p 6p 7p"),
+        );
+        discard_kind(&mut hand, seat(0), winning);
+        assert!(hand.reaction_options(seat(2)).can_ron);
+
+        hand.apply_reaction(seat(2), ReactionKind::Pass)
+            .expect("passing ron is legal");
+        assert!(hand.player(seat(2)).temporary_furiten());
+        hand.draw_and_open_turn(seat(2), DrawSource::Wall);
+        discard_first(&mut hand, seat(2));
+        assert!(
+            !hand.player(seat(2)).temporary_furiten(),
+            "自己实际打出一张牌后解除振听"
+        );
+    }
+
+    #[test]
+    fn bright_chankan_cancels_the_kan_and_charges_three_kan_points() {
+        let mut hand = bright_opening();
+        hand.joker = "5m".parse().expect("valid tile code");
+        let winning: TileKind = "2z".parse().expect("valid tile code");
+        set_hand(
+            &mut hand,
+            seat(0),
+            &kinds("2z 1p 1p 2p 2p 3p 3p 4p 4p 5p 5p 6p 6p 7p"),
+        );
+        set_hand(
+            &mut hand,
+            seat(2),
+            &kinds("1m 2m 3m 4p 5p 6p 7s 8s 9s 1z 1z 1z 2z"),
+        );
+        hand.push_meld(
+            seat(0),
+            MeldKind::Pon,
+            winning,
+            (0..3).map(|nth| spare_tile(winning, 30 + nth)).collect(),
+            Some(seat(1)),
+            None,
+        );
+        let meld_id = hand.player(seat(0)).melds()[0].id();
+
+        hand.apply_turn_action(seat(0), TurnAction::AddedKan { meld: meld_id })
+            .expect("added kan opens a chankan window");
+        assert!(hand.reaction_options(seat(2)).can_ron);
+        hand.apply_reaction(seat(2), ReactionKind::Ron)
+            .expect("chankan is legal");
+
+        let outcome = hand.outcome().expect("ron ends the hand");
+        assert_eq!(outcome.reason(), EndReason::Ron);
+        assert_eq!(outcome.payer(), Some(seat(0)));
+        assert!(outcome.is_chankan());
+        assert_eq!(outcome.kan_point_deltas(), &[-3, 1, 1, 1]);
+        assert_eq!(hand.player(seat(0)).melds()[0].kind(), MeldKind::Pon);
+        assert_eq!(outcome.evaluation().expect("scored").points(), 23);
+        assert!(
+            outcome
+                .evaluation()
+                .expect("scored")
+                .yaku()
+                .iter()
+                .any(|value| { value.yaku() == crate::scoring::Yaku::Chankan })
+        );
     }
 
     /// 打掉当前手上第一张不会被任何人碰到的牌，把回合推进下去。
@@ -1474,6 +2117,12 @@ mod tests {
             .iter()
             .zip(counts)
             .flat_map(|(kind, count)| std::iter::repeat_n(*kind, *count))
+            .collect()
+    }
+
+    fn kinds(spec: &str) -> Vec<TileKind> {
+        spec.split_whitespace()
+            .map(|code| code.parse().expect("valid tile code"))
             .collect()
     }
 

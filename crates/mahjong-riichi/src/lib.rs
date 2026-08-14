@@ -15,8 +15,8 @@ mod wall;
 
 pub use config::{
     AbortiveDrawRules, BonusRules, CallRules, DealerContinuation, KuikaeRule, MatchLength,
-    MatchRules, PlacementUma, RiichiRules, RonResolution, ScoringRules, SettlementRules,
-    ThinkingTimeRules, YakumanValue,
+    MatchRules, PlacementUma, RiichiRules, RonResolution, SanmaNorthRule, ScoringRules,
+    SettlementRules, ThinkingTimeRules, YakumanValue,
 };
 pub use definition::{RIICHI_ENGINE_VERSION, RiichiDefinitionError, RiichiRuleDefinition};
 pub use hand::{

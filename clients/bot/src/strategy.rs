@@ -312,7 +312,6 @@ pub fn impact_turn_command(view: &MatchView) -> Result<BotCommand, String> {
 
 /// Generate the best reaction for impact mahjong.
 ///
-/// Impact has no ron and no chi — only pon, open-kan, and pass.
 pub fn impact_reaction_command(view: &MatchView) -> Result<Option<BotCommand>, String> {
     let player = view.observer()?;
     let tiles = player
@@ -320,6 +319,18 @@ pub fn impact_reaction_command(view: &MatchView) -> Result<Option<BotCommand>, S
         .as_deref()
         .ok_or_else(|| "观察者手牌不可见".to_owned())?;
     let joker_code = view.joker_code();
+
+    if view
+        .available_reactions
+        .iter()
+        .any(|reaction| matches!(reaction, ReactionOptionView::Ron))
+    {
+        return Ok(Some(BotCommand {
+            name: "impact.ron",
+            payload: None,
+            description: "荣和".to_owned(),
+        }));
+    }
 
     // Prioritise open-kan over pon.
     for reaction in &view.available_reactions {
@@ -330,6 +341,18 @@ pub fn impact_reaction_command(view: &MatchView) -> Result<Option<BotCommand>, S
                 description: "明杠".to_owned(),
             }));
         }
+    }
+
+    if let Some(ReactionOptionView::Chi { tile_ids }) = view
+        .available_reactions
+        .iter()
+        .find(|reaction| matches!(reaction, ReactionOptionView::Chi { .. }))
+    {
+        return Ok(Some(BotCommand {
+            name: "impact.chi",
+            payload: Some(json!({"tile_ids": tile_ids})),
+            description: "吃".to_owned(),
+        }));
     }
 
     // Pon only when it advances shanten.

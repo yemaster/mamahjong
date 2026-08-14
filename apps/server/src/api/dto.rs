@@ -326,7 +326,10 @@ pub(super) struct MatchViewResponse {
     progress: ProgressResponse,
     phase: PhaseResponse,
     remaining_live_draws: usize,
+    completed_rinshan_draws: u8,
     dora_indicators: Vec<TileResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sanma_north_rule: Option<&'static str>,
     /// 冲击麻将的财神指示牌。左上角只画这一张。
     #[serde(skip_serializing_if = "Option::is_none")]
     joker_indicator: Option<TileResponse>,
@@ -394,12 +397,17 @@ impl MatchViewResponse {
             },
             phase: PhaseResponse::from(value.phase()),
             remaining_live_draws: value.remaining_live_draws(),
+            completed_rinshan_draws: value.completed_rinshan_draws(),
             dora_indicators: value
                 .dora_indicators()
                 .iter()
                 .copied()
                 .map(TileResponse::from)
                 .collect(),
+            sanma_north_rule: (value.players().len() == 3).then_some(match value.north_rule() {
+                mahjong_riichi::SanmaNorthRule::NukiDora => "nuki_dora",
+                mahjong_riichi::SanmaNorthRule::Yakuhai => "yakuhai",
+            }),
             players: value
                 .players()
                 .iter()
@@ -435,6 +443,7 @@ impl MatchViewResponse {
                         tile_id: option.tile_id(),
                     })
                     .collect(),
+                nuki_tile_ids: value.turn_actions().nuki_tile_ids().to_vec(),
                 can_nine_terminals: value.turn_actions().can_nine_terminals(),
                 impact_concealed_kan_tile_codes: None,
                 impact_added_kan_meld_ids: None,
@@ -482,6 +491,7 @@ impl MatchViewResponse {
                                     ("宝牌", bonuses.dora()),
                                     ("里宝牌", bonuses.ura_dora()),
                                     ("赤宝牌", bonuses.red_dora()),
+                                    ("拔北宝牌", bonuses.nuki_dora()),
                                 ] {
                                     if value > 0 {
                                         yaku.push(YakuResponse {
@@ -543,8 +553,8 @@ impl MatchViewResponse {
 
     /// 冲击麻将的牌桌。
     ///
-    /// 立直独有的那些位置（场风本场、宝牌、立直状态、听牌提示、振听）在这里全部
-    /// 填成空值：冲击麻将没有这些概念，前端的 impact 分支也不读它们。
+    /// 立直独有的场风本场、宝牌、立直状态与听牌提示在这里填空；亮子模式会回填
+    /// 通用的 `furiten` 字段表示同巡振听。
     fn impact(value: &ObserverImpactMatch, now_ms: u64, application: &Application) -> Self {
         Self {
             schema: "match_view.v1",
@@ -565,7 +575,9 @@ impl MatchViewResponse {
             },
             phase: PhaseResponse::impact(value.phase_kind, value.phase_seat, value.phase_reason),
             remaining_live_draws: value.remaining_draws,
+            completed_rinshan_draws: 0,
             dora_indicators: Vec::new(),
+            sanma_north_rule: None,
             joker_indicator: value.joker_indicator.as_ref().map(TileResponse::from),
             joker_code: value.joker_code.clone(),
             dealer_streak: Some(value.dealer_streak),
@@ -598,6 +610,7 @@ impl MatchViewResponse {
                     .collect(),
                 concealed_kan_tile_ids: Vec::new(),
                 added_kan_options: Vec::new(),
+                nuki_tile_ids: Vec::new(),
                 can_nine_terminals: false,
                 impact_concealed_kan_tile_codes: Some(value.turn_actions.concealed_kans.clone()),
                 impact_added_kan_meld_ids: Some(value.turn_actions.added_kans.clone()),
@@ -663,7 +676,7 @@ impl MatchViewResponse {
                         .confirm_deadline_ms
                         .map(|deadline_ms| deadline_ms.saturating_sub(now_ms)),
                     confirmed_seats: settlement.confirmed_seats.clone(),
-                    from_seat: None,
+                    from_seat: settlement.payer,
                     ura_dora_indicators: Vec::new(),
                     all_in: settlement.all_in,
                     kan_point_deltas: Some(settlement.kan_point_deltas.to_vec()),
@@ -785,6 +798,7 @@ struct TurnActionsResponse {
     tenpai_discard_hints: Vec<DiscardWaitHintResponse>,
     concealed_kan_tile_ids: Vec<[u16; 4]>,
     added_kan_options: Vec<AddedKanOptionResponse>,
+    nuki_tile_ids: Vec<u16>,
     can_nine_terminals: bool,
     /// 冲击麻将的暗杠候选，给的是牌码；四张具体是哪四张由引擎挑。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -850,6 +864,16 @@ enum ReactionResponse {
 impl ReactionResponse {
     fn impact(value: &mamahjong_application::ImpactReactionOptionsView) -> Vec<Self> {
         let mut options = Vec::new();
+        if value.can_ron {
+            options.push(Self::Ron);
+        }
+        options.extend(
+            value
+                .chi_options
+                .iter()
+                .copied()
+                .map(|tile_ids| Self::Chi { tile_ids }),
+        );
         if value.can_pon {
             options.push(Self::ImpactPon {
                 indicator: value.pon_is_indicator,
@@ -953,6 +977,7 @@ struct MatchPlayerResponse {
     concealed_tile_count: usize,
     drawn_tile_id: Option<u16>,
     melds: Vec<MeldResponse>,
+    nuki_tiles: Vec<TileResponse>,
     discards: Vec<DiscardResponse>,
     riichi_status: &'static str,
     waiting_tiles: Vec<WaitingTileResponse>,
@@ -994,6 +1019,12 @@ impl MatchPlayerResponse {
             concealed_tile_count: value.concealed_tile_count(),
             drawn_tile_id: value.drawn_tile_id().map(mahjong_riichi::TileId::value),
             melds: value.melds().iter().map(MeldResponse::from).collect(),
+            nuki_tiles: value
+                .nuki_tiles()
+                .iter()
+                .copied()
+                .map(TileResponse::from)
+                .collect(),
             discards: value.discards().iter().map(DiscardResponse::from).collect(),
             riichi_status: match value.riichi_status() {
                 RiichiStatus::None => "none",
@@ -1016,7 +1047,7 @@ impl MatchPlayerResponse {
         }
     }
 
-    /// 冲击麻将的一位玩家。立直状态、听牌提示、振听在这套规则里都不存在。
+    /// 冲击麻将的一位玩家。没有立直状态和立直麻将听牌提示；亮子模式会投影同巡振听。
     fn impact(value: &ObserverImpactPlayer, application: &Application) -> Self {
         let portrait = portrait(application, value.player.user_id());
         Self {
@@ -1034,10 +1065,11 @@ impl MatchPlayerResponse {
             concealed_tile_count: value.concealed_tile_count,
             drawn_tile_id: value.drawn_tile_id,
             melds: value.melds.iter().map(MeldResponse::from).collect(),
+            nuki_tiles: Vec::new(),
             discards: value.discards.iter().map(DiscardResponse::from).collect(),
             riichi_status: "none",
             waiting_tiles: Vec::new(),
-            furiten: false,
+            furiten: value.furiten,
             kan_points: Some(value.kan_points),
             kan_count: Some(value.kan_count),
             honor_streak: Some(value.honor_streak),

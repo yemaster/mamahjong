@@ -225,6 +225,7 @@ impl WinnerScoreRecord {
                 ("宝牌", bonuses.dora()),
                 ("里宝牌", bonuses.ura_dora()),
                 ("赤宝牌", bonuses.red_dora()),
+                ("拔北宝牌", bonuses.nuki_dora()),
             ] {
                 if value > 0 {
                     yaku.push(YakuRecord {
@@ -347,6 +348,10 @@ pub(crate) fn event_payload(event: &HandEvent) -> (&'static str, Value) {
                 "tsumogiri": tsumogiri,
                 "riichi_declared": riichi_declared,
             }),
+        ),
+        HandEvent::NorthExtracted { seat, tile } => (
+            "riichi.north_extracted",
+            json!({"seat": seat.index(), "tile": tile_value(*tile)}),
         ),
         HandEvent::ReactionSubmitted { seat, reaction } => (
             "riichi.reaction_submitted",
@@ -512,6 +517,7 @@ fn win_source_value(source: WinSource) -> Value {
         WinSource::ConcealedKan { from } => {
             json!({"kind": "concealed_kan", "from": from.index()})
         }
+        WinSource::Nuki { from } => json!({"kind": "nuki", "from": from.index()}),
     }
 }
 

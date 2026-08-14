@@ -4,15 +4,19 @@ use std::fmt::{self, Debug, Display, Formatter};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
-use crate::{RiichiVariant, Tile, TileSet};
+use crate::{RiichiVariant, SanmaNorthRule, Tile, TileSet};
 
 const WALL_SEED_SIZE: usize = 32;
 const DEAD_WALL_SIZE: usize = 14;
 const MAX_RINSHAN_DRAWS: u8 = 4;
 const MAX_DORA_INDICATORS: u8 = 5;
-const RINSHAN_OFFSETS: [usize; MAX_RINSHAN_DRAWS as usize] = [13, 12, 11, 10];
-const DORA_OFFSETS: [usize; MAX_DORA_INDICATORS as usize] = [8, 6, 4, 2, 0];
-const URA_DORA_OFFSETS: [usize; MAX_DORA_INDICATORS as usize] = [9, 7, 5, 3, 1];
+// Every stack is ordered upper tile first, lower tile second. Replacement draws
+// walk backward by stack from the wall tail: upper, lower, then the prior stack.
+const RINSHAN_OFFSETS: [usize; MAX_RINSHAN_DRAWS as usize] = [12, 13, 10, 11];
+const STANDARD_DORA_OFFSETS: [usize; MAX_DORA_INDICATORS as usize] = [8, 6, 4, 2, 0];
+const STANDARD_URA_DORA_OFFSETS: [usize; MAX_DORA_INDICATORS as usize] = [9, 7, 5, 3, 1];
+const NUKI_DORA_OFFSETS: [usize; MAX_DORA_INDICATORS as usize] = [4, 6, 8, 10, 12];
+const NUKI_URA_DORA_OFFSETS: [usize; MAX_DORA_INDICATORS as usize] = [5, 7, 9, 11, 13];
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct WallSeed([u8; WALL_SEED_SIZE]);
@@ -64,11 +68,26 @@ pub struct Wall {
     live_end: usize,
     rinshan_draws: u8,
     revealed_dora_count: u8,
+    north_rule: SanmaNorthRule,
 }
 
 impl Wall {
     #[must_use]
     pub fn new(tile_set: TileSet, seed: &WallSeed) -> Self {
+        let north_rule = if matches!(tile_set.variant(), RiichiVariant::Sanma) {
+            SanmaNorthRule::NukiDora
+        } else {
+            SanmaNorthRule::Yakuhai
+        };
+        Self::new_with_north_rule(tile_set, seed, north_rule)
+    }
+
+    #[must_use]
+    pub fn new_with_north_rule(
+        tile_set: TileSet,
+        seed: &WallSeed,
+        north_rule: SanmaNorthRule,
+    ) -> Self {
         let variant = tile_set.variant();
         let mut tiles = tile_set.into_tiles();
         let mut random = ChaCha20Rng::from_seed(seed.0);
@@ -85,6 +104,7 @@ impl Wall {
             live_end,
             rinshan_draws: 0,
             revealed_dora_count: 1,
+            north_rule,
         }
     }
 
@@ -151,7 +171,7 @@ impl Wall {
 
     #[must_use]
     pub fn current_dora_indicators(&self) -> impl ExactSizeIterator<Item = Tile> + '_ {
-        DORA_OFFSETS[..usize::from(self.revealed_dora_count)]
+        self.dora_offsets()[..usize::from(self.revealed_dora_count)]
             .iter()
             .map(|offset| self.dead_wall_tile(*offset))
     }
@@ -161,20 +181,41 @@ impl Wall {
             return Err(WallError::DoraIndicatorsExhausted);
         }
 
-        let offset = DORA_OFFSETS[usize::from(self.revealed_dora_count)];
+        let offset = self.dora_offsets()[usize::from(self.revealed_dora_count)];
         self.revealed_dora_count += 1;
         Ok(self.dead_wall_tile(offset))
     }
 
     #[must_use]
     pub fn matching_ura_dora_indicators(&self) -> impl ExactSizeIterator<Item = Tile> + '_ {
-        URA_DORA_OFFSETS[..usize::from(self.revealed_dora_count)]
+        self.ura_dora_offsets()[..usize::from(self.revealed_dora_count)]
             .iter()
             .map(|offset| self.dead_wall_tile(*offset))
     }
 
     fn dead_wall_tile(&self, offset: usize) -> Tile {
         self.tiles[self.live_end + offset]
+    }
+
+    fn uses_nuki_layout(&self) -> bool {
+        matches!(self.variant, RiichiVariant::Sanma)
+            && matches!(self.north_rule, SanmaNorthRule::NukiDora)
+    }
+
+    fn dora_offsets(&self) -> &'static [usize; MAX_DORA_INDICATORS as usize] {
+        if self.uses_nuki_layout() {
+            &NUKI_DORA_OFFSETS
+        } else {
+            &STANDARD_DORA_OFFSETS
+        }
+    }
+
+    fn ura_dora_offsets(&self) -> &'static [usize; MAX_DORA_INDICATORS as usize] {
+        if self.uses_nuki_layout() {
+            &NUKI_URA_DORA_OFFSETS
+        } else {
+            &STANDARD_URA_DORA_OFFSETS
+        }
     }
 
     /// 洗好之后整副牌的顺序，摸牌不会改动它。
@@ -244,7 +285,7 @@ fn uniform_below(random: &mut impl RngCore, bound: u64) -> u64 {
 mod tests {
     use std::collections::HashSet;
 
-    use crate::{RiichiVariant, TileId, TileSet};
+    use crate::{RiichiVariant, SanmaNorthRule, Tile, TileId, TileSet};
 
     use super::{Wall, WallError, WallSeed};
 
@@ -311,6 +352,27 @@ mod tests {
     }
 
     #[test]
+    fn sanma_north_rule_selects_the_expected_indicator_end_of_the_dead_wall() {
+        let set = TileSet::standard(RiichiVariant::Sanma);
+        let nuki = Wall::new_with_north_rule(
+            set.clone(),
+            &fixed_seed(33),
+            crate::SanmaNorthRule::NukiDora,
+        );
+        let yakuhai =
+            Wall::new_with_north_rule(set, &fixed_seed(33), crate::SanmaNorthRule::Yakuhai);
+
+        assert_eq!(
+            nuki.current_dora_indicators().next(),
+            Some(nuki.tiles[nuki.live_end + 4])
+        );
+        assert_eq!(
+            yakuhai.current_dora_indicators().next(),
+            Some(yakuhai.tiles[yakuhai.live_end + 8])
+        );
+    }
+
+    #[test]
     fn live_wall_draws_each_tile_at_most_once() {
         let mut wall = Wall::new(TileSet::standard(RiichiVariant::Yonma), &fixed_seed(4));
         let mut ids = HashSet::new();
@@ -341,6 +403,26 @@ mod tests {
         }
 
         assert_eq!(wall.draw_rinshan(), Err(WallError::RinshanExhausted));
+    }
+
+    #[test]
+    fn kan_and_nuki_share_one_tail_first_rinshan_sequence() {
+        for (variant, north_rule) in [
+            (RiichiVariant::Yonma, SanmaNorthRule::Yakuhai),
+            (RiichiVariant::Sanma, SanmaNorthRule::NukiDora),
+            (RiichiVariant::Sanma, SanmaNorthRule::Yakuhai),
+        ] {
+            let mut wall =
+                Wall::new_with_north_rule(TileSet::standard(variant), &fixed_seed(35), north_rule);
+            let expected = [12, 13, 10, 11].map(|offset| wall.tiles[wall.live_end + offset]);
+
+            // Wall owns one counter: callers identifying an operation as a kan or nuki
+            // cannot restart this sequence.
+            let actual: [Tile; 4] =
+                std::array::from_fn(|_| wall.draw_rinshan().expect("rinshan available"));
+            assert_eq!(actual, expected);
+            assert_eq!(wall.rinshan_draw_count(), 4);
+        }
     }
 
     #[test]

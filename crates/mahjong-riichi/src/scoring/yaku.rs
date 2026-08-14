@@ -293,7 +293,15 @@ pub(super) fn bonus_han(query: WinQuery<'_>, interpretation: &Interpretation) ->
             .count(),
     )
     .expect("hand red tile count fits u8");
-    BonusHan::new(dora, ura_dora, red_dora)
+    let nuki_dora = if matches!(
+        query.rules().match_rules.north,
+        crate::SanmaNorthRule::NukiDora
+    ) {
+        u8::try_from(query.player().nuki_tiles().len()).expect("at most four north tiles exist")
+    } else {
+        0
+    };
+    BonusHan::new(dora, ura_dora, red_dora, nuki_dora)
 }
 
 pub(super) fn is_closed(query: WinQuery<'_>) -> bool {
@@ -306,6 +314,12 @@ pub(super) fn is_closed(query: WinQuery<'_>) -> bool {
 
 pub(super) fn is_value_pair(query: WinQuery<'_>, pair: TileKind) -> bool {
     is_dragon(pair)
+        || (matches!(query.rules().variant, crate::RiichiVariant::Sanma)
+            && matches!(
+                query.rules().match_rules.north,
+                crate::SanmaNorthRule::Yakuhai
+            )
+            && pair == TileKind::honor(Honor::North))
         || wind_kind(query.progress().round_wind()) == pair
         || query
             .progress()
@@ -350,7 +364,7 @@ fn add_context_yaku(values: &mut Vec<YakuValue>, query: WinQuery<'_>, closed: bo
         WinSource::AddedKan { .. } | WinSource::ConcealedKan { .. } => {
             values.push(YakuValue::han(Yaku::Chankan, 1));
         }
-        WinSource::Discard { .. } => {}
+        WinSource::Discard { .. } | WinSource::Nuki { .. } => {}
     }
 }
 
@@ -371,6 +385,15 @@ fn add_value_tile_yaku(
         }
         if kind == wind_kind(query.progress().round_wind()) {
             values.push(YakuValue::han(Yaku::RoundWind, 1));
+        }
+        if matches!(query.rules().variant, crate::RiichiVariant::Sanma)
+            && matches!(
+                query.rules().match_rules.north,
+                crate::SanmaNorthRule::Yakuhai
+            )
+            && kind == TileKind::honor(Honor::North)
+        {
+            values.push(YakuValue::han(Yaku::North, 1));
         }
         if query
             .progress()

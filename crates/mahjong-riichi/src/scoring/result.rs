@@ -10,6 +10,7 @@ pub enum Yaku {
     WhiteDragon,
     GreenDragon,
     RedDragon,
+    North,
     Pinfu,
     Tanyao,
     Iipeikou,
@@ -97,14 +98,16 @@ pub struct BonusHan {
     dora: u8,
     ura_dora: u8,
     red_dora: u8,
+    nuki_dora: u8,
 }
 
 impl BonusHan {
-    pub(super) const fn new(dora: u8, ura_dora: u8, red_dora: u8) -> Self {
+    pub(super) const fn new(dora: u8, ura_dora: u8, red_dora: u8, nuki_dora: u8) -> Self {
         Self {
             dora,
             ura_dora,
             red_dora,
+            nuki_dora,
         }
     }
 
@@ -124,8 +127,13 @@ impl BonusHan {
     }
 
     #[must_use]
+    pub const fn nuki_dora(self) -> u8 {
+        self.nuki_dora
+    }
+
+    #[must_use]
     pub const fn total(self) -> u8 {
-        self.dora + self.ura_dora + self.red_dora
+        self.dora + self.ura_dora + self.red_dora + self.nuki_dora
     }
 }
 

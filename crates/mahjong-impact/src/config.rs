@@ -23,12 +23,20 @@ pub const DEALER_STREAK_VALUE: u32 = 10;
 /// 座位数：冲击麻将固定四人。
 pub const SEAT_COUNT: u8 = 4;
 
-/// 模式。目前只有「瞎子麻将」，仅是模式名，不带任何额外机制。
+/// 模式。「瞎子麻将」保持只自摸、不能吃；「亮子麻将」开放吃、荣和与抢杠。
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImpactMode {
     #[default]
     Blind,
+    Bright,
+}
+
+impl ImpactMode {
+    #[must_use]
+    pub const fn allows_open_wins(self) -> bool {
+        matches!(self, Self::Bright)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -173,6 +181,32 @@ impl ImpactRules {
     pub fn standard() -> Self {
         Self::default()
     }
+
+    /// 亮子麻将的建房默认：杠牌附加项全关，只保留连打十一风、四龙和天和地和全交。
+    #[must_use]
+    pub fn bright() -> Self {
+        let mut rules = Self::default();
+        rules.mode = ImpactMode::Bright;
+        rules.kan = KanRules {
+            added_kan_single_payer: false,
+            indicator_pon_counts_as_kan: false,
+            first_round_repeat_discard: false,
+            four_identical_discards_as_kan: false,
+            pon_with_few_tiles_as_kan: false,
+        };
+        rules.all_in = AllInRules {
+            eleven_honor_streak: true,
+            all_honors: false,
+            pure_flush_no_joker: false,
+            single_wait: false,
+            three_kans: false,
+            four_jokers: true,
+            pure_seven_pairs: false,
+            last_tile: false,
+            blessing: true,
+        };
+        rules
+    }
 }
 
 #[cfg(test)]
@@ -211,6 +245,27 @@ mod tests {
                 blessing: true,
             }
         );
+    }
+
+    #[test]
+    fn bright_matches_the_room_picker_defaults() {
+        let rules = ImpactRules::bright();
+
+        assert_eq!(rules.mode, ImpactMode::Bright);
+        assert!(!rules.kan.added_kan_single_payer);
+        assert!(!rules.kan.indicator_pon_counts_as_kan);
+        assert!(!rules.kan.first_round_repeat_discard);
+        assert!(!rules.kan.four_identical_discards_as_kan);
+        assert!(!rules.kan.pon_with_few_tiles_as_kan);
+        assert!(rules.all_in.eleven_honor_streak);
+        assert!(rules.all_in.four_jokers);
+        assert!(rules.all_in.blessing);
+        assert!(!rules.all_in.all_honors);
+        assert!(!rules.all_in.pure_flush_no_joker);
+        assert!(!rules.all_in.single_wait);
+        assert!(!rules.all_in.three_kans);
+        assert!(!rules.all_in.pure_seven_pairs);
+        assert!(!rules.all_in.last_tile);
     }
 
     #[test]

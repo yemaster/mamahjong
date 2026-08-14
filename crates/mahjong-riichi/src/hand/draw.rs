@@ -1,11 +1,107 @@
 use crate::{
-    EndReason, HandError, HandEvent, HandTransition, Honor, RiichiHand, RiichiStatus,
-    RiichiVariant, Seat, TileKind,
+    DrawSource, EndReason, HandError, HandEvent, HandTransition, Honor, Reaction, RiichiHand,
+    RiichiStatus, RiichiVariant, SanmaNorthRule, Seat, TileId, TileKind,
 };
 
-use super::state::{PendingDiscard, Phase};
+use super::state::{PendingDiscard, PendingKan, Phase};
 
 impl RiichiHand {
+    /// Extracts a north tile in sanma and replaces it with a rinshan draw.
+    pub fn declare_nuki(
+        &mut self,
+        actor: Seat,
+        tile_id: TileId,
+    ) -> Result<HandTransition, HandError> {
+        self.validate_seat(actor)?;
+        let Phase::TurnAction { seat, .. } = self.phase else {
+            return Err(HandError::WrongPhase);
+        };
+        if actor != seat {
+            return Err(HandError::NotActiveSeat {
+                expected: seat,
+                actual: actor,
+            });
+        }
+        if !matches!(self.rules.variant, RiichiVariant::Sanma)
+            || !matches!(self.rules.match_rules.north, SanmaNorthRule::NukiDora)
+        {
+            return Err(HandError::NukiNotAllowed {
+                reason: "north extraction is disabled by the active rules",
+            });
+        }
+
+        let tile_index = {
+            let player = &self.players[usize::from(actor.index())];
+            let tile_index = player
+                .concealed
+                .iter()
+                .position(|tile| tile.id() == tile_id)
+                .ok_or(HandError::TileNotInHand { tile_id })?;
+            if player.concealed[tile_index].kind() != TileKind::honor(Honor::North) {
+                return Err(HandError::NukiNotAllowed {
+                    reason: "only a north tile can be extracted",
+                });
+            }
+            if matches!(player.riichi, RiichiStatus::Established)
+                && player.drawn_tile != Some(tile_id)
+            {
+                return Err(HandError::NukiNotAllowed {
+                    reason: "after riichi only the drawn north tile can be extracted",
+                });
+            }
+            tile_index
+        };
+
+        if self.wall.remaining_live_draws() == 0 || self.wall.rinshan_draw_count() >= 4 {
+            return Err(HandError::NukiNotAllowed {
+                reason: "north extraction is unavailable when no rinshan draw remains",
+            });
+        }
+
+        let player = &mut self.players[usize::from(actor.index())];
+        let north = player.concealed.swap_remove(tile_index);
+        if player.drawn_tile == Some(tile_id) {
+            player.drawn_tile = None;
+        }
+        player.nuki_tiles.push(north);
+
+        let mut responses =
+            vec![None; usize::from(self.rules.variant.seat_count().value())].into_boxed_slice();
+        responses[usize::from(actor.index())] = Some(Reaction::Pass);
+        self.phase = Phase::KanResponses(PendingKan::Nuki {
+            declarer: actor,
+            tile: north,
+            responses,
+        });
+        Ok(HandTransition::new(vec![HandEvent::NorthExtracted {
+            seat: actor,
+            tile: north,
+        }]))
+    }
+
+    /** No opponent won on the exposed north, so take the shared rinshan draw. */
+    pub(super) fn complete_nuki(&mut self, actor: Seat) -> HandTransition {
+        // Capacity was checked before opening the ron window; no intervening action mutates the wall.
+        let replacement = self
+            .wall
+            .draw_rinshan()
+            .expect("validated north extraction retains one rinshan draw");
+        let player = &mut self.players[usize::from(actor.index())];
+        player.concealed.push(replacement);
+        player.drawn_tile = Some(replacement.id());
+        self.phase = Phase::TurnAction {
+            seat: actor,
+            draw_source: DrawSource::Rinshan,
+        };
+
+        HandTransition::new(vec![HandEvent::TileDrawn {
+            seat: actor,
+            tile: replacement,
+            source: DrawSource::Rinshan,
+            remaining_live_draws: self.wall.remaining_live_draws(),
+        }])
+    }
+
     pub fn declare_nine_terminals(&mut self, actor: Seat) -> Result<HandTransition, HandError> {
         self.validate_seat(actor)?;
         let Phase::TurnAction { seat, .. } = self.phase else {
@@ -117,11 +213,99 @@ impl RiichiHand {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Discard, EndReason, HandEvent, HandPhase, Reaction, RiichiHand, RiichiRules, RiichiStatus,
-        RiichiVariant, Seat, TableProgress, Tile, TileId, TileKind, WallSeed,
+        Discard, EndReason, HandEvent, HandPhase, Reaction, RejectAllHandJudge, RiichiHand,
+        RiichiRules, RiichiStatus, RiichiVariant, Seat, TableProgress, Tile, TileId, TileKind,
+        WallSeed,
     };
 
     use super::super::state::PendingDiscard;
+
+    fn sanma_with_dealer_north(north_rule: crate::SanmaNorthRule) -> (RiichiHand, Seat, TileId) {
+        let variant = RiichiVariant::Sanma;
+        let dealer = Seat::new(variant, 0).expect("dealer");
+        let progress = TableProgress::east_one(variant, dealer).expect("progress");
+        for seed in 0_u8..=u8::MAX {
+            let mut rules = RiichiRules::standard(variant);
+            rules.match_rules.north = north_rule;
+            let hand = RiichiHand::start(
+                rules,
+                progress,
+                [25_000; 3],
+                &WallSeed::from_bytes([seed; 32]),
+            )
+            .expect("start")
+            .0;
+            if let Some(tile_id) = hand.players[0]
+                .concealed
+                .iter()
+                .find(|tile| tile.kind() == TileKind::honor(crate::Honor::North))
+                .map(|tile| tile.id())
+            {
+                return (hand, dealer, tile_id);
+            }
+        }
+        panic!("one deterministic seed should deal north to the dealer");
+    }
+
+    #[test]
+    fn sanma_nuki_extracts_north_and_draws_from_rinshan() {
+        let (mut hand, dealer, north_id) = sanma_with_dealer_north(crate::SanmaNorthRule::NukiDora);
+        let remaining = hand.remaining_live_draws();
+
+        let proposed = hand.declare_nuki(dealer, north_id).expect("nuki");
+
+        assert!(matches!(
+            proposed.events(),
+            [HandEvent::NorthExtracted { seat, tile }]
+                if *seat == dealer && tile.id() == north_id
+        ));
+        assert_eq!(
+            hand.phase(),
+            HandPhase::AwaitingResponses {
+                trigger_seat: dealer
+            }
+        );
+        assert_eq!(hand.players[0].nuki_tiles.len(), 1);
+        assert_eq!(hand.players[0].nuki_tiles[0].id(), north_id);
+        assert!(
+            !hand.players[0]
+                .concealed
+                .iter()
+                .any(|tile| tile.id() == north_id)
+        );
+        assert_eq!(hand.wall.rinshan_draw_count(), 0);
+        hand.validate_invariants()
+            .expect("pending nuki hand invariants");
+
+        let transition = hand
+            .advance_automatic_reactions(&RejectAllHandJudge)
+            .expect("unopposed nuki completes");
+
+        assert_eq!(hand.players[0].concealed.len(), 14);
+        assert_eq!(hand.wall.rinshan_draw_count(), 1);
+        assert_eq!(hand.remaining_live_draws(), remaining - 1);
+        assert!(matches!(
+            transition.events(),
+            [HandEvent::TileDrawn {
+                seat,
+                source: crate::DrawSource::Rinshan,
+                ..
+            }] if *seat == dealer
+        ));
+        hand.validate_invariants().expect("nuki hand invariants");
+    }
+
+    #[test]
+    fn yakuhai_north_rule_rejects_nuki_atomically() {
+        let (mut hand, dealer, north_id) = sanma_with_dealer_north(crate::SanmaNorthRule::Yakuhai);
+        let before = hand.clone();
+
+        assert!(matches!(
+            hand.declare_nuki(dealer, north_id),
+            Err(crate::HandError::NukiNotAllowed { .. })
+        ));
+        assert_eq!(hand, before);
+    }
 
     /// Abortive draws are off by default, so this module opts in explicitly.
     fn abortive_rules(variant: RiichiVariant) -> RiichiRules {

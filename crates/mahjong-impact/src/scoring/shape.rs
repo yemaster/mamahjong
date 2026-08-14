@@ -34,7 +34,7 @@ const fn rank_offset(index: usize) -> usize {
 
 /// 标准型：`sets_needed` 组面子 + 可选一对将。
 ///
-/// `runs_allowed == false` 时只认刻子，用来判对对和。冲击麻将不能吃，但暗顺合法。
+/// `runs_allowed == false` 时只认刻子，用来判对对和。瞎子不能吃，但暗顺仍合法。
 pub(crate) fn standard(
     counts: &KindCounts,
     jokers: u8,

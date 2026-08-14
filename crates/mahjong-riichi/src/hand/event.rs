@@ -38,6 +38,10 @@ pub enum HandEvent {
         tsumogiri: bool,
         riichi_declared: bool,
     },
+    NorthExtracted {
+        seat: Seat,
+        tile: Tile,
+    },
     ReactionSubmitted {
         seat: Seat,
         reaction: ReactionKind,
