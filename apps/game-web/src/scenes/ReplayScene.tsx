@@ -252,8 +252,8 @@ export default function ReplayScene({ matchId }: { matchId: string }) {
     <div className="match-screen replay-screen" onClick={onScreenClick}>
       {/*
        * `dimTsumogiri` 和 `instantDraw` 都是牌谱独有的：手切摸切是复盘才该看到的
-       * 情报，对局里不给；摸牌不飞是因为一步就是一个状态，下一步一到桌子推倒重来，
-       * 飞到半路的牌会跟着没掉。
+       * 情报，对局里不给；摸牌不飞是因为一步就是一个离散状态，连续点下一步时没有
+       * 等待飞行动画播完的节奏。
        */}
       <GameTable
         view={view}

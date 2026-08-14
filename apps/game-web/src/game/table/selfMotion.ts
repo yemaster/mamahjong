@@ -29,8 +29,8 @@ import type { WallLayout } from "./wallLayout";
  * 然涨成二维那张——「摸牌不连贯」就是这么来的。量出来之后位置、大小、牌面朝向
  * 三样都对上，两层交接那一下就看不出来了。
  *
- * 它不属于任何一家的手牌，只在桌上待这一会儿，所以走 `transients` 而不是像其他
- * 三家那样每次重建都照着视图重新摆一遍。
+ * 它不属于任何一家的手牌，只在桌上待这一会儿，所以走 `transients`，并放在独立
+ * 的增量层里，不受其他玩家牌河或手牌更新影响。
  */
 export function addSelfDraw(
   runtime: TableRuntime,
@@ -44,8 +44,8 @@ export function addSelfDraw(
 ): void {
   if (openingPhase !== "play" || view.phase.kind === "ended") return;
   /*
-   * 牌谱重演不飞这一段。那边一步就是一个状态，下一步一到整张桌子推倒重来，
-   * 飞到半路的牌连同 `transients` 一起没了——牌在手边闪一下就不见，比不飞还难看。
+   * 牌谱重演不飞这一段。那边一步就是一个离散状态，连续点下一步时没有等待飞行
+   * 完成的节奏，牌在手边闪一下就不见，比不飞还难看。
    */
   if (runtime.instantDraw) return;
   const drawnTileId = player.drawn_tile_id;

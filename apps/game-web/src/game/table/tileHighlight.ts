@@ -33,8 +33,28 @@ export function registerTableTile(
   const key = normalizeTileCode(code);
   const existing = runtime.highlightMaterials.get(key);
   const entry = { material: plate, base: plate.color.clone() };
+  group.userData.tableTileHighlight = { key, ...entry };
   if (existing) existing.push(entry);
   else runtime.highlightMaterials.set(key, [entry]);
+}
+
+/** 局部场景更新后，从仍在桌上的节点重建高亮索引。 */
+export function rebuildTableTileHighlights(runtime: TableRuntime): void {
+  runtime.highlightMaterials = new Map();
+  runtime.root.traverse((object) => {
+    const entry = object.userData.tableTileHighlight as
+      | {
+          key: string;
+          material: THREE.MeshBasicMaterial;
+          base: THREE.Color;
+        }
+      | undefined;
+    if (!entry) return;
+    const existing = runtime.highlightMaterials.get(entry.key);
+    const value = { material: entry.material, base: entry.base };
+    if (existing) existing.push(value);
+    else runtime.highlightMaterials.set(entry.key, [value]);
+  });
 }
 
 /** 换一张要点亮的牌；`null` 表示手上没拿着牌，全部还原。 */
@@ -69,7 +89,7 @@ export function setTableDangerTiles(
   applyTableTileHighlight(runtime);
 }
 
-/** 把当前的点亮状态刷到材质上；场景重建后也要再刷一遍。 */
+/** 把当前的点亮状态刷到材质上；局部层替换后也要再刷一遍。 */
 export function applyTableTileHighlight(runtime: TableRuntime): void {
   for (const [key, entries] of runtime.highlightMaterials) {
     /* 拿起手牌那层蓝影压过铳牌的红：手上正拿着的牌是当下在找的东西。 */

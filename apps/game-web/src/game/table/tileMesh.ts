@@ -294,5 +294,5 @@ export function tileFaceMesh(group: THREE.Group): THREE.Mesh {
 }
 
 export function rootTile(runtime: TableRuntime, group: THREE.Group): void {
-  runtime.root.add(group);
+  runtime.renderTarget.add(group);
 }

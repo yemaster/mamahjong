@@ -77,7 +77,7 @@ export function addTableDice(
     );
     die.position.copy(startPosition);
     die.rotation.set(startEuler.x, startEuler.y, startEuler.z);
-    runtime.root.add(die);
+    runtime.renderTarget.add(die);
     runtime.diceRolls.push({
       object: die,
       startPosition,

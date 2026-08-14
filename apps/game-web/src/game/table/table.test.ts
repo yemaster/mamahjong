@@ -14,6 +14,7 @@ import {
   discardNaturalRotation,
   handPosition,
   impactWallLayout,
+  impactWallTiles,
   meldDisplayTiles,
   meldTilePosition,
   nukiRiverPosition,
@@ -29,6 +30,7 @@ import {
   playerReceivedDraw,
   resolveRinshanDrawNumber,
   riichiWallLayout,
+  riichiWallTiles,
   sanmaWallLayout,
   riverDiscardEntries,
   rinshanWallSlot,
@@ -279,6 +281,31 @@ describe("开门位置", () => {
     expect(wallBreakSlot(1, 5)).toBe(wallBreakSlot(1, 5));
     expect(wallBreakSlot(0, 5)).not.toBe(wallBreakSlot(1, 5));
   });
+});
+
+describe("牌山增量槽位", () => {
+  it("立直麻将正常摸一张时只少一个物理槽位", () => {
+    const layout = riichiWallLayout(0, [2, 5]);
+    const before = riichiWallTiles(layout, 70, [], 0, false);
+    const after = riichiWallTiles(layout, 69, [], 0, false);
+    const afterSlots = new Set(after.map((tile) => tile.slot));
+
+    expect(before).toHaveLength(after.length + 1);
+    expect(before.filter((tile) => !afterSlots.has(tile.slot))).toHaveLength(1);
+    expect(after.every((tile) => before.some((old) => old.slot === tile.slot)))
+      .toBe(true);
+  });
+
+  it("冲击麻将正常摸一张时也只少一个物理槽位", () => {
+    const layout = impactWallLayout(0, 0, [2, 5]);
+    const before = impactWallTiles(layout, 70, 0, undefined);
+    const after = impactWallTiles(layout, 69, 0, undefined);
+    const afterSlots = new Set(after.map((tile) => tile.slot));
+
+    expect(before).toHaveLength(after.length + 1);
+    expect(before.filter((tile) => !afterSlots.has(tile.slot))).toHaveLength(1);
+  });
+
 });
 
 function quarterTurn(turns: number): THREE.Quaternion {

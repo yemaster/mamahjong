@@ -86,3 +86,8 @@ export {
 } from "./handView";
 export type { WallLayout } from "./wallLayout";
 export { impactWallLayout, riichiWallLayout, sanmaWallLayout } from "./wallLayout";
+export {
+  impactWallTiles,
+  openingWallTakeoffSchedule,
+  riichiWallTiles,
+} from "./wall";

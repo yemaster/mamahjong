@@ -31,7 +31,7 @@ export function addCenterConsole(runtime: TableRuntime, view: MatchView): void {
   consoleMesh.castShadow = false;
   consoleMesh.receiveShadow = false;
   runtime.centerConsoleMesh = consoleMesh;
-  runtime.root.add(consoleMesh);
+  runtime.renderTarget.add(consoleMesh);
 }
 
 function centerConsoleTexture(

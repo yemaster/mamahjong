@@ -1,7 +1,10 @@
 import type { TileView } from "../../types";
-import { standUpEase } from "./animation";
+import { openingDealOrder, openingDealStep, standUpEase } from "./animation";
 import { DORA_FLIP_MS } from "./dice";
-import { WALL_TILE_LENGTH } from "./constants";
+import {
+  OPENING_DEAL_STEP_MS,
+  WALL_TILE_LENGTH,
+} from "./constants";
 import { makeTile, rootTile, tileBody } from "./tileMesh";
 import type { TableRuntime } from "./types";
 import type { WallLayout } from "./wallLayout";
@@ -12,7 +15,35 @@ import type { WallLayout } from "./wallLayout";
  * 翻的是真牌体：绕自身长轴转半圈，`π` 那头朝上的是牌背，转到 `0` 才露出正面。
  * 不是换贴图，所以中途看得见牌立起来的那道边。
  */
-function addWallTile(
+export interface WallTileSpec {
+  slot: number;
+  code: string | null;
+  flipAt: number | null;
+}
+
+/** 计算每张起手牌轮到从物理牌山起飞的绝对时刻，包含主视角座位。 */
+export function openingWallTakeoffSchedule(
+  layout: WallLayout,
+  players: Array<{ seat: number; concealed_tile_count: number }>,
+  dealer: number,
+  seatCount: number,
+  startedAt: number,
+): Map<number, number> {
+  const schedule = new Map<number, number>();
+  for (const player of players) {
+    for (let index = 0; index < player.concealed_tile_count; index += 1) {
+      const order = openingDealOrder(index, player.seat, dealer, seatCount);
+      const step = openingDealStep(index, player.seat, dealer, seatCount);
+      schedule.set(
+        layout.drawSlot(order),
+        startedAt + step * OPENING_DEAL_STEP_MS,
+      );
+    }
+  }
+  return schedule;
+}
+
+export function addWallTile(
   runtime: TableRuntime,
   layout: WallLayout,
   slot: number,
@@ -61,6 +92,27 @@ export function addWall(
   showEntireWall: boolean,
   doraFlipAt: number | null = null,
 ): void {
+  for (const tile of riichiWallTiles(
+    layout,
+    remainingLiveDraws,
+    doraIndicators,
+    completedRinshanDraws,
+    showEntireWall,
+    doraFlipAt,
+  )) {
+    addWallTile(runtime, layout, tile.slot, tile.code, tile.flipAt);
+  }
+}
+
+/** 返回当前仍在桌上的立直牌山槽位，供增量场景按槽复用。 */
+export function riichiWallTiles(
+  layout: WallLayout,
+  remainingLiveDraws: number,
+  doraIndicators: TileView[],
+  completedRinshanDraws: number,
+  showEntireWall: boolean,
+  doraFlipAt: number | null = null,
+): WallTileSpec[] {
   const liveEnd = layout.drawableCount - 14;
   const consumedTileCount = showEntireWall
     ? 0
@@ -76,17 +128,17 @@ export function addWall(
       tile.code,
     ]),
   );
+  const tiles: WallTileSpec[] = [];
   for (let order = consumedTileCount; order < layout.drawableCount; order += 1) {
     if (removedRinshan.has(order)) continue;
     const doraCode = doraByIndex.get(order);
-    addWallTile(
-      runtime,
-      layout,
-      layout.drawSlot(order),
-      doraCode ?? null,
-      doraCode != null ? doraFlipAt : null,
-    );
+    tiles.push({
+      slot: layout.drawSlot(order),
+      code: doraCode ?? null,
+      flipAt: doraCode != null ? doraFlipAt : null,
+    });
   }
+  return tiles;
 }
 
 /**
@@ -103,6 +155,25 @@ export function addImpactWall(
   jokerIndicator: TileView | undefined,
   indicatorFlipAt: number | null = null,
 ): void {
+  for (const tile of impactWallTiles(
+    layout,
+    remainingDraws,
+    completedKanCount,
+    jokerIndicator,
+    indicatorFlipAt,
+  )) {
+    addWallTile(runtime, layout, tile.slot, tile.code, tile.flipAt);
+  }
+}
+
+/** 返回当前仍在桌上的冲击麻将牌山槽位，供增量场景按槽复用。 */
+export function impactWallTiles(
+  layout: WallLayout,
+  remainingDraws: number,
+  completedKanCount: number,
+  jokerIndicator: TileView | undefined,
+  indicatorFlipAt: number | null = null,
+): WallTileSpec[] {
   const consumedTileCount =
     layout.drawableCount - remainingDraws - completedKanCount;
   /*
@@ -114,19 +185,19 @@ export function addImpactWall(
   for (let kan = 1; kan <= completedKanCount; kan += 1) {
     takenByKan.add(layout.rinshanSlot(kan));
   }
+  const tiles: WallTileSpec[] = [];
   for (let index = consumedTileCount; index < layout.drawableCount; index += 1) {
     const slot = layout.drawSlot(index);
     if (takenByKan.has(slot)) continue;
-    addWallTile(runtime, layout, slot, null, null);
+    tiles.push({ slot, code: null, flipAt: null });
   }
   for (const slot of layout.deadSlots) {
     const revealed = slot === layout.revealedSlot;
-    addWallTile(
-      runtime,
-      layout,
+    tiles.push({
       slot,
-      revealed ? (jokerIndicator?.code ?? null) : null,
-      revealed ? indicatorFlipAt : null,
-    );
+      code: revealed ? (jokerIndicator?.code ?? null) : null,
+      flipAt: revealed ? indicatorFlipAt : null,
+    });
   }
+  return tiles;
 }

@@ -84,24 +84,33 @@ export async function createRuntime(
     perspectiveCamera,
     orthographicCamera,
     root,
+    renderTarget: root,
+    layers: new Map(),
+    pendingLayerDisposals: [],
     textures,
     tableTexture,
+    tableclothPath,
+    requestedTableclothPath: tableclothPath,
     impactDustTexture: createImpactDustTexture(),
     tileGeometries: new Map(),
     tileGeometryWidthRatio: tileWidthRatio,
     selectable: [],
     hovered: null,
     animations: [],
+    discardFlights: new Map(),
     tilts: [],
     transients: [],
     selfDraw: null,
     pendingRinshanDraws: new Map(),
+    openingWallTakeoffs: new Map(),
+    openingWallTakeoffKey: null,
     spinners: [],
     doraShine: createDoraShineMaterial(),
     impacts: [],
     shake: null,
     cameraBase: new THREE.Vector3(),
     highlightMaterials: new Map(),
+    highlightIndexDirty: true,
     highlightedTileCode: null,
     dangerTileCodes: new Set<string>(),
     revealAllHands: false,
@@ -371,7 +380,7 @@ export async function createRuntime(
    * 出去的那一帧还是会照常去链接着色器程序，控制台里于是跳出 `VALIDATE_STATUS
    * false`、着色器日志却是空的那条报错——那不是着色器写错了，是上下文没了。
    *
-   * 所以这里把循环停住，等浏览器把上下文还回来再重新量一次画布、整张桌子重画。
+   * 所以这里把循环停住，等浏览器把上下文还回来再重新量一次画布并同步最新视图。
    * 不接这两个事件的话，牌桌就只剩一块黑画布，玩家只能刷新。
    */
   renderer.domElement.addEventListener("webglcontextlost", (event) => {
@@ -448,6 +457,35 @@ async function loadTableTexture(
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.userData.sharedTableTexture = true;
   return texture;
+}
+
+/** React 侧桌布路径变化时只热替换纹理，不销毁 WebGL runtime。 */
+export async function updateRuntimeTablecloth(
+  runtime: TableRuntime,
+  tableclothPath: string,
+): Promise<void> {
+  if (runtime.disposed) return;
+  runtime.requestedTableclothPath = tableclothPath;
+  if (runtime.tableclothPath === tableclothPath) return;
+  const texture = await loadTableTexture(runtime.renderer, tableclothPath);
+  if (runtime.disposed) {
+    texture.dispose();
+    return;
+  }
+  if (
+    runtime.requestedTableclothPath !== tableclothPath ||
+    runtime.tableclothPath === tableclothPath
+  ) {
+    texture.dispose();
+    return;
+  }
+  const previous = runtime.tableTexture;
+  runtime.tableTexture = texture;
+  runtime.tableclothPath = tableclothPath;
+  const surface = runtime.layers.get("surface");
+  if (surface) surface.signature = "tablecloth-changed";
+  runtime.rebuild();
+  previous.dispose();
 }
 
 /** 清掉一整棵子树上自己造的资源；同树复用的对象只释放一次。 */

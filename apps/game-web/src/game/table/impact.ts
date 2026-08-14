@@ -112,7 +112,7 @@ export function spawnTableImpact(
   mesh.renderOrder = 1;
   mesh.visible = false;
   mesh.scale.setScalar(0.18);
-  runtime.root.add(mesh);
+  runtime.renderTarget.add(mesh);
   runtime.impacts.push({
     mesh,
     material,

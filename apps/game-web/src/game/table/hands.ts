@@ -266,7 +266,8 @@ export function addHand(
 
     /*
      * 空位停满一秒后归拢。每张牌从手切状态下自己的旧槽位滑到紧凑槽位；桌面即使
-     * 在途中因版本刷新重建，startedAt 也不变，因此不会跳回起点或多播一次。
+     * 在途中即使该手牌层因其他视觉变化被替换，startedAt 也不变，因此不会跳回
+     * 起点或多播一次。
      */
     const collapse = !isSelf
       ? runtime.handCollapses.get(player.seat)

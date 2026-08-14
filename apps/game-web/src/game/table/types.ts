@@ -33,6 +33,19 @@ export interface TileAnimation {
 }
 
 /**
+ * 一张正在从手边飞往牌河的牌。
+ *
+ * 视图可能在飞行动画结束前再次更新（例如其他玩家自动跳过响应）。这份状态不挂在
+ * 临时场景节点上，因此牌河层被后续状态替换后仍能从原进度继续，而不是把牌瞬移
+ * 到终点。
+ */
+export interface DiscardFlight {
+  startedAt: number;
+  start: THREE.Vector3;
+  startRotation: THREE.Quaternion;
+}
+
+/**
  * 绕 X 轴翻牌：结算时立着的牌倒下（摊牌）或翻扣（盖牌），
  * 以及刚摸到手上的牌从平躺翻起来立住。
  */
@@ -94,7 +107,7 @@ export interface HighlightTileFace {
   base: THREE.Color;
 }
 
-/** 同一尺寸的牌共用一组不可变几何体，场景重建时只换实例和材质。 */
+/** 同一尺寸的牌共用一组不可变几何体，局部层更新时只换必要的实例和材质。 */
 export interface TileGeometrySet {
   upper: THREE.BufferGeometry;
   lower: THREE.BufferGeometry;
@@ -109,8 +122,16 @@ export interface TableRuntime {
   perspectiveCamera: THREE.PerspectiveCamera;
   orthographicCamera: THREE.OrthographicCamera;
   root: THREE.Group;
+  /** 当前构建目标；正常指向 root，局部更新时临时指向对应的缓存层。 */
+  renderTarget: THREE.Group;
+  /** 按视觉区域缓存的场景子树，视图更新时只替换签名发生变化的区域。 */
+  layers: Map<string, { signature: string; group: THREE.Group }>;
+  /** 一次视图同步中被新层顶替的旧层，在该次同步末尾统一释放。 */
+  pendingLayerDisposals: THREE.Group[];
   textures: Map<string, THREE.Texture>;
   tableTexture: THREE.Texture;
+  tableclothPath: string;
+  requestedTableclothPath: string;
   /** 砸牌扬尘共用的 Canvas 纹理，避免为短动画编译自定义 shader。 */
   impactDustTexture: THREE.Texture;
   tileGeometries: Map<string, TileGeometrySet>;
@@ -118,6 +139,8 @@ export interface TableRuntime {
   selectable: THREE.Mesh[];
   hovered: THREE.Group | null;
   animations: TileAnimation[];
+  /** 按「座位:牌 id」保存尚未结束的出牌飞行动画。 */
+  discardFlights: Map<string, DiscardFlight>;
   tilts: TileTiltAnimation[];
   spinners: THREE.Object3D[];
   /** 宝牌那道扫光的材质，整张桌子共用一份，动画循环里统一推进相位。 */
@@ -129,9 +152,8 @@ export interface TableRuntime {
   /**
    * 主视角正在飞的那张摸牌：牌号和起飞时刻。
    *
-   * 整张桌子随时可能被推倒重建（视图一涨版本就重建），飞到半路的牌跟着
-   * `transients` 一起没了，而二维手牌那一格还空着——牌就凭空消失半秒。记下这一
-   * 笔，重建时照原来的起飞时刻把它接着飞完。
+   * 自摸层可能因结算或显示参数变化被替换，飞到半路的节点会跟着离场，而二维手牌
+   * 那一格还空着。记下这一笔，层被替换时照原来的起飞时刻把它接着飞完。
    */
   selfDraw: { tileId: number; takeOffAt: number; wallSlot: number } | null;
   /**
@@ -141,12 +163,17 @@ export interface TableRuntime {
    * 跨过那一帧保存下来，避免补牌被误判成普通摸牌而从牌山开头飞出。
    */
   pendingRinshanDraws: Map<number, number>;
+  /** 开局发牌时，物理牌山槽位到该张牌起飞时刻的映射。 */
+  openingWallTakeoffs: Map<number, number>;
+  openingWallTakeoffKey: string | null;
   /** 正在进行的镜头颤动；`null` 表示镜头是稳的。 */
   shake: CameraShake | null;
   /** 相机没被震偏时该待的地方，颤完照这个放回去。 */
   cameraBase: THREE.Vector3;
   /** 桌上摊开的明牌，按牌种归拢，拿起手牌时用来点亮同种牌。 */
   highlightMaterials: Map<string, HighlightTileFace[]>;
+  /** 牌河或副露层被替换后才需要重新遍历并建立高亮索引。 */
+  highlightIndexDirty: boolean;
   /** 当前被拿起的那种牌；`null` 表示没有。 */
   highlightedTileCode: string | null;
   /** 牌谱重演的铳牌提示：这些牌种在桌上一律染红。对局中永远是空的。 */

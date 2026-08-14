@@ -22,5 +22,5 @@ export function addTableSurface(runtime: TableRuntime): void {
   );
   table.position.y = -0.12;
   table.receiveShadow = false;
-  runtime.root.add(table);
+  runtime.renderTarget.add(table);
 }

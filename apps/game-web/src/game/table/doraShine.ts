@@ -43,9 +43,9 @@ void main() {
  * 整张桌子共用的那份扫光材质。
  *
  * 桌上所有宝牌本来就闪成一个节奏，一份 `uPhase` 就够。分给每张牌一份材质的话，
- * 每次视图更新重建场景都要把这批材质连同 GPU 上的着色器程序删掉再编一遍——牌桌
- * 每打一张牌就重建一次，这个来回不必要。材质挂在牌桌运行时上，跟着运行时活到
- * 最后，`disposeGroup` 靠 `userData.shared` 认出它并放过。
+ * 局部层更新时也没有必要把这批材质连同 GPU 上的着色器程序删掉再编一遍。材质挂
+ * 在牌桌运行时上，跟着运行时活到最后，`disposeGroup` 靠 `userData.shared` 认出它
+ * 并放过。
  */
 export function createDoraShineMaterial(): THREE.ShaderMaterial {
   const material = new THREE.ShaderMaterial({

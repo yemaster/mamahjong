@@ -34,6 +34,7 @@ export function addDiscards(
   previousPlayer: MatchPlayerView | undefined,
   openingPhase: OpeningPhase,
 ): void {
+  const now = performance.now();
   const relative = tableRelativeSeat(
     player.seat,
     view.observer_seat,
@@ -45,6 +46,7 @@ export function addDiscards(
         openingPhase === "play" &&
         previousPlayer &&
         originalIndex >= previousPlayer.discards.length;
+      const flightKey = `${player.seat}:${discard.tile.id}`;
       const riverPosition = discardGridPosition(
         index,
         runtime.tileWidthRatio,
@@ -90,16 +92,15 @@ export function addDiscards(
         addLastDiscardMarker(
           runtime,
           group,
-          isNewDiscard
-            ? performance.now() + DISCARD_FLIGHT_MS
-            : performance.now(),
+          isNewDiscard || runtime.discardFlights.has(flightKey)
+            ? (runtime.discardFlights.get(flightKey)?.startedAt ?? now) +
+                DISCARD_FLIGHT_MS
+            : now,
         );
       }
 
       /* 四家都保留从手边飞入牌河的动画；只有空位与归拢逻辑限定为另外三家。 */
       if (isNewDiscard) {
-        const destination = group.position.clone();
-        const endRotation = group.quaternion.clone();
         const source = discardSource(
           runtime,
           view,
@@ -109,17 +110,30 @@ export function addDiscards(
           runtime.tileWidthRatio,
           runtime.tileScale,
         );
-        group.position.copy(source);
-        group.quaternion.copy(handQuaternion(relative, relative === 0));
+        runtime.discardFlights.set(flightKey, {
+          startedAt: now,
+          start: source,
+          startRotation: handQuaternion(relative, relative === 0),
+        });
+      }
+
+      const flight = runtime.discardFlights.get(flightKey);
+      if (flight && now - flight.startedAt < DISCARD_FLIGHT_MS) {
+        const destination = group.position.clone();
+        const endRotation = group.quaternion.clone();
+        group.position.copy(flight.start);
+        group.quaternion.copy(flight.startRotation);
         runtime.animations.push({
           group,
-          start: source,
+          start: flight.start,
           end: destination,
-          startRotation: group.quaternion.clone(),
+          startRotation: flight.startRotation,
           endRotation,
-          startedAt: performance.now(),
+          startedAt: flight.startedAt,
           duration: DISCARD_FLIGHT_MS,
         });
+      } else if (flight) {
+        runtime.discardFlights.delete(flightKey);
       }
     },
   );

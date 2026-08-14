@@ -1,4 +1,5 @@
-import type { MatchView } from "../../types";
+import * as THREE from "three";
+import type { MatchPlayerView, MatchView } from "../../types";
 import type { OpeningPhase } from "../OpeningSequence";
 import { addCenterConsole } from "./centerConsole";
 import { addDiscards, updateLastDiscard } from "./discards";
@@ -15,13 +16,26 @@ import {
 } from "./handView";
 import { addMelds } from "./melds";
 import { tableRelativeSeat } from "./geometry";
-import { disposeGroup, disposeTileGeometries } from "./runtime";
+import { disposeGroup } from "./runtime";
 import { addSelfDraw } from "./selfMotion";
 import { addTableSurface } from "./tableSurface";
-import { applyTableTileHighlight } from "./tileHighlight";
+import {
+  applyTableTileHighlight,
+  rebuildTableTileHighlights,
+} from "./tileHighlight";
 import type { TableRuntime } from "./types";
-import { addImpactWall, addWall } from "./wall";
-import { impactWallLayout, riichiWallLayout, sanmaWallLayout } from "./wallLayout";
+import {
+  addWallTile,
+  impactWallTiles,
+  riichiWallTiles,
+  type WallTileSpec,
+} from "./wall";
+import {
+  impactWallLayout,
+  riichiWallLayout,
+  sanmaWallLayout,
+  type WallLayout,
+} from "./wallLayout";
 
 /**
  * 手切空隙：别家从手牌里抽走一张打出去，手牌的 3D 立姿就该缺那一格，
@@ -97,10 +111,11 @@ function updateHandCutGaps(
 }
 
 /**
- * 按最新的对局视图重建整张桌子。
+ * 把最新视图增量同步到牌桌。
  *
- * 每次都是推倒重来：清空场景再逐块搭回去，需要动画的部分由各个 add* 自己
- * 对着上一份视图做差分（新打出的牌、新成立的副露……）后登记到 runtime 上。
+ * 场景按桌面、桌心、牌山、骰子，以及每家的手牌/牌河/副露拆成缓存层。服务端版本
+ * 增长本身不会触发任何 Three.js 工作；只有某层真正参与绘制的数据变了才离屏重建
+ * 那一小层，其他 mesh、材质、GPU buffer 和正在播放的动画都原样保留。
  */
 export function renderTable(
   runtime: TableRuntime,
@@ -110,39 +125,20 @@ export function renderTable(
   settlementRevealSeats: number[],
   settlementWinningTileSeats: number[] = [],
 ): void {
+  commitLayerUpdates(runtime);
   runtime.latestView = view;
   const openingKey = `${view.id}:${view.hand_index}`;
-  if (
-    openingPhase !== "play" &&
-    runtime.renderedOpeningPhase === openingPhase &&
-    runtime.openingKey === openingKey
-  ) {
-    runtime.previousView = view;
-    return;
-  }
   runtime.openingKey = openingKey;
   runtime.renderedOpeningPhase = openingPhase;
-  disposeGroup(runtime.root);
-  runtime.root.clear();
   if (runtime.tileGeometryWidthRatio !== runtime.tileWidthRatio) {
-    disposeTileGeometries(runtime);
+    /* 几何体缓存的 key 自带宽度，新旧宽度可以共存到 runtime 销毁；这样无需为了
+       一个显示设置把仍在使用的 GPU buffer 提前释放。 */
     runtime.tileGeometryWidthRatio = runtime.tileWidthRatio;
   }
-  runtime.selectable = [];
-  runtime.hovered = null;
-  runtime.animations = [];
-  runtime.tilts = [];
-  runtime.spinners = [];
-  /* 桌子推倒重来，还没散完的灰也跟着没了；镜头也得先稳住。 */
-  runtime.impacts = [];
-  runtime.transients = [];
-  runtime.shake = null;
-  runtime.highlightMaterials = new Map();
-  runtime.diceRolls = [];
-  runtime.centerConsoleMesh = null;
   const previousView = runtime.previousView;
   if (previousView && previousView.hand_index !== view.hand_index) {
     runtime.pendingRinshanDraws.clear();
+    runtime.discardFlights.clear();
   }
   updateHandCutGaps(runtime, view, previousView);
   updateLastDiscard(runtime, view, previousView);
@@ -155,8 +151,12 @@ export function renderTable(
     runtime.revealedWinningTileSeats.clear();
   }
 
-  addTableSurface(runtime);
-  addCenterConsole(runtime, view);
+  updateLayer(runtime, "surface", "surface-v1", () => {
+    addTableSurface(runtime);
+  });
+  updateLayer(runtime, "console", consoleKey(view), () => {
+    addCenterConsole(runtime, view);
+  });
 
   /* 开门位置只跟庄家和骰子有关，和谁在看这张桌子无关。 */
   const dealerRelative = tableRelativeSeat(
@@ -236,31 +236,51 @@ export function renderTable(
     openingPhase === "dice"
       ? performance.now() + DICE_SETTLE_MS + DORA_FLIP_DELAY_MS
       : null;
-  if (impact) {
-    addImpactWall(
-      runtime,
-      wall,
-      visibleWallTiles,
-      completedRinshanDraws,
-      view.joker_indicator,
-      doraFlipAt,
-    );
-  } else {
-    addWall(
-      runtime,
-      wall,
-      view.remaining_live_draws,
-      view.dora_indicators ?? [],
-      completedRinshanDraws,
-      openingPhase === "dice",
-      doraFlipAt,
-    );
-  }
+  const wallTiles = impact
+    ? impactWallTiles(
+        wall,
+        visibleWallTiles,
+        completedRinshanDraws,
+        view.joker_indicator,
+        doraFlipAt,
+      )
+    : riichiWallTiles(
+        wall,
+        view.remaining_live_draws,
+        view.dora_indicators ?? [],
+        completedRinshanDraws,
+        openingPhase === "dice",
+        doraFlipAt,
+      );
+  syncWallLayers(
+    runtime,
+    wall,
+    wallTiles,
+    signature([
+      dimensionsKey(runtime),
+      openingKey,
+      view.variant_kind,
+      view.progress.dealer,
+      view.observer_seat,
+      view.players.length,
+      dice,
+      view.sanma_north_rule,
+    ]),
+    openingPhase === "dice" ? "delayed" : "settled",
+  );
 
   if (openingPhase === "dice") {
-    addTableDice(runtime, dice);
+    updateLayer(runtime, "dice", signature([openingKey, dice]), () => {
+      addTableDice(runtime, dice);
+    });
+    for (const player of view.players) {
+      clearPlayerLayers(runtime, player.seat, openingKey);
+    }
+    commitLayerUpdates(runtime);
+    refreshTableTileHighlights(runtime);
     return;
   }
+  updateLayer(runtime, "dice", `hidden:${openingKey}`, () => {});
 
   for (const player of view.players) {
     const previousPlayer = previousView?.players.find(
@@ -286,17 +306,31 @@ export function renderTable(
       completedRinshanDraws,
       previousCompletedRinshanDraws,
     );
-    addHand(
+    updateLayer(
       runtime,
-      view,
-      player,
-      previousPlayer,
-      openingPhase,
-      settlementRevealSeats,
-      settlementWinningTileSeats,
-      wall,
-      consumedTileCount,
-      rinshanDrawNumber,
+      `hand:${player.seat}`,
+      handKey(
+        runtime,
+        view,
+        player,
+        openingPhase,
+        settlementRevealSeats,
+        settlementWinningTileSeats,
+      ),
+      () => {
+        addHand(
+          runtime,
+          view,
+          player,
+          previousPlayer,
+          openingPhase,
+          settlementRevealSeats,
+          settlementWinningTileSeats,
+          wall,
+          consumedTileCount,
+          rinshanDrawNumber,
+        );
+      },
     );
     if (settlementRevealSeats.includes(player.seat)) {
       runtime.revealedSettlementSeats.add(player.seat);
@@ -305,28 +339,266 @@ export function renderTable(
       runtime.revealedWinningTileSeats.add(player.seat);
     }
     if (openingPhase === "play" || openingPhase === "waiting") {
-      addDiscards(runtime, view, player, previousPlayer, openingPhase);
+      updateLayer(
+        runtime,
+        `discards:${player.seat}`,
+        discardKey(runtime, view, player, openingPhase),
+        () => addDiscards(runtime, view, player, previousPlayer, openingPhase),
+      );
+    } else {
+      updateLayer(runtime, `discards:${player.seat}`, `hidden:${openingKey}`, () => {});
     }
     if (openingPhase === "play") {
-      addMelds(runtime, view, player, previousPlayer);
+      updateLayer(
+        runtime,
+        `melds:${player.seat}`,
+        meldKey(runtime, view, player),
+        () => addMelds(runtime, view, player, previousPlayer),
+      );
+    } else {
+      updateLayer(runtime, `melds:${player.seat}`, `hidden:${openingKey}`, () => {});
     }
     if (player.seat === view.observer_seat) {
-      addSelfDraw(
+      updateLayer(
         runtime,
-        view,
-        player,
-        previousPlayer,
-        openingPhase,
-        wall,
-        consumedTileCount,
-        rinshanDrawNumber,
+        "self-draw",
+        signature([
+          dimensionsKey(runtime),
+          openingKey,
+          openingPhase,
+          runtime.instantDraw,
+          player.drawn_tile_id,
+          player.concealed_tiles,
+          rinshanDrawNumber,
+          view.phase.kind,
+          view.joker_code,
+          view.dora_indicators,
+        ]),
+        () =>
+          addSelfDraw(
+            runtime,
+            view,
+            player,
+            previousPlayer,
+            openingPhase,
+            wall,
+            consumedTileCount,
+            rinshanDrawNumber,
+          ),
       );
     }
     if (rinshanDrawNumber != null) {
       runtime.pendingRinshanDraws.delete(player.seat);
     }
   }
-  /* 桌子是推倒重来的，手上还拿着牌就得把点亮重新刷上去。 */
-  applyTableTileHighlight(runtime);
   runtime.previousView = view;
+  commitLayerUpdates(runtime);
+  refreshTableTileHighlights(runtime);
+}
+
+function signature(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function dimensionsKey(runtime: TableRuntime): string {
+  return `${runtime.tileScale}:${runtime.tileWidthRatio}`;
+}
+
+function consoleKey(view: MatchView): string {
+  return signature([
+    view.id,
+    view.hand_index,
+    view.variant_kind,
+    view.progress,
+    view.remaining_live_draws,
+    view.observer_seat,
+    view.dealer_streak,
+    view.players.map((player) => [
+      player.seat,
+      player.points,
+      player.riichi_status,
+    ]),
+  ]);
+}
+
+function handKey(
+  runtime: TableRuntime,
+  view: MatchView,
+  player: MatchPlayerView,
+  openingPhase: OpeningPhase,
+  settlementRevealSeats: number[],
+  settlementWinningTileSeats: number[],
+): string {
+  return signature([
+    dimensionsKey(runtime),
+    view.id,
+    view.hand_index,
+    openingPhase,
+    player.seat,
+    player.concealed_tile_count,
+    player.concealed_tiles,
+    player.drawn_tile_id,
+    playerIsHoldingDrawnTile(view, player.seat),
+    view.phase.kind === "ended",
+    view.hand_settlement,
+    settlementRevealSeats.includes(player.seat),
+    settlementWinningTileSeats.includes(player.seat),
+    runtime.revealAllHands,
+    runtime.handCutGaps.get(player.seat),
+    runtime.handCollapses.get(player.seat),
+    view.dora_indicators,
+    view.joker_code,
+  ]);
+}
+
+function discardKey(
+  runtime: TableRuntime,
+  view: MatchView,
+  player: MatchPlayerView,
+  openingPhase: OpeningPhase,
+): string {
+  const marker =
+    runtime.lastDiscard?.seat === player.seat
+      ? runtime.lastDiscard.index
+      : null;
+  return signature([
+    dimensionsKey(runtime),
+    view.id,
+    view.hand_index,
+    openingPhase,
+    player.discards,
+    player.nuki_tiles,
+    marker,
+    runtime.dimTsumogiri,
+    view.dora_indicators,
+    view.joker_code,
+  ]);
+}
+
+function meldKey(
+  runtime: TableRuntime,
+  view: MatchView,
+  player: MatchPlayerView,
+): string {
+  return signature([
+    dimensionsKey(runtime),
+    view.id,
+    view.hand_index,
+    player.melds,
+    view.dora_indicators,
+    view.joker_code,
+  ]);
+}
+
+function clearPlayerLayers(
+  runtime: TableRuntime,
+  seat: number,
+  openingKey: string,
+): void {
+  for (const kind of ["hand", "discards", "melds"]) {
+    updateLayer(runtime, `${kind}:${seat}`, `hidden:${openingKey}`, () => {});
+  }
+  updateLayer(runtime, "self-draw", `hidden:${openingKey}`, () => {});
+}
+
+/** 牌山按物理槽位同步：正常摸牌只会让一个槽位变空，不碰其余一百多张牌。 */
+function syncWallLayers(
+  runtime: TableRuntime,
+  layout: WallLayout,
+  tiles: WallTileSpec[],
+  layoutKey: string,
+  flipMode: "delayed" | "settled",
+): void {
+  const visible = new Set<string>();
+  for (const tile of tiles) {
+    const key = `wall-slot:${tile.slot}`;
+    visible.add(key);
+    updateLayer(
+      runtime,
+      key,
+      signature([layoutKey, tile.slot, tile.code, tile.flipAt ? flipMode : null]),
+      () => addWallTile(runtime, layout, tile.slot, tile.code, tile.flipAt),
+    );
+  }
+  for (const key of runtime.layers.keys()) {
+    if (!key.startsWith("wall-slot:") || visible.has(key)) continue;
+    updateLayer(runtime, key, `empty:${layoutKey}`, () => {});
+  }
+}
+
+/** 只替换一个发生变化的视觉层；同一 JS 帧内完成挂载和撤换，不暴露空场景。 */
+function updateLayer(
+  runtime: TableRuntime,
+  key: string,
+  nextSignature: string,
+  build: () => void,
+): void {
+  const previous = runtime.layers.get(key);
+  if (previous?.signature === nextSignature) return;
+
+  const group = new THREE.Group();
+  group.name = `table-layer:${key}`;
+  runtime.renderTarget = group;
+  try {
+    build();
+  } finally {
+    runtime.renderTarget = runtime.root;
+  }
+
+  runtime.root.add(group);
+  if (key.startsWith("discards:") || key.startsWith("melds:")) {
+    runtime.highlightIndexDirty = true;
+  }
+  if (previous) {
+    runtime.pendingLayerDisposals.push(previous.group);
+  }
+  runtime.layers.set(key, { signature: nextSignature, group });
+}
+
+function refreshTableTileHighlights(runtime: TableRuntime): void {
+  if (!runtime.highlightIndexDirty) return;
+  rebuildTableTileHighlights(runtime);
+  applyTableTileHighlight(runtime);
+  runtime.highlightIndexDirty = false;
+}
+
+/** 一份视图涉及的所有局部层一次提交；下一次 rAF 只会看见提交后的完整场景。 */
+function commitLayerUpdates(runtime: TableRuntime): void {
+  if (runtime.pendingLayerDisposals.length === 0) return;
+  for (const group of runtime.pendingLayerDisposals) {
+    removeLayerRuntimeState(runtime, group);
+    runtime.root.remove(group);
+    disposeGroup(group);
+    group.clear();
+  }
+  runtime.pendingLayerDisposals = [];
+}
+
+/** 去掉被替换子树留下的动画、拾取与临时特效引用。 */
+function removeLayerRuntimeState(
+  runtime: TableRuntime,
+  group: THREE.Group,
+): void {
+  const belongs = (object: THREE.Object3D): boolean => {
+    let current: THREE.Object3D | null = object;
+    while (current) {
+      if (current === group) return true;
+      current = current.parent;
+    }
+    return false;
+  };
+  runtime.selectable = runtime.selectable.filter((mesh) => !belongs(mesh));
+  if (runtime.hovered && belongs(runtime.hovered)) runtime.hovered = null;
+  runtime.animations = runtime.animations.filter(
+    (animation) => !belongs(animation.group),
+  );
+  runtime.tilts = runtime.tilts.filter((tilt) => !belongs(tilt.group));
+  runtime.spinners = runtime.spinners.filter((spinner) => !belongs(spinner));
+  runtime.transients = runtime.transients.filter(
+    (transient) => !belongs(transient.group),
+  );
+  runtime.impacts = runtime.impacts.filter((impact) => !belongs(impact.mesh));
+  runtime.diceRolls = runtime.diceRolls.filter(
+    (roll) => !belongs(roll.object),
+  );
 }

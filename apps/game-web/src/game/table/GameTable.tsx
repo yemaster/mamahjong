@@ -6,7 +6,11 @@ import {
   DEFAULT_TILE_SCALE,
   TILE_WIDTH_RATIO,
 } from "./constants";
-import { createRuntime, destroyRuntime } from "./runtime";
+import {
+  createRuntime,
+  destroyRuntime,
+  updateRuntimeTablecloth,
+} from "./runtime";
 import { renderTable } from "./scene";
 import { setTableDangerTiles, setTableTileHighlight } from "./tileHighlight";
 import type { TableCameraConfig, TableRuntime } from "./types";
@@ -71,6 +75,7 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
   const cameraConfigRef = useRef(cameraConfig);
   const tileScaleRef = useRef(tileScale);
   const tileWidthRatioRef = useRef(tileWidthRatio);
+  const tableclothPathRef = useRef(tableclothPath);
   const focusedTileCodeRef = useRef<string | null>(null);
   const dangerTileCodesRef = useRef(dangerTileCodes);
   const revealAllHandsRef = useRef(revealAllHands);
@@ -89,6 +94,7 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
   cameraConfigRef.current = cameraConfig;
   tileScaleRef.current = tileScale;
   tileWidthRatioRef.current = tileWidthRatio;
+  tableclothPathRef.current = tableclothPath;
   dangerTileCodesRef.current = dangerTileCodes;
   revealAllHandsRef.current = revealAllHands;
   dimTsumogiriRef.current = dimTsumogiri;
@@ -136,7 +142,7 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
         runtime.tileWidthRatio = tileWidthRatioRef.current;
         runtime.resize();
         runtimeRef.current = runtime;
-        /* 上下文被显卡收走又还回来时，按当时最新的视图重画一整张桌子。 */
+        /* 上下文恢复或局部动画定时器触发时，按最新视图做一次增量同步。 */
         runtime.rebuild = () => {
           runtime.openingKey = null;
           runtime.renderedOpeningPhase = null;
@@ -156,6 +162,11 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
           setTableDangerTiles(runtime, dangerTileCodesRef.current ?? []);
         };
         runtime.rebuild();
+        if (runtime.tableclothPath !== tableclothPathRef.current) {
+          void updateRuntimeTablecloth(runtime, tableclothPathRef.current).catch(
+            () => rendererErrorRef.current?.(),
+          );
+        }
       })
       .catch(() => {
         if (!cancelled) rendererErrorRef.current?.();
@@ -168,7 +179,15 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
         runtimeRef.current = null;
       }
     };
-  }, [tableclothPath, view.id]);
+  }, [view.id]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime || runtime.tableclothPath === tableclothPath) return;
+    void updateRuntimeTablecloth(runtime, tableclothPath).catch(() =>
+      rendererErrorRef.current?.(),
+    );
+  }, [tableclothPath]);
 
   /* 铳牌的红只改材质颜色，不重建场景。 */
   useEffect(() => {
