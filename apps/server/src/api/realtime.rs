@@ -21,8 +21,8 @@ use tokio::sync::{Notify, broadcast, mpsc};
 
 use self::hub::PresenceGuard;
 use self::message::{
-    ClientCommand, ClientMessage, Hello, MAX_MESSAGE_BYTES, MAX_SUBSCRIPTIONS, MessageError,
-    PROTOCOL, Resync, SeatPresence, ServerMessage, StreamState,
+    ChatMessageType, ClientChat, ClientCommand, ClientMessage, Hello, MAX_MESSAGE_BYTES,
+    MAX_SUBSCRIPTIONS, MessageError, PROTOCOL, Resync, SeatPresence, ServerMessage, StreamState,
 };
 use super::auth::AuthenticatedUser;
 use super::dto::MatchViewResponse;
@@ -40,6 +40,9 @@ const MATCH_STREAM_PREFIX: &str = "match_";
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
+
+const MAX_CHAT_TEXT_CHARS: usize = 200;
+const MAX_CHAT_EMOJI_BYTES: usize = 512;
 
 /// Client messages allowed per second before the connection is closed.
 const MAX_MESSAGES_PER_SECOND: u32 = 20;
@@ -192,7 +195,7 @@ impl Connection {
     async fn accept(
         &mut self,
         hello: Hello,
-    ) -> Result<(mpsc::Receiver<usize>, Vec<ForwarderGuard>), ConnectionError> {
+    ) -> Result<(mpsc::Receiver<(usize, StreamNotice)>, Vec<ForwarderGuard>), ConnectionError> {
         if hello.subscriptions.len() > MAX_SUBSCRIPTIONS {
             return Err(ConnectionError::TooManySubscriptions);
         }
@@ -271,7 +274,10 @@ impl Connection {
         Ok((receiver, forwarders))
     }
 
-    async fn pump(&mut self, mut notices: mpsc::Receiver<usize>) -> Result<(), ConnectionError> {
+    async fn pump(
+        &mut self,
+        mut notices: mpsc::Receiver<(usize, StreamNotice)>,
+    ) -> Result<(), ConnectionError> {
         let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
         heartbeat.tick().await;
         let mut window = RateWindow::new();
@@ -289,9 +295,14 @@ impl Connection {
                         self.dispatch(&text).await?;
                     }
                 }
-                index = notices.recv() => {
-                    let index = index.ok_or(ConnectionError::Internal)?;
-                    self.refresh(index).await?;
+                notice = notices.recv() => {
+                    let (index, notice) = notice.ok_or(ConnectionError::Internal)?;
+                    match notice {
+                        StreamNotice::Changed { .. } => self.refresh(index).await?,
+                        StreamNotice::Chat { seat, message_type, content } => {
+                            self.send_chat(index, seat, message_type, &content).await?;
+                        }
+                    }
                 }
                 _ = heartbeat.tick() => {
                     send(&mut self.socket, Message::Ping(Vec::new().into())).await?;
@@ -315,6 +326,7 @@ impl Connection {
         match ClientMessage::parse(text) {
             Ok(ClientMessage::Ping) => self.pong().await,
             Ok(ClientMessage::Command(command)) => self.submit(command).await,
+            Ok(ClientMessage::Chat(chat)) => self.chat(chat).await,
             Ok(ClientMessage::Resync(request)) => self.resync(request).await,
             Ok(ClientMessage::Hello(_)) => Err(ConnectionError::DuplicateHello),
             Err(MessageError::UnknownKind) => {
@@ -383,6 +395,103 @@ impl Connection {
                     .await
             }
         }
+    }
+
+    /// Broadcasts a short-lived table chat message to every live observer.
+    ///
+    /// The client never supplies the seat. It is resolved from the authenticated
+    /// subscription here, so a player cannot impersonate another seat.
+    async fn chat(&mut self, chat: ClientChat) -> Result<(), ConnectionError> {
+        let Some((stream, match_id)) = self
+            .subscriptions
+            .iter()
+            .find(|held| held.stream == chat.stream)
+            .map(|held| (held.stream.clone(), held.match_id.clone()))
+        else {
+            return self
+                .send_error(
+                    None,
+                    "request.unknown_stream",
+                    "connection is not subscribed to this stream",
+                    false,
+                )
+                .await;
+        };
+
+        let content = match chat.message_type {
+            ChatMessageType::Text => {
+                let content = chat.content.trim();
+                if content.is_empty() || content.chars().count() > MAX_CHAT_TEXT_CHARS {
+                    return self
+                        .send_error(
+                            None,
+                            "request.invalid_chat",
+                            "chat text must contain between 1 and 200 characters",
+                            false,
+                        )
+                        .await;
+                }
+                content.to_owned()
+            }
+            ChatMessageType::Emoji => {
+                let content = chat.content.as_str();
+                if content.len() > MAX_CHAT_EMOJI_BYTES
+                    || !content.starts_with('/')
+                    || content.starts_with("//")
+                    || content.chars().any(char::is_control)
+                {
+                    return self
+                        .send_error(
+                            None,
+                            "request.invalid_chat",
+                            "chat emoji must be a local asset path",
+                            false,
+                        )
+                        .await;
+                }
+                content.to_owned()
+            }
+        };
+
+        let projection = self
+            .state
+            .application()
+            .match_projection(&self.user_id, &match_id)
+            .map_err(|_| ConnectionError::ForbiddenStream)?;
+        let seat = projection
+            .seated()
+            .into_iter()
+            .find_map(|(seat, user_id)| (user_id == &self.user_id).then_some(seat))
+            .ok_or(ConnectionError::ForbiddenStream)?;
+
+        self.state.realtime().publish(
+            &stream,
+            StreamNotice::Chat {
+                seat,
+                message_type: chat.message_type,
+                content,
+            },
+        );
+        Ok(())
+    }
+
+    async fn send_chat(
+        &mut self,
+        index: usize,
+        seat: u8,
+        message_type: ChatMessageType,
+        content: &str,
+    ) -> Result<(), ConnectionError> {
+        let stream = self
+            .subscriptions
+            .get(index)
+            .ok_or(ConnectionError::Internal)?
+            .stream
+            .clone();
+        let frame =
+            serde_json::to_string(&ServerMessage::chat(&stream, seat, message_type, content))
+                .map_err(|_| ConnectionError::Internal)?;
+        send(&mut self.socket, Message::text(frame)).await
     }
 
     /// Carries server time so clients can align action countdowns.
@@ -634,7 +743,7 @@ struct ForwarderGuard {
 impl ForwarderGuard {
     fn spawn(
         mut notices: broadcast::Receiver<StreamNotice>,
-        sender: mpsc::Sender<usize>,
+        sender: mpsc::Sender<(usize, StreamNotice)>,
         index: usize,
     ) -> Self {
         Self {
@@ -642,8 +751,19 @@ impl ForwarderGuard {
                 loop {
                     match notices.recv().await {
                         // Lagging only costs a wake-up; the cursor pull catches up.
-                        Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {
-                            if sender.send(index).await.is_err() {
+                        Ok(notice) => {
+                            if sender.send((index, notice)).await.is_err() {
+                                return;
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
+                            // Persistent state can be recovered by refreshing.
+                            // Ephemeral chat messages that fell out of the buffer expire anyway.
+                            let refresh = StreamNotice::Changed {
+                                version: 0,
+                                latest_sequence: 0,
+                            };
+                            if sender.send((index, refresh)).await.is_err() {
                                 return;
                             }
                         }
@@ -1302,6 +1422,62 @@ mod tests {
         )
         .await;
         expect_error(&mut player, "request.unknown_stream").await;
+    }
+
+    #[tokio::test]
+    async fn table_chat_is_broadcast_to_every_player_with_a_server_owned_seat() {
+        let table = sanma_table("chat").await;
+        let stream = match_stream(&table.match_id);
+        let mut dealer = connect(&table, &table.tokens[0]).await;
+        let mut opponent = connect(&table, &table.tokens[1]).await;
+
+        let dealer_welcome = hello(&mut dealer, &stream, 0).await;
+        let opponent_welcome = hello(&mut opponent, &stream, 0).await;
+        let latest = dealer_welcome["streams"][0]["event_seq"]
+            .as_u64()
+            .expect("seq");
+        assert_eq!(opponent_welcome["streams"][0]["event_seq"], latest);
+        drain_events(&mut dealer, latest).await;
+        drain_events(&mut opponent, latest).await;
+
+        send_json(
+            &mut dealer,
+            &json!({
+                "kind": "chat",
+                "stream": stream,
+                "type": "text",
+                "content": "  大家好  "
+            }),
+        )
+        .await;
+
+        for socket in [&mut dealer, &mut opponent] {
+            let chat = next_reply(socket).await;
+            assert_eq!(chat["kind"], "chat");
+            assert_eq!(chat["schema"], "chat.v1");
+            assert_eq!(chat["stream"], stream);
+            assert_eq!(chat["seat"], 0, "the authenticated user owns the seat");
+            assert_eq!(chat["type"], "text");
+            assert_eq!(chat["content"], "大家好");
+        }
+
+        send_json(
+            &mut opponent,
+            &json!({
+                "kind": "chat",
+                "stream": stream,
+                "type": "emoji",
+                "content": "/game/assets/emotes/smile.png"
+            }),
+        )
+        .await;
+        for socket in [&mut dealer, &mut opponent] {
+            let chat = next_reply(socket).await;
+            assert_eq!(chat["kind"], "chat");
+            assert_eq!(chat["seat"], 1);
+            assert_eq!(chat["type"], "emoji");
+            assert_eq!(chat["content"], "/game/assets/emotes/smile.png");
+        }
     }
 
     #[tokio::test]

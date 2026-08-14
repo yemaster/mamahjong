@@ -1,7 +1,7 @@
 # 实时传输
 
 状态：服务端已实现  
-最后更新：2026-08-01
+最后更新：2026-08-14
 
 ## 目标
 
@@ -36,7 +36,7 @@
 
 - 一次性 ws ticket 的签发与消费；
 - WebSocket 建连、`hello` / `welcome`；
-- 命令、命令回执、事件、错误四种信封；
+- 命令、聊天、命令回执、事件、错误信封；
 - 按观察者裁剪的事件读取与游标续传；
 - 心跳与基本流控。
 
@@ -136,6 +136,21 @@ ticket 无效或过期返回 `401` 与 `auth.invalid_ticket`，不进入 WebSock
 `name` 与 `payload` 的组合与 HTTP 命令完全一致，共用同一个反序列化枚举，
 不出现两套命令定义。
 
+对局内文字和表情使用临时聊天帧：
+
+```json
+{
+  "kind": "chat",
+  "stream": "match_01J...",
+  "type": "text",
+  "content": "大家好"
+}
+```
+
+`type` 为 `text` 或 `emoji`。文字去掉首尾空白后最多 200 个字符；表情内容是
+最多 512 字节的站内绝对资源路径。客户端不发送座位号，服务端从已认证的对局
+订阅中确定发送者座位，避免冒充其他玩家。
+
 心跳：
 
 ```json
@@ -184,6 +199,21 @@ ticket 无效或过期返回 `401` 与 `auth.invalid_ticket`，不进入 WebSock
 ```json
 {"kind": "pong", "server_time": "2026-07-31T12:00:00Z", "latest_seq": 121}
 ```
+
+聊天消息广播给流上所有在线连接（包括发送者）：
+
+```json
+{
+  "kind": "chat",
+  "schema": "chat.v1",
+  "stream": "match_01J...",
+  "seat": 1,
+  "type": "emoji",
+  "content": "/game/assets/emotes/smile.png"
+}
+```
+
+聊天只用于短时气泡展示，不写入牌局事件、不归档，也不在断线重连时补发。
 
 ## 事件裁剪
 
@@ -251,8 +281,9 @@ pub struct MatchEvent {
 1. 传输层持有 `RealtimeHub`，内部是
    `Mutex<HashMap<String, broadcast::Sender<StreamNotice>>>`；
 2. 服务端每次修改对局或房间后调用 `hub.publish(stream, notice)`；
-3. `StreamNotice` 只有 `{version, latest_sequence}`，是信号不是数据；
-4. 连接收到信号后调用 `match_events(actor, match_id, cursor)` 拉取并下发。
+3. `StreamNotice::Changed` 只有 `{version, latest_sequence}`，是信号不是数据；
+4. 连接收到变更信号后调用 `match_events(actor, match_id, cursor)` 拉取并下发；
+5. 临时聊天使用 `StreamNotice::Chat` 直接扇出，不进入可续传事件流。
 
 这样做的原因：
 
@@ -443,6 +474,7 @@ request.unknown_kind            消息 kind 不受支持
 request.too_many_subscriptions  订阅数超过上限
 request.message_too_large       单条消息超限
 request.rate_limited            客户端消息频率超限
+request.invalid_chat            聊天文字或表情资源路径不合法
 ```
 
 握手和流控错误发出错误信封后关闭连接；`request.unknown_kind`、

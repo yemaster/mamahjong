@@ -92,6 +92,7 @@ import {
 import { useMatchOpening } from "../game/useMatchOpening";
 import { MatchStream } from "../ws";
 import { useAuthStore } from "../stores/authStore";
+import { useChatStore } from "../stores/chatStore";
 import { useGameStore } from "../stores/gameStore";
 import { navigateTo } from "../routing";
 import type {
@@ -290,6 +291,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
   useEffect(() => {
     matchUnavailable.current = false;
     reset();
+    useChatStore.getState().clear();
     fetchView();
 
     /* Start WebSocket. */
@@ -344,6 +346,11 @@ export default function GameScene({ matchId }: GameSceneProps) {
               case "presence":
                 updatePresence(event.seats);
                 break;
+              case "chat":
+                useChatStore
+                  .getState()
+                  .receive(event.seat, event.messageType, event.content);
+                break;
               case "disconnected":
                 /* Polling fallback starts below. */
                 break;
@@ -385,6 +392,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
       /* 离开这局时清空全局 store，下一局 mount 时不会看到上一局的残影——
          结果页、投票退出等重定向判定就不会被旧数据触发。 */
       reset();
+      useChatStore.getState().clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matchId, token]);
@@ -415,6 +423,13 @@ export default function GameScene({ matchId }: GameSceneProps) {
         });
     },
     [token, matchId, setMatchView, wsState],
+  );
+  const sendChat = useCallback(
+    (type: "text" | "emoji", content: string) => {
+      if (wsState !== "connected") return false;
+      return streamRef.current?.sendChat(type, content) ?? false;
+    },
+    [wsState],
   );
   const {
     phase: openingPhase,
@@ -1230,13 +1245,14 @@ export default function GameScene({ matchId }: GameSceneProps) {
         <SettingsPanel onClose={() => setSettingsOpen(false)} />
       )}
       <ChatBox
-        observerSeat={matchView.observer_seat}
         playerCharacterId={
           matchView.players.find(
             (p) => p.seat === matchView.observer_seat,
           )?.character_id ?? null
         }
         charactersById={charactersById}
+        connected={wsState === "connected"}
+        onSend={sendChat}
       />
       <Modal
         open={assetsTimedOut}

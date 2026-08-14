@@ -18,9 +18,10 @@ import { tableRelativeSeat } from "./table";
 /* ── ChatBox (输入区) ──────────────────────────── */
 
 interface ChatBoxProps {
-  observerSeat: number;
   playerCharacterId: string | null;
   charactersById: Map<string, LobbyCharacter>;
+  connected: boolean;
+  onSend: (type: "text" | "emoji", content: string) => boolean;
 }
 
 const COOLDOWN_MS = 8_000;
@@ -60,12 +61,11 @@ export function chatPopoverPlacement(
 }
 
 export function ChatBox({
-  observerSeat,
   playerCharacterId,
   charactersById,
+  connected,
+  onSend,
 }: ChatBoxProps) {
-  const send = useChatStore((s) => s.send);
-  const lastSentAt = useChatStore((s) => s.lastSentAt);
   const [text, setText] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -84,6 +84,7 @@ export function ChatBox({
   const popoverRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [cooldownLeft, setCooldownLeft] = useState(0);
+  const cooldownUntilRef = useRef(0);
   const [popoverPosition, setPopoverPosition] = useState<{
     left: number;
     top: number;
@@ -98,34 +99,35 @@ export function ChatBox({
   useEffect(() => {
     if (cooldownLeft <= 0) return;
     const timer = window.setInterval(() => {
-      const elapsed = Date.now() - lastSentAt;
-      const left = Math.max(0, COOLDOWN_MS - elapsed);
+      const left = Math.max(0, cooldownUntilRef.current - Date.now());
       setCooldownLeft(left);
       if (left <= 0) window.clearInterval(timer);
     }, 200);
     return () => window.clearInterval(timer);
-  }, [cooldownLeft, lastSentAt]);
+  }, [cooldownLeft]);
 
   const canSend =
-    text.trim().length > 0 && cooldownLeft <= 0;
+    connected && text.trim().length > 0 && cooldownLeft <= 0;
 
   const doSend = useCallback(() => {
     const trimmed = text.trim();
-    if (trimmed.length === 0 || cooldownLeft > 0) return;
-    send(observerSeat, "text", trimmed);
+    if (!connected || trimmed.length === 0 || cooldownLeft > 0) return;
+    if (!onSend("text", trimmed)) return;
     setText("");
+    cooldownUntilRef.current = Date.now() + COOLDOWN_MS;
     setCooldownLeft(COOLDOWN_MS);
     inputRef.current?.blur();
-  }, [text, cooldownLeft, send, observerSeat]);
+  }, [text, cooldownLeft, connected, onSend]);
 
   const onEmojiPick = useCallback(
     (path: string) => {
-      if (cooldownLeft > 0) return;
-      send(observerSeat, "emoji", path);
+      if (!connected || cooldownLeft > 0) return;
+      if (!onSend("emoji", path)) return;
       setEmojiOpen(false);
+      cooldownUntilRef.current = Date.now() + COOLDOWN_MS;
       setCooldownLeft(COOLDOWN_MS);
     },
-    [cooldownLeft, send, observerSeat],
+    [connected, cooldownLeft, onSend],
   );
 
   const toggleEmoji = useCallback(() => {
@@ -265,7 +267,7 @@ export function ChatBox({
                 type="button"
                 className="match-chat-emoji-item"
                 onClick={() => onEmojiPick(emote.path)}
-                disabled={cooldownLeft > 0}
+                disabled={!connected || cooldownLeft > 0}
               >
                 <img src={emote.path} alt={emote.name} />
               </button>
@@ -293,8 +295,15 @@ export function ChatBox({
               ref={inputRef}
               type="text"
               className="match-chat-input"
-              placeholder={cooldownLeft > 0 ? `${Math.ceil(cooldownLeft / 1000)}s` : "点击输入文字……"}
+              placeholder={
+                !connected
+                  ? "连接中……"
+                  : cooldownLeft > 0
+                    ? `${Math.ceil(cooldownLeft / 1000)}s`
+                    : "点击输入文字……"
+              }
               value={text}
+              maxLength={200}
               onChange={(e) => setText(e.target.value)}
               onFocus={() => {
                 setFocused(true);
@@ -304,7 +313,7 @@ export function ChatBox({
               onKeyDown={(e) => {
                 if (e.key === "Enter") doSend();
               }}
-              disabled={cooldownLeft > 0}
+              disabled={!connected || cooldownLeft > 0}
             />
 
             {focused ? (
@@ -323,7 +332,7 @@ export function ChatBox({
                 className="match-chat-emoji-toggle"
                 onClick={toggleEmoji}
                 aria-label="表情"
-                disabled={cooldownLeft > 0 || emotes.length === 0}
+                disabled={!connected || cooldownLeft > 0 || emotes.length === 0}
               >
                 <Smile aria-hidden="true" />
               </button>

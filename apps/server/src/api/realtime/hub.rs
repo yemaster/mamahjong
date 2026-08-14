@@ -4,14 +4,23 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use mahjong_core::UserId;
 use tokio::sync::{Notify, broadcast};
 
+use super::message::ChatMessageType;
+
 /// Notices are wake-up signals; connections pull their own redacted events.
 /// A shallow buffer is enough because falling behind only costs one extra pull.
 const NOTICE_CAPACITY: usize = 16;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct StreamNotice {
-    pub(crate) version: u64,
-    pub(crate) latest_sequence: u64,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum StreamNotice {
+    Changed {
+        version: u64,
+        latest_sequence: u64,
+    },
+    Chat {
+        seat: u8,
+        message_type: ChatMessageType,
+        content: String,
+    },
 }
 
 type Streams = HashMap<String, broadcast::Sender<StreamNotice>>;
@@ -66,7 +75,7 @@ impl RealtimeHub {
     pub(crate) fn wake(&self, stream: &str) {
         self.publish(
             stream,
-            StreamNotice {
+            StreamNotice::Changed {
                 version: 0,
                 latest_sequence: 0,
             },
@@ -189,7 +198,7 @@ mod tests {
 
     use super::{RealtimeHub, StreamNotice};
 
-    const NOTICE: StreamNotice = StreamNotice {
+    const NOTICE: StreamNotice = StreamNotice::Changed {
         version: 2,
         latest_sequence: 7,
     };
@@ -201,7 +210,7 @@ mod tests {
         let mut second = hub.subscribe("match_a");
         let mut other = hub.subscribe("match_b");
 
-        hub.publish("match_a", NOTICE);
+        hub.publish("match_a", NOTICE.clone());
 
         assert_eq!(first.recv().await.expect("notice"), NOTICE);
         assert_eq!(second.recv().await.expect("notice"), NOTICE);
@@ -211,7 +220,7 @@ mod tests {
     #[tokio::test]
     async fn publishing_without_subscribers_is_a_no_op() {
         let hub = RealtimeHub::new();
-        hub.publish("match_a", NOTICE);
+        hub.publish("match_a", NOTICE.clone());
 
         let mut receiver = hub.subscribe("match_a");
         assert!(receiver.try_recv().is_err());
@@ -252,7 +261,7 @@ mod tests {
         for sequence in 1..=64 {
             hub.publish(
                 "match_a",
-                StreamNotice {
+                StreamNotice::Changed {
                     version: sequence,
                     latest_sequence: sequence,
                 },
@@ -265,7 +274,12 @@ mod tests {
         ));
         let mut latest = 0;
         while let Ok(notice) = receiver.try_recv() {
-            latest = notice.latest_sequence;
+            if let StreamNotice::Changed {
+                latest_sequence, ..
+            } = notice
+            {
+                latest = latest_sequence;
+            }
         }
         assert_eq!(latest, 64, "the newest notice survives lagging");
     }

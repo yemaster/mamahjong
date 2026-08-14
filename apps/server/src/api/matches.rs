@@ -285,7 +285,7 @@ pub(crate) async fn announce_advance(
     }
     state.realtime().publish(
         &super::realtime::match_stream(match_id),
-        super::realtime::StreamNotice {
+        super::realtime::StreamNotice::Changed {
             version,
             latest_sequence,
         },

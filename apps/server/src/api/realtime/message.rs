@@ -16,6 +16,7 @@ pub(crate) const MAX_SUBSCRIPTIONS: usize = 4;
 pub(super) enum ClientMessage {
     Hello(Hello),
     Command(ClientCommand),
+    Chat(ClientChat),
     Resync(Resync),
     Ping,
 }
@@ -35,6 +36,9 @@ impl ClientMessage {
             "command" => serde_json::from_str(text)
                 .map(Self::Command)
                 .map_err(|_| MessageError::malformed(frame.command_id)),
+            "chat" => serde_json::from_str(text)
+                .map(Self::Chat)
+                .map_err(|_| MessageError::malformed(None)),
             "resync" => serde_json::from_str(text)
                 .map(Self::Resync)
                 .map_err(|_| MessageError::malformed(None)),
@@ -99,6 +103,21 @@ pub(super) struct ClientCommand {
     pub(super) command: CommandPayload,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct ClientChat {
+    pub(super) stream: String,
+    #[serde(rename = "type")]
+    pub(super) message_type: ChatMessageType,
+    pub(super) content: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ChatMessageType {
+    Text,
+    Emoji,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum ServerMessage<'a> {
@@ -160,6 +179,14 @@ pub(super) enum ServerMessage<'a> {
         schema: &'static str,
         stream: &'a str,
         seats: &'a [SeatPresence],
+    },
+    Chat {
+        schema: &'static str,
+        stream: &'a str,
+        seat: u8,
+        #[serde(rename = "type")]
+        message_type: ChatMessageType,
+        content: &'a str,
     },
     Pong {
         server_time: &'a str,
@@ -260,6 +287,21 @@ impl<'a> ServerMessage<'a> {
         }
     }
 
+    pub(super) fn chat(
+        stream: &'a str,
+        seat: u8,
+        message_type: ChatMessageType,
+        content: &'a str,
+    ) -> Self {
+        Self::Chat {
+            schema: "chat.v1",
+            stream,
+            seat,
+            message_type,
+            content,
+        }
+    }
+
     pub(super) fn applied(command_id: &'a str, version: u64, event_seq: Vec<u64>) -> Self {
         Self::CommandResult {
             schema: "command_result.v1",
@@ -290,7 +332,7 @@ impl<'a> ServerMessage<'a> {
 mod tests {
     use serde_json::json;
 
-    use super::{ClientMessage, MessageError, ServerMessage, StreamState};
+    use super::{ChatMessageType, ClientMessage, MessageError, ServerMessage, StreamState};
 
     #[test]
     fn hello_defaults_to_a_full_replay() {
@@ -367,6 +409,20 @@ mod tests {
     }
 
     #[test]
+    fn chat_messages_have_a_strict_type_and_stream() {
+        let ClientMessage::Chat(chat) = ClientMessage::parse(
+            r#"{"kind":"chat","stream":"match_a","type":"text","content":"碰"}"#,
+        )
+        .expect("chat") else {
+            panic!("expected chat");
+        };
+
+        assert_eq!(chat.stream, "match_a");
+        assert_eq!(chat.message_type, ChatMessageType::Text);
+        assert_eq!(chat.content, "碰");
+    }
+
+    #[test]
     fn unknown_kinds_and_broken_frames_are_distinguished() {
         assert_eq!(
             ClientMessage::parse(r#"{"kind":"subscribe"}"#).expect_err("unknown"),
@@ -418,5 +474,17 @@ mod tests {
         assert_eq!(failure["kind"], "error");
         assert_eq!(failure["schema"], "error.v1");
         assert!(failure.get("command_id").is_none());
+
+        let chat = serde_json::to_value(ServerMessage::chat(
+            "match_a",
+            2,
+            ChatMessageType::Emoji,
+            "/game/assets/emote.png",
+        ))
+        .expect("chat");
+        assert_eq!(chat["kind"], "chat");
+        assert_eq!(chat["schema"], "chat.v1");
+        assert_eq!(chat["seat"], 2);
+        assert_eq!(chat["type"], "emoji");
     }
 }

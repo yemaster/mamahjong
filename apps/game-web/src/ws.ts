@@ -14,6 +14,12 @@ export type StreamEvent =
   | { kind: "events_arrived" }
   | { kind: "clock"; seats: WsSeatCountdown[]; version: number }
   | { kind: "presence"; seats: WsSeatPresence[] }
+  | {
+      kind: "chat";
+      seat: number;
+      messageType: "text" | "emoji";
+      content: string;
+    }
   | { kind: "disconnected" }
   | { kind: "reconnected"; afterSeq: number }
   /** 整份观察者视图；订阅建立、重连和重同步时各来一份。 */
@@ -98,6 +104,21 @@ export class MatchStream {
       envelope.payload = payload;
     }
     this.ws.send(JSON.stringify(envelope));
+  }
+
+  sendChat(type: "text" | "emoji", content: string): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    this.ws.send(
+      JSON.stringify({
+        kind: "chat",
+        stream: this.stream,
+        type,
+        content,
+      }),
+    );
+    return true;
   }
 
   /**
@@ -223,6 +244,26 @@ export class MatchStream {
                 this.callbacks.onEvent({
                   kind: "presence",
                   seats: presence.seats,
+                });
+              }
+              break;
+            }
+            case "chat": {
+              const chat = frame as {
+                seat?: number;
+                type?: "text" | "emoji";
+                content?: string;
+              };
+              if (
+                typeof chat.seat === "number" &&
+                (chat.type === "text" || chat.type === "emoji") &&
+                typeof chat.content === "string"
+              ) {
+                this.callbacks.onEvent({
+                  kind: "chat",
+                  seat: chat.seat,
+                  messageType: chat.type,
+                  content: chat.content,
                 });
               }
               break;

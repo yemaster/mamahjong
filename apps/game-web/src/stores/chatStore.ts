@@ -10,22 +10,20 @@ export interface ChatMessage {
 
 interface ChatState {
   messages: ChatMessage[];
-  lastSentAt: number;
-  send: (seat: number, type: "text" | "emoji", content: string) => void;
+  receive: (seat: number, type: "text" | "emoji", content: string) => void;
   expire: (id: string) => void;
+  clear: () => void;
 }
 
 let nextId = 0;
 
 export const useChatStore = create<ChatState>((set) => ({
   messages: [],
-  lastSentAt: 0,
-  send: (seat, type, content) => {
+  receive: (seat, type, content) => {
     const now = Date.now();
     const id = `chat-${++nextId}`;
     set((s) => ({
       messages: [...s.messages, { id, seat, type, content, at: now }],
-      lastSentAt: now,
     }));
     /* 5s 后自动消失 */
     window.setTimeout(() => {
@@ -37,4 +35,5 @@ export const useChatStore = create<ChatState>((set) => ({
       messages: s.messages.filter((m) => m.id !== id),
     }));
   },
+  clear: () => set({ messages: [] }),
 }));

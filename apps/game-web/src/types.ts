@@ -758,6 +758,15 @@ export interface WsPresence {
   seats: WsSeatPresence[];
 }
 
+export interface WsChat {
+  kind: "chat";
+  schema: "chat.v1";
+  stream: string;
+  seat: number;
+  type: "text" | "emoji";
+  content: string;
+}
+
 export interface WsSeatPresence {
   seat: number;
   online: boolean;
@@ -786,6 +795,7 @@ export type WsServerMessage =
   | WsEvent
   | WsClock
   | WsPresence
+  | WsChat
   | WsCommandResult
   | WsError
   | { kind: "pong"; server_time: string; latest_seq: number };
