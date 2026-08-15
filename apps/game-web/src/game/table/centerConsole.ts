@@ -41,7 +41,21 @@ function centerConsoleTexture(
   const canvas = document.createElement("canvas");
   canvas.width = CONSOLE_TEXTURE_SIZE;
   canvas.height = CONSOLE_TEXTURE_SIZE;
+  paintCenterConsole(canvas, view, showDifferences);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+/** 在既有 canvas 上重画内容；纹理和面板材质都不换。 */
+function paintCenterConsole(
+  canvas: HTMLCanvasElement,
+  view: MatchView,
+  showDifferences: boolean,
+): void {
   const context = canvas.getContext("2d")!;
+  context.resetTransform();
+  context.clearRect(0, 0, canvas.width, canvas.height);
   context.scale(
     CONSOLE_TEXTURE_SIZE / CONSOLE_DESIGN_SIZE,
     CONSOLE_TEXTURE_SIZE / CONSOLE_DESIGN_SIZE,
@@ -134,9 +148,6 @@ function centerConsoleTexture(
     );
   });
 
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
 }
 
 function drawCenterRiichiStick(
@@ -188,12 +199,15 @@ export function updateCenterConsoleTexture(runtime: TableRuntime): void {
     .material as THREE.MeshStandardMaterial[];
   const top = materials[2];
   if (!top) return;
-  top.map?.dispose();
-  top.map = centerConsoleTexture(
+  const texture = top.map;
+  if (!(texture instanceof THREE.CanvasTexture)) return;
+  paintCenterConsole(
+    texture.image as HTMLCanvasElement,
     runtime.latestView,
     runtime.scoreDifferenceVisible,
   );
-  top.needsUpdate = true;
+  /* 只上传新的像素；不要设 material.needsUpdate，那会让 Three 重新编译材质程序。 */
+  texture.needsUpdate = true;
 }
 
 function octagon(

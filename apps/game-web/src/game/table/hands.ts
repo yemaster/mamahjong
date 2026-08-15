@@ -1,4 +1,4 @@
-import type * as THREE from "three";
+import * as THREE from "three";
 import type { MatchPlayerView, MatchView } from "../../types";
 import type { OpeningPhase } from "../OpeningSequence";
 import { isDoraTile } from "../tileAssets";
@@ -264,51 +264,12 @@ export function addHand(
       handPivot.rotation.x = standingTilt;
     }
 
-    /*
-     * 空位停满一秒后归拢。每张牌从手切状态下自己的旧槽位滑到紧凑槽位；桌面即使
-     * 在途中即使该手牌层因其他视觉变化被替换，startedAt 也不变，因此不会跳回
-     * 起点或多播一次。
-     */
-    const collapse = !isSelf
-      ? runtime.handCollapses.get(player.seat)
-      : undefined;
-    if (
-      collapse &&
-      tiles === hiddenTiles &&
-      !gap &&
-      now - collapse.startedAt < HAND_COLLAPSE_MS
-    ) {
-      const sourceLayout = opponentHandLayout(
-        hiddenTiles.length,
-        false,
-        collapse.gapPosition,
-      );
-      const sourceSlot = sourceLayout.renderedSlots[index];
-      if (sourceSlot != null) {
-        const source = handPosition(
-          relative,
-          sourceLayout.slotCount,
-          sourceSlot,
-          false,
-          sourceSlot === sourceLayout.drawnSlot ? 0.2 : 0,
-          false,
-          runtime.tileWidthRatio,
-          runtime.tileScale,
-        );
-        const destination = group.position.clone();
-        group.position.copy(source);
-        runtime.animations.push({
-          group,
-          start: source,
-          end: destination,
-          startedAt: collapse.startedAt,
-          duration: HAND_COLLAPSE_MS,
-        });
-      }
-    } else if (collapse && now - collapse.startedAt >= HAND_COLLAPSE_MS) {
-      runtime.handCollapses.delete(player.seat);
-    }
     group.userData.baseY = group.position.y;
+    if (!isSelf && tiles === hiddenTiles) {
+      /* 供手切空隙结束后原地归拢；索引对应紧凑牌阵，不受临时空槽影响。 */
+      group.userData.opponentHandPool = true;
+      group.userData.opponentHandTileIndex = -1 - tile.id;
+    }
 
     const canDiscard =
       isSelf &&
@@ -414,6 +375,163 @@ export function addHand(
       );
     }
   });
+}
+
+/**
+ * 实时牌局中的对手暗手全是同一种牌背，不需要每次摸打都销毁整排再造。
+ *
+ * 这里把现有节点当作一个小对象池：摸牌只唤醒（首次才创建）一张，打牌/副露只把
+ * 多出来的节点藏回池里，其余牌只改位置。结算、明牌和牌谱摊牌仍交给 `addHand`，
+ * 因为那些状态确实会改变每一张牌的正反面和下落动画。
+ */
+export function syncHiddenOpponentHand(
+  runtime: TableRuntime,
+  view: MatchView,
+  player: MatchPlayerView,
+  previousPlayer: MatchPlayerView | undefined,
+  openingPhase: OpeningPhase,
+  wall: WallLayout,
+  consumedTileCount: number,
+  rinshanDrawNumber: number | null,
+): boolean {
+  const relative = tableRelativeSeat(
+    player.seat,
+    view.observer_seat,
+    view.players.length,
+  );
+  const layer = runtime.layers.get(`hand:${player.seat}`);
+  if (
+    relative === 0 ||
+    !layer ||
+    !previousPlayer ||
+    openingPhase !== "play" ||
+    view.hand_settlement != null ||
+    runtime.revealAllHands
+  ) {
+    return false;
+  }
+
+  const pooled = layer.group.children.filter(
+    (object): object is THREE.Group =>
+      object instanceof THREE.Group && object.userData.opponentHandPool === true,
+  );
+  if (pooled.length === 0) return false;
+  /* 显示设置改变时应正常重建这一层，不能拿旧尺寸的牌硬挪。 */
+  const sample = pooled[0]!;
+  const sampleLength = sample.userData.tileLength as number | undefined;
+  const sampleWidth = sample.userData.tileWidth as number | undefined;
+  if (
+    sampleLength == null ||
+    sampleWidth == null ||
+    Math.abs(sample.scale.x - runtime.tileScale) > 1e-6 ||
+    Math.abs(sampleWidth / sampleLength - runtime.tileWidthRatio) > 1e-6
+  ) {
+    return false;
+  }
+
+  const desiredCount = Math.max(0, player.concealed_tile_count);
+  let active = pooled
+    .filter((group) => group.visible)
+    .sort(
+      (left, right) =>
+        (left.userData.opponentHandTileIndex as number) -
+        (right.userData.opponentHandTileIndex as number),
+    );
+  const gap = runtime.handCutGaps.get(player.seat)?.gapPosition;
+
+  while (active.length > desiredCount) {
+    const removeAt =
+      gap != null && active.length === previousPlayer.concealed_tile_count
+        ? Math.min(active.length - 1, Math.max(0, gap))
+        : active.length - 1;
+    const [removed] = active.splice(removeAt, 1);
+    if (!removed) break;
+    removed.visible = false;
+    delete removed.userData.opponentHandTileIndex;
+    runtime.animations = runtime.animations.filter(
+      (animation) => animation.group !== removed,
+    );
+    runtime.tilts = runtime.tilts.filter((tilt) => tilt.group !== removed);
+  }
+
+  const created: THREE.Group[] = [];
+  while (active.length < desiredCount) {
+    let group = pooled.find(
+      (candidate) => !candidate.visible && !active.includes(candidate),
+    );
+    if (!group) {
+      group = makeTile(runtime, "back", OPPONENT_TILE_LENGTH);
+      group.userData.opponentHandPool = true;
+      layer.group.add(group);
+      pooled.push(group);
+    }
+    group.visible = true;
+    active.push(group);
+    created.push(group);
+  }
+
+  const holdingDrawn = playerIsHoldingDrawnTile(view, player.seat);
+  const layout = opponentHandLayout(desiredCount, holdingDrawn, gap);
+  const now = performance.now();
+  for (const [index, group] of active.entries()) {
+    const slot = layout.renderedSlots[index] ?? index;
+    const isDrawn = layout.drawnSlot === slot;
+    const destination = handPosition(
+      relative,
+      layout.slotCount,
+      slot,
+      false,
+      isDrawn ? 0.2 : 0,
+      false,
+      runtime.tileWidthRatio,
+      runtime.tileScale,
+    );
+    group.userData.opponentHandTileIndex = index;
+    group.userData.baseY = destination.y;
+
+    if (!created.includes(group)) {
+      group.position.copy(destination);
+      group.quaternion.copy(handQuaternion(relative, false));
+      continue;
+    }
+
+    const wallSlot =
+      rinshanDrawNumber != null
+        ? wall.rinshanSlot(rinshanDrawNumber)
+        : wall.drawSlot(Math.max(0, consumedTileCount - 1));
+    const start = wall.origin(
+      wallSlot,
+      runtime.tileWidthRatio,
+      runtime.tileScale,
+    );
+    const startRotation = wall.quaternion(wallSlot);
+    const endRotation = handQuaternion(relative, false);
+    const handPivot = group.userData.tilePivot as THREE.Group;
+    const handBody = tileBody(group);
+    const standingTilt = standingHandTilt(true);
+    handBody.rotation.x = 0;
+    group.position.copy(start);
+    group.quaternion.copy(startRotation);
+    runtime.animations.push({
+      group,
+      start,
+      end: destination,
+      startRotation,
+      endRotation,
+      startedAt: now,
+      duration: DRAW_MOVE_MS,
+    });
+    standUpOnArrival(
+      runtime,
+      group,
+      handPivot,
+      destination,
+      true,
+      standingTilt,
+      now + DRAW_MOVE_MS,
+    );
+  }
+  return true;
 }
 
 /** 摸牌单飞一张的时长。 */

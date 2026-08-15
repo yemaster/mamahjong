@@ -50,6 +50,12 @@ export function rebuildTableTileHighlights(runtime: TableRuntime): void {
         }
       | undefined;
     if (!entry) return;
+    /* 被新层顶替、等下一帧再释放的旧层已经不可见，不能重新放进索引。 */
+    let ancestor: THREE.Object3D | null = object;
+    while (ancestor) {
+      if (!ancestor.visible) return;
+      ancestor = ancestor.parent;
+    }
     const existing = runtime.highlightMaterials.get(entry.key);
     const value = { material: entry.material, base: entry.base };
     if (existing) existing.push(value);

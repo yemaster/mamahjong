@@ -55,6 +55,9 @@ export function createDoraShineMaterial(): THREE.ShaderMaterial {
     fragmentShader: FRAGMENT_SHADER,
     transparent: true,
     depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3,
     toneMapped: false,
   });
   material.userData.shared = true;

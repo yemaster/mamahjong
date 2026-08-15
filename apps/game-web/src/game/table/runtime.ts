@@ -43,25 +43,27 @@ export async function createRuntime(
 ): Promise<TableRuntime> {
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
-    alpha: true,
+    /* 牌桌本来就铺满黑色对局背景；不透明画布可避免 React DOM 覆盖层变化时，
+       浏览器重新混合整张 WebGL 纹理而出现一次黑/白闪。 */
+    alpha: false,
     powerPreference: "high-performance",
   });
-  renderer.setClearColor(0x000000, 0);
+  renderer.setClearColor(0x000000, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = false;
   renderer.domElement.className = "match-table-canvas__surface";
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = null;
-  const perspectiveCamera = new THREE.PerspectiveCamera(25, 1, 0.1, 600);
+  scene.background = new THREE.Color(0x000000);
+  const perspectiveCamera = new THREE.PerspectiveCamera(25, 1, 1, 100);
   const orthographicCamera = new THREE.OrthographicCamera(
     -8,
     8,
     8,
     -8,
-    0.1,
-    600,
+    1,
+    100,
   );
   const root = new THREE.Group();
   scene.add(root);
@@ -93,6 +95,7 @@ export async function createRuntime(
     requestedTableclothPath: tableclothPath,
     impactDustTexture: createImpactDustTexture(),
     tileGeometries: new Map(),
+    tileMaterials: new Map(),
     tileGeometryWidthRatio: tileWidthRatio,
     selectable: [],
     hovered: null,
@@ -139,15 +142,28 @@ export async function createRuntime(
     contextLost: false,
     rebuild: () => {},
     handCutGaps: new Map(),
-    handCollapses: new Map(),
   };
 
+  let renderedWidth = 0;
+  let renderedHeight = 0;
+  let renderedPixelRatio = 0;
   const resize = () => {
     const width = Math.max(1, container.clientWidth);
     const height = Math.max(1, container.clientHeight);
     const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-    renderer.setPixelRatio(pixelRatio);
-    renderer.setSize(width, height, false);
+    /* ResizeObserver 和 React 布局提交可能重复通知相同尺寸。setPixelRatio/setSize 会
+       重配 drawing buffer，哪怕尺寸没变也可能让移动端短暂露出清屏色。 */
+    if (
+      width !== renderedWidth ||
+      height !== renderedHeight ||
+      pixelRatio !== renderedPixelRatio
+    ) {
+      renderedWidth = width;
+      renderedHeight = height;
+      renderedPixelRatio = pixelRatio;
+      renderer.setPixelRatio(pixelRatio);
+      renderer.setSize(width, height, false);
+    }
     const aspect = width / height;
     const cameraLayout =
       runtime.cameraOverride ?? tableCameraLayout(aspect);
@@ -171,6 +187,20 @@ export async function createRuntime(
     runtime.cameraBase.set(0, cameraLayout.y, cameraLayout.z);
     activeCamera.position.copy(runtime.cameraBase);
     activeCamera.lookAt(0, cameraLayout.targetY, cameraLayout.targetZ);
+    /*
+     * 牌面图案和白色牌坯只隔着几毫米。固定 0.1～600 的裁剪范围会浪费绝大多数
+     * 深度精度，动画一动，二者就可能在同一个 z-buffer 桶里来回争抢而闪烁。
+     * 按当前镜头到桌心的距离收紧范围；即使把镜头高度拉到设置允许的 100，也始终
+     * 给整张桌子前后各留 24 个世界单位的余量。
+     */
+    const target = new THREE.Vector3(
+      0,
+      cameraLayout.targetY,
+      cameraLayout.targetZ,
+    );
+    const cameraDistance = runtime.cameraBase.distanceTo(target);
+    activeCamera.near = Math.max(0.5, cameraDistance - 24);
+    activeCamera.far = cameraDistance + 24;
     activeCamera.updateProjectionMatrix();
     runtime.camera = activeCamera;
   };
@@ -378,6 +408,8 @@ export async function createRuntime(
       if (layer) layer.group.visible = false;
     }
     renderer.render(scene, runtime.camera);
+    /* 新层已完成第一帧，旧层现在才能释放；提前 dispose 会触发 shader 反复重建。 */
+    flushPendingLayerDisposals(runtime);
     runtime.frame = requestAnimationFrame(animate);
   };
   /*
@@ -528,6 +560,50 @@ export function disposeGroup(group: THREE.Group): void {
   for (const texture of textures) texture.dispose();
 }
 
+/** 新场景层成功渲染一帧之后，清理被替换层遗留的所有运行时引用和 GPU 资源。 */
+function flushPendingLayerDisposals(runtime: TableRuntime): void {
+  if (runtime.pendingLayerDisposals.length === 0) return;
+  const belongs = (group: THREE.Group, object: THREE.Object3D): boolean => {
+    let current: THREE.Object3D | null = object;
+    while (current) {
+      if (current === group) return true;
+      current = current.parent;
+    }
+    return false;
+  };
+
+  for (const group of runtime.pendingLayerDisposals) {
+    runtime.selectable = runtime.selectable.filter(
+      (mesh) => !belongs(group, mesh),
+    );
+    if (runtime.hovered && belongs(group, runtime.hovered)) {
+      runtime.hovered = null;
+    }
+    runtime.animations = runtime.animations.filter(
+      (animation) => !belongs(group, animation.group),
+    );
+    runtime.tilts = runtime.tilts.filter(
+      (tilt) => !belongs(group, tilt.group),
+    );
+    runtime.spinners = runtime.spinners.filter(
+      (spinner) => !belongs(group, spinner),
+    );
+    runtime.transients = runtime.transients.filter(
+      (transient) => !belongs(group, transient.group),
+    );
+    runtime.impacts = runtime.impacts.filter(
+      (impact) => !belongs(group, impact.mesh),
+    );
+    runtime.diceRolls = runtime.diceRolls.filter(
+      (roll) => !belongs(group, roll.object),
+    );
+    runtime.root.remove(group);
+    disposeGroup(group);
+    group.clear();
+  }
+  runtime.pendingLayerDisposals = [];
+}
+
 export function destroyRuntime(runtime: TableRuntime): void {
   runtime.disposed = true;
   cancelAnimationFrame(runtime.frame);
@@ -541,6 +617,7 @@ export function destroyRuntime(runtime: TableRuntime): void {
   }
   disposeGroup(runtime.root);
   disposeTileGeometries(runtime);
+  disposeTileMaterials(runtime);
   runtime.doraShine.dispose();
   for (const texture of runtime.textures.values()) texture.dispose();
   runtime.tableTexture.dispose();
@@ -564,4 +641,10 @@ export function disposeTileGeometries(runtime: TableRuntime): void {
     geometrySet.artwork?.dispose();
   }
   runtime.tileGeometries.clear();
+}
+
+/** 共用牌材质只跟 runtime 一起释放，局部图层更新绝不能动它们。 */
+export function disposeTileMaterials(runtime: TableRuntime): void {
+  for (const material of runtime.tileMaterials.values()) material.dispose();
+  runtime.tileMaterials.clear();
 }

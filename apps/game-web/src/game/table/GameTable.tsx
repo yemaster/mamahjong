@@ -70,6 +70,7 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<TableRuntime | null>(null);
+  const renderFrameRef = useRef<number | null>(null);
   const discardRef = useRef(onTileDiscard);
   const rendererErrorRef = useRef(onRendererError);
   const cameraConfigRef = useRef(cameraConfig);
@@ -174,6 +175,10 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
 
     return () => {
       cancelled = true;
+      if (renderFrameRef.current != null) {
+        window.cancelAnimationFrame(renderFrameRef.current);
+        renderFrameRef.current = null;
+      }
       if (runtimeRef.current) {
         destroyRuntime(runtimeRef.current);
         runtimeRef.current = null;
@@ -219,14 +224,32 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
     runtime.revealAllHands = revealAllHands;
     runtime.dimTsumogiri = dimTsumogiri;
     runtime.instantDraw = instantDraw;
-    renderTable(
-      runtime,
-      view,
-      openingPhase,
-      dice,
-      settlementRevealSeats,
-      settlementWinningTileSeats,
-    );
+    /*
+     * React / WebSocket 可能在一个屏幕帧内连续提交多份状态（出牌、无人响应、下家
+     * 摸牌）。只记录最新请求，并在下一次 rAF 同步一次 Three.js；React 重渲染本身
+     * 不再直接触发场景提交。
+     */
+    if (renderFrameRef.current == null) {
+      renderFrameRef.current = window.requestAnimationFrame(() => {
+        renderFrameRef.current = null;
+        const currentRuntime = runtimeRef.current;
+        if (!currentRuntime || currentRuntime.disposed) return;
+        const current = latestRenderRef.current;
+        currentRuntime.tileScale = tileScaleRef.current;
+        currentRuntime.tileWidthRatio = tileWidthRatioRef.current;
+        currentRuntime.revealAllHands = revealAllHandsRef.current;
+        currentRuntime.dimTsumogiri = dimTsumogiriRef.current;
+        currentRuntime.instantDraw = instantDrawRef.current;
+        renderTable(
+          currentRuntime,
+          current.view,
+          current.openingPhase,
+          current.dice,
+          current.settlementRevealSeats,
+          current.settlementWinningTileSeats,
+        );
+      });
+    }
   }, [
     dice[0],
     dice[1],

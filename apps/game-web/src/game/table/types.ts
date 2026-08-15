@@ -126,7 +126,7 @@ export interface TableRuntime {
   renderTarget: THREE.Group;
   /** 按视觉区域缓存的场景子树，视图更新时只替换签名发生变化的区域。 */
   layers: Map<string, { signature: string; group: THREE.Group }>;
-  /** 一次视图同步中被新层顶替的旧层，在该次同步末尾统一释放。 */
+  /** 被新层顶替的旧层；保持隐藏，等新层真正渲染一帧后再统一释放。 */
   pendingLayerDisposals: THREE.Group[];
   textures: Map<string, THREE.Texture>;
   tableTexture: THREE.Texture;
@@ -135,6 +135,8 @@ export interface TableRuntime {
   /** 砸牌扬尘共用的 Canvas 纹理，避免为短动画编译自定义 shader。 */
   impactDustTexture: THREE.Texture;
   tileGeometries: Map<string, TileGeometrySet>;
+  /** 牌身、牌背和牌面图案材质按样式复用，局部图层替换时不重新编译。 */
+  tileMaterials: Map<string, THREE.Material>;
   tileGeometryWidthRatio: number;
   selectable: THREE.Mesh[];
   hovered: THREE.Group | null;
@@ -231,14 +233,9 @@ export interface TableRuntime {
    * 手切空隙：key = seat，value = 被切掉那张牌在「切牌前」手牌里的位置.
    *
    * 手切那家立姿牌阵里应该缺那一格，让围观的人肉眼分得出手切摸切。
-   * 固定保留一秒后转入 handCollapses 归拢动画。
+   * 固定保留一秒后直接移动当前牌节点完成归拢，不重建手牌层。
    */
   handCutGaps: Map<number, HandCutGap>;
-  /**
-   * 手切空位停留一秒后，现有牌从哪些旧槽位向紧凑牌阵归拢。
-   * `startedAt` 保留原始时间，桌面在动画中途重建也可以无缝接着播放。
-   */
-  handCollapses: Map<number, HandCollapse>;
 }
 
 /** 手切牌在别家手上留下的空隙。 */
@@ -247,9 +244,4 @@ export interface HandCutGap {
   gapPosition: number;
   /** 被切掉的那张牌的 id，用来阻止旧定时器误清理新状态。 */
   tileId: number;
-}
-
-export interface HandCollapse {
-  gapPosition: number;
-  startedAt: number;
 }

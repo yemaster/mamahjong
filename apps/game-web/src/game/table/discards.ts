@@ -34,131 +34,201 @@ export function addDiscards(
   previousPlayer: MatchPlayerView | undefined,
   openingPhase: OpeningPhase,
 ): void {
+  riverDiscardEntries(player.discards).forEach((entry, index) => {
+    addDiscardTile(
+      runtime,
+      view,
+      player,
+      previousPlayer,
+      openingPhase,
+      entry.discard,
+      entry.originalIndex,
+      entry.sideways,
+      index,
+    );
+  });
+  for (const [index, tile] of (player.nuki_tiles ?? []).entries()) {
+    addNukiTile(runtime, view, player, tile, index);
+  }
+}
+
+/** 牌河里的单张牌；正常出牌只新增这一层，不再重建前面已经落地的牌。 */
+export function addDiscardTile(
+  runtime: TableRuntime,
+  view: MatchView,
+  player: MatchPlayerView,
+  previousPlayer: MatchPlayerView | undefined,
+  openingPhase: OpeningPhase,
+  discard: MatchPlayerView["discards"][number],
+  originalIndex: number,
+  sideways: boolean,
+  index: number,
+): void {
   const now = performance.now();
   const relative = tableRelativeSeat(
     player.seat,
     view.observer_seat,
     view.players.length,
   );
-  riverDiscardEntries(player.discards).forEach(
-    ({ discard, originalIndex, sideways }, index) => {
-      const isNewDiscard =
-        openingPhase === "play" &&
-        previousPlayer &&
-        originalIndex >= previousPlayer.discards.length;
-      const flightKey = `${player.seat}:${discard.tile.id}`;
-      const riverPosition = discardGridPosition(
-        index,
-        runtime.tileWidthRatio,
-        runtime.tileScale,
-        3,
-      );
-      const group = makeTile(
-        runtime,
-        discard.tile.code,
-        RIVER_TILE_LENGTH,
-      );
-      const local = new THREE.Vector3(
-        riverPosition.x,
-        (RIVER_TILE_DEPTH * runtime.tileScale) / 2 + 0.09,
-        riverPosition.z,
-      );
-      rotateAroundTable(local, relative);
-      group.position.copy(local);
-      group.rotation.y =
-        relative * (Math.PI / 2) +
-        (sideways ? Math.PI / 2 : 0) +
-        discardNaturalRotation(player.seat, originalIndex);
-      if (
-        isDoraTile(discard.tile.code, view.dora_indicators ?? []) ||
-        isJokerTile(discard.tile.code, view.joker_code)
-      ) {
-        markTileAsDora(runtime, group);
-      }
-      /*
-       * 摸切压暗。压在 `registerTableTile` 之前：点亮同种牌那套记的是这一刻的颜色，
-       * 先压暗，后面染蓝染红都是在暗底上乘一层，暗的还是暗的。
-       */
-      if (runtime.dimTsumogiri && discard.tsumogiri) {
-        dimTile(group, TSUMOGIRI_DIM);
-      }
-      registerTableTile(runtime, group, discard.tile.code);
-      rootTile(runtime, group);
-
-      if (
-        runtime.lastDiscard?.seat === player.seat &&
-        runtime.lastDiscard.index === originalIndex
-      ) {
-        addLastDiscardMarker(
-          runtime,
-          group,
-          isNewDiscard || runtime.discardFlights.has(flightKey)
-            ? (runtime.discardFlights.get(flightKey)?.startedAt ?? now) +
-                DISCARD_FLIGHT_MS
-            : now,
-        );
-      }
-
-      /* 四家都保留从手边飞入牌河的动画；只有空位与归拢逻辑限定为另外三家。 */
-      if (isNewDiscard) {
-        const source = discardSource(
-          runtime,
-          view,
-          previousPlayer,
-          discard.tile.id,
-          discard.tsumogiri,
-          runtime.tileWidthRatio,
-          runtime.tileScale,
-        );
-        runtime.discardFlights.set(flightKey, {
-          startedAt: now,
-          start: source,
-          startRotation: handQuaternion(relative, relative === 0),
-        });
-      }
-
-      const flight = runtime.discardFlights.get(flightKey);
-      if (flight && now - flight.startedAt < DISCARD_FLIGHT_MS) {
-        const destination = group.position.clone();
-        const endRotation = group.quaternion.clone();
-        group.position.copy(flight.start);
-        group.quaternion.copy(flight.startRotation);
-        runtime.animations.push({
-          group,
-          start: flight.start,
-          end: destination,
-          startRotation: flight.startRotation,
-          endRotation,
-          startedAt: flight.startedAt,
-          duration: DISCARD_FLIGHT_MS,
-        });
-      } else if (flight) {
-        runtime.discardFlights.delete(flightKey);
-      }
-    },
+  const isNewDiscard =
+    openingPhase === "play" &&
+    previousPlayer != null &&
+    originalIndex >= previousPlayer.discards.length;
+  const flightKey = `${player.seat}:${discard.tile.id}`;
+  const riverPosition = discardGridPosition(
+    index,
+    runtime.tileWidthRatio,
+    runtime.tileScale,
+    3,
   );
+  const group = makeTile(runtime, discard.tile.code, RIVER_TILE_LENGTH);
+  const local = new THREE.Vector3(
+    riverPosition.x,
+    (RIVER_TILE_DEPTH * runtime.tileScale) / 2 + 0.09,
+    riverPosition.z,
+  );
+  rotateAroundTable(local, relative);
+  group.position.copy(local);
+  group.rotation.y =
+    relative * (Math.PI / 2) +
+    (sideways ? Math.PI / 2 : 0) +
+    discardNaturalRotation(player.seat, originalIndex);
+  if (
+    isDoraTile(discard.tile.code, view.dora_indicators ?? []) ||
+    isJokerTile(discard.tile.code, view.joker_code)
+  ) {
+    markTileAsDora(runtime, group);
+  }
+  if (runtime.dimTsumogiri && discard.tsumogiri) {
+    dimTile(group, TSUMOGIRI_DIM);
+  }
+  registerTableTile(runtime, group, discard.tile.code);
+  rootTile(runtime, group);
 
-  for (const [index, tile] of (player.nuki_tiles ?? []).entries()) {
-    const position = nukiRiverPosition(
-      index,
+  if (isNewDiscard) {
+    const source = discardSource(
+      runtime,
+      view,
+      previousPlayer,
+      discard.tile.id,
+      discard.tsumogiri,
       runtime.tileWidthRatio,
       runtime.tileScale,
     );
-    const group = makeTile(runtime, tile.code, RIVER_TILE_LENGTH);
-    const local = new THREE.Vector3(
-      position.x,
-      (RIVER_TILE_DEPTH * runtime.tileScale) / 2 + 0.09,
-      position.z,
-    );
-    rotateAroundTable(local, relative);
-    group.position.copy(local);
-    group.rotation.y = relative * (Math.PI / 2);
-    if (isDoraTile(tile.code, view.dora_indicators ?? [])) {
-      markTileAsDora(runtime, group);
-    }
-    registerTableTile(runtime, group, tile.code);
-    rootTile(runtime, group);
+    runtime.discardFlights.set(flightKey, {
+      startedAt: now,
+      start: source,
+      startRotation: handQuaternion(relative, relative === 0),
+    });
   }
+
+  const flight = runtime.discardFlights.get(flightKey);
+  if (flight && now - flight.startedAt < DISCARD_FLIGHT_MS) {
+    const destination = group.position.clone();
+    const endRotation = group.quaternion.clone();
+    group.position.copy(flight.start);
+    group.quaternion.copy(flight.startRotation);
+    runtime.animations.push({
+      group,
+      start: flight.start,
+      end: destination,
+      startRotation: flight.startRotation,
+      endRotation,
+      startedAt: flight.startedAt,
+      duration: DISCARD_FLIGHT_MS,
+    });
+  } else if (flight) {
+    runtime.discardFlights.delete(flightKey);
+  }
+}
+
+/** 三麻拔北也按单张缓存，新增一枚北不碰已经摆好的北。 */
+export function addNukiTile(
+  runtime: TableRuntime,
+  view: MatchView,
+  player: MatchPlayerView,
+  tile: MatchPlayerView["nuki_tiles"][number],
+  index: number,
+): void {
+  const relative = tableRelativeSeat(
+    player.seat,
+    view.observer_seat,
+    view.players.length,
+  );
+  const position = nukiRiverPosition(
+    index,
+    runtime.tileWidthRatio,
+    runtime.tileScale,
+  );
+  const group = makeTile(runtime, tile.code, RIVER_TILE_LENGTH);
+  const local = new THREE.Vector3(
+    position.x,
+    (RIVER_TILE_DEPTH * runtime.tileScale) / 2 + 0.09,
+    position.z,
+  );
+  rotateAroundTable(local, relative);
+  group.position.copy(local);
+  group.rotation.y = relative * (Math.PI / 2);
+  if (isDoraTile(tile.code, view.dora_indicators ?? [])) {
+    markTileAsDora(runtime, group);
+  }
+  registerTableTile(runtime, group, tile.code);
+  rootTile(runtime, group);
+}
+
+/**
+ * 最后一张出牌的箭头是独立小层，不再寄生在整条牌河里。
+ * 轮到下一家出牌时只替换这个箭头，上一家的所有牌面节点保持原样。
+ */
+export function addLastDiscardMarkerLayer(
+  runtime: TableRuntime,
+  view: MatchView,
+  openingPhase: OpeningPhase,
+): void {
+  if (openingPhase !== "play" || !runtime.lastDiscard) return;
+  const { seat, index: originalIndex } = runtime.lastDiscard;
+  const player = view.players.find((candidate) => candidate.seat === seat);
+  if (!player) return;
+  const riverEntries = riverDiscardEntries(player.discards);
+  const riverIndex = riverEntries.findIndex(
+    (entry) => entry.originalIndex === originalIndex,
+  );
+  if (riverIndex < 0) return;
+  const discard = player.discards[originalIndex];
+  if (!discard) return;
+
+  const relative = tableRelativeSeat(
+    seat,
+    view.observer_seat,
+    view.players.length,
+  );
+  const riverPosition = discardGridPosition(
+    riverIndex,
+    runtime.tileWidthRatio,
+    runtime.tileScale,
+    3,
+  );
+  const anchor = new THREE.Group();
+  const local = new THREE.Vector3(
+    riverPosition.x,
+    (RIVER_TILE_DEPTH * runtime.tileScale) / 2 + 0.09,
+    riverPosition.z,
+  );
+  rotateAroundTable(local, relative);
+  anchor.position.copy(local);
+  anchor.scale.setScalar(runtime.tileScale);
+  anchor.rotation.y =
+    relative * (Math.PI / 2) +
+    (riverEntries[riverIndex]?.sideways ? Math.PI / 2 : 0) +
+    discardNaturalRotation(seat, originalIndex);
+
+  const flight = runtime.discardFlights.get(`${seat}:${discard.tile.id}`);
+  addLastDiscardMarker(
+    runtime,
+    anchor,
+    flight ? flight.startedAt + DISCARD_FLIGHT_MS : performance.now(),
+  );
+  runtime.renderTarget.add(anchor);
 }
 
 /** 打出的那张牌原本站在手牌的哪个位置。 */
@@ -256,7 +326,7 @@ export function updateLastDiscard(
 
 function addLastDiscardMarker(
   runtime: TableRuntime,
-  tileGroup: THREE.Group,
+  anchor: THREE.Group,
   appearAt: number,
 ): void {
   const marker = new THREE.Mesh(
@@ -276,6 +346,6 @@ function addLastDiscardMarker(
   marker.castShadow = false;
   marker.userData.baseY = 0.62;
   marker.userData.appearAt = appearAt;
-  tileGroup.add(marker);
+  anchor.add(marker);
   runtime.spinners.push(marker);
 }

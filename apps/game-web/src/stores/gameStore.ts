@@ -33,13 +33,25 @@ export const useGameStore = create<GameState>((set) => ({
   wsState: "disconnected",
 
   setMatchView: (view: MatchView) => {
-    set({
-      matchView: view,
-      version: view.version,
-      clocks: new Map(
-        (view.clocks ?? []).map((clock) => [clock.seat, clock]),
-      ),
-      clockUpdatedAt: Date.now(),
+    set((current) => {
+      /*
+       * HTTP、WebSocket 快照和补丁可能在同一条指令后交错到达。已经显示更高版本时
+       * 绝不能再倒退；同版本快照也没有新的牌局事实，只会让整棵 React 视图白跑。
+       */
+      if (
+        current.matchView?.id === view.id &&
+        view.version <= current.matchView.version
+      ) {
+        return current;
+      }
+      return {
+        matchView: view,
+        version: view.version,
+        clocks: new Map(
+          (view.clocks ?? []).map((clock) => [clock.seat, clock]),
+        ),
+        clockUpdatedAt: Date.now(),
+      };
     });
   },
 

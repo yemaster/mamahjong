@@ -3010,10 +3010,15 @@ a { color: var(--pink-dark); text-decoration: none; }
 
 .match-table-canvas--three {
   touch-action: none;
+  /* WebGL 牌桌固定在独立合成层，React HUD/点击粒子的变化不回流到它。 */
+  contain: strict;
+  isolation: isolate;
 }
 
 .match-table-canvas__surface {
   outline: none;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 /* 右上角那颗退出按钮占着画面顶部，面板从它下面起，不压在按钮上。 */

@@ -1,10 +1,22 @@
 import * as THREE from "three";
 import type { MatchPlayerView, MatchView } from "../../types";
 import type { OpeningPhase } from "../OpeningSequence";
-import { addCenterConsole } from "./centerConsole";
-import { addDiscards, updateLastDiscard } from "./discards";
+import {
+  addCenterConsole,
+  updateCenterConsoleTexture,
+} from "./centerConsole";
+import {
+  addDiscardTile,
+  addLastDiscardMarkerLayer,
+  addNukiTile,
+  updateLastDiscard,
+} from "./discards";
 import { addTableDice, DICE_SETTLE_MS, DORA_FLIP_DELAY_MS } from "./dice";
-import { addHand } from "./hands";
+import {
+  addHand,
+  HAND_COLLAPSE_MS,
+  syncHiddenOpponentHand,
+} from "./hands";
 import {
   completedImpactRinshanDraws,
   countCompletedKans,
@@ -12,11 +24,11 @@ import {
   playerExtractedNorth,
   playerIsHoldingDrawnTile,
   playerReceivedDraw,
+  riverDiscardEntries,
   resolveRinshanDrawNumber,
 } from "./handView";
 import { addMelds } from "./melds";
-import { tableRelativeSeat } from "./geometry";
-import { disposeGroup } from "./runtime";
+import { handPosition, tableRelativeSeat } from "./geometry";
 import { addSelfDraw } from "./selfMotion";
 import { addTableSurface } from "./tableSurface";
 import {
@@ -56,7 +68,6 @@ function updateHandCutGaps(
      只对立直麻将生效。 */
   if (view.variant_kind !== "riichi") {
     runtime.handCutGaps.clear();
-    runtime.handCollapses.clear();
     return;
   }
 
@@ -66,7 +77,6 @@ function updateHandCutGaps(
     previousView.hand_index !== view.hand_index
   ) {
     runtime.handCutGaps.clear();
-    runtime.handCollapses.clear();
     return;
   }
 
@@ -93,7 +103,6 @@ function updateHandCutGaps(
       gapPosition,
       tileId: lastDiscard.tile.id,
     };
-    runtime.handCollapses.delete(player.seat);
     runtime.handCutGaps.set(player.seat, gap);
 
     window.setTimeout(() => {
@@ -102,13 +111,59 @@ function updateHandCutGaps(
       /* 新一局或同家又发生了更新时，旧定时器不能碰新的牌阵。 */
       if (activeGap?.tileId !== gap.tileId) return;
       runtime.handCutGaps.delete(player.seat);
-      runtime.handCollapses.set(player.seat, {
-        gapPosition: gap.gapPosition,
-        startedAt: performance.now(),
-      });
-      runtime.rebuild();
+      collapseOpponentHandInPlace(runtime, player.seat);
     }, HAND_CUT_GAP_HOLD_MS);
   }
+}
+
+/**
+ * 空隙停满后直接移动现有 13 张背牌，不再销毁整排 mesh、材质再造一遍。
+ * 同时把缓存签名推进到“已归拢”，后续非视觉视图也不会把这排牌重建掉。
+ */
+function collapseOpponentHandInPlace(
+  runtime: TableRuntime,
+  seat: number,
+): void {
+  const view = runtime.latestView;
+  const openingPhase = runtime.renderedOpeningPhase;
+  const player = view?.players.find((candidate) => candidate.seat === seat);
+  const layer = runtime.layers.get(`hand:${seat}`);
+  if (!view || !player || !layer || !openingPhase) return;
+  const relative = tableRelativeSeat(
+    seat,
+    view.observer_seat,
+    view.players.length,
+  );
+  const startedAt = performance.now();
+  for (const object of layer.group.children) {
+    if (!object.visible) continue;
+    const tileIndex = object.userData.opponentHandTileIndex as
+      | number
+      | undefined;
+    if (tileIndex == null) continue;
+    const destination = handPosition(
+      relative,
+      player.concealed_tile_count,
+      tileIndex,
+      false,
+      0,
+      false,
+      runtime.tileWidthRatio,
+      runtime.tileScale,
+    );
+    const start = object.position.clone();
+    runtime.animations = runtime.animations.filter(
+      (animation) => animation.group !== object,
+    );
+    runtime.animations.push({
+      group: object as THREE.Group,
+      start,
+      end: destination,
+      startedAt,
+      duration: HAND_COLLAPSE_MS,
+    });
+  }
+  layer.signature = handKey(runtime, view, player, [], []);
 }
 
 /**
@@ -126,7 +181,6 @@ export function renderTable(
   settlementRevealSeats: number[],
   settlementWinningTileSeats: number[] = [],
 ): void {
-  commitLayerUpdates(runtime);
   runtime.latestView = view;
   const openingKey = `${view.id}:${view.hand_index}`;
   runtime.openingKey = openingKey;
@@ -155,9 +209,7 @@ export function renderTable(
   updateLayer(runtime, "surface", "surface-v1", () => {
     addTableSurface(runtime);
   });
-  updateLayer(runtime, "console", consoleKey(view), () => {
-    addCenterConsole(runtime, view);
-  });
+  updateConsoleLayer(runtime, view);
 
   /* 开门位置只跟庄家和骰子有关，和谁在看这张桌子无关。 */
   const dealerRelative = tableRelativeSeat(
@@ -278,7 +330,6 @@ export function renderTable(
     for (const player of view.players) {
       clearPlayerLayers(runtime, player.seat, openingKey);
     }
-    commitLayerUpdates(runtime);
     refreshTableTileHighlights(runtime);
     return;
   }
@@ -308,32 +359,44 @@ export function renderTable(
       completedRinshanDraws,
       previousCompletedRinshanDraws,
     );
-    updateLayer(
+    const nextHandKey = handKey(
       runtime,
-      `hand:${player.seat}`,
-      handKey(
+      view,
+      player,
+      settlementRevealSeats,
+      settlementWinningTileSeats,
+    );
+    const handLayer = runtime.layers.get(`hand:${player.seat}`);
+    if (handLayer?.signature !== nextHandKey) {
+      const syncedInPlace = syncHiddenOpponentHand(
         runtime,
         view,
         player,
+        previousPlayer,
         openingPhase,
-        settlementRevealSeats,
-        settlementWinningTileSeats,
-      ),
-      () => {
-        addHand(
-          runtime,
-          view,
-          player,
-          previousPlayer,
-          openingPhase,
-          settlementRevealSeats,
-          settlementWinningTileSeats,
-          wall,
-          consumedTileCount,
-          rinshanDrawNumber,
-        );
-      },
-    );
+        wall,
+        consumedTileCount,
+        rinshanDrawNumber,
+      );
+      if (syncedInPlace && handLayer) {
+        handLayer.signature = nextHandKey;
+      } else {
+        updateLayer(runtime, `hand:${player.seat}`, nextHandKey, () => {
+          addHand(
+            runtime,
+            view,
+            player,
+            previousPlayer,
+            openingPhase,
+            settlementRevealSeats,
+            settlementWinningTileSeats,
+            wall,
+            consumedTileCount,
+            rinshanDrawNumber,
+          );
+        });
+      }
+    }
     if (settlementRevealSeats.includes(player.seat)) {
       runtime.revealedSettlementSeats.add(player.seat);
     }
@@ -341,14 +404,15 @@ export function renderTable(
       runtime.revealedWinningTileSeats.add(player.seat);
     }
     if (openingPhase === "play" || openingPhase === "waiting") {
-      updateLayer(
+      syncDiscardLayers(
         runtime,
-        `discards:${player.seat}`,
-        discardKey(runtime, view, player, openingPhase),
-        () => addDiscards(runtime, view, player, previousPlayer, openingPhase),
+        view,
+        player,
+        previousPlayer,
+        openingPhase,
       );
     } else {
-      updateLayer(runtime, `discards:${player.seat}`, `hidden:${openingKey}`, () => {});
+      clearDiscardLayers(runtime, player.seat, openingKey);
     }
     if (openingPhase === "play") {
       updateLayer(
@@ -393,8 +457,13 @@ export function renderTable(
       runtime.pendingRinshanDraws.delete(player.seat);
     }
   }
+  updateLayer(
+    runtime,
+    "last-discard-marker",
+    lastDiscardMarkerKey(runtime, view, openingPhase),
+    () => addLastDiscardMarkerLayer(runtime, view, openingPhase),
+  );
   runtime.previousView = view;
-  commitLayerUpdates(runtime);
   refreshTableTileHighlights(runtime);
 }
 
@@ -423,11 +492,25 @@ function consoleKey(view: MatchView): string {
   ]);
 }
 
+/** 余牌、点数变化只刷新 CanvasTexture；桌心几何和材质始终保持同一份。 */
+function updateConsoleLayer(runtime: TableRuntime, view: MatchView): void {
+  const nextKey = consoleKey(view);
+  const current = runtime.layers.get("console");
+  if (!current) {
+    updateLayer(runtime, "console", nextKey, () => {
+      addCenterConsole(runtime, view);
+    });
+    return;
+  }
+  if (current.signature === nextKey) return;
+  current.signature = nextKey;
+  updateCenterConsoleTexture(runtime);
+}
+
 function handKey(
   runtime: TableRuntime,
   view: MatchView,
   player: MatchPlayerView,
-  openingPhase: OpeningPhase,
   settlementRevealSeats: number[],
   settlementWinningTileSeats: number[],
 ): string {
@@ -435,7 +518,6 @@ function handKey(
     dimensionsKey(runtime),
     view.id,
     view.hand_index,
-    openingPhase,
     player.seat,
     player.concealed_tile_count,
     player.concealed_tiles,
@@ -447,33 +529,145 @@ function handKey(
     settlementWinningTileSeats.includes(player.seat),
     runtime.revealAllHands,
     runtime.handCutGaps.get(player.seat),
-    runtime.handCollapses.get(player.seat),
     view.dora_indicators,
     view.joker_code,
   ]);
 }
 
-function discardKey(
+function discardTileKey(
   runtime: TableRuntime,
   view: MatchView,
   player: MatchPlayerView,
-  openingPhase: OpeningPhase,
+  discard: MatchPlayerView["discards"][number],
+  originalIndex: number,
+  sideways: boolean,
+  riverIndex: number,
 ): string {
-  const marker =
-    runtime.lastDiscard?.seat === player.seat
-      ? runtime.lastDiscard.index
-      : null;
   return signature([
     dimensionsKey(runtime),
     view.id,
     view.hand_index,
-    openingPhase,
-    player.discards,
-    player.nuki_tiles,
-    marker,
+    player.seat,
+    discard,
+    originalIndex,
+    sideways,
+    riverIndex,
     runtime.dimTsumogiri,
     view.dora_indicators,
     view.joker_code,
+  ]);
+}
+
+function syncDiscardLayers(
+  runtime: TableRuntime,
+  view: MatchView,
+  player: MatchPlayerView,
+  previousPlayer: MatchPlayerView | undefined,
+  openingPhase: OpeningPhase,
+): void {
+  const visible = new Set<string>();
+  riverDiscardEntries(player.discards).forEach((entry, riverIndex) => {
+    const key = `discard:${player.seat}:${entry.discard.tile.id}`;
+    visible.add(key);
+    updateLayer(
+      runtime,
+      key,
+      discardTileKey(
+        runtime,
+        view,
+        player,
+        entry.discard,
+        entry.originalIndex,
+        entry.sideways,
+        riverIndex,
+      ),
+      () =>
+        addDiscardTile(
+          runtime,
+          view,
+          player,
+          previousPlayer,
+          openingPhase,
+          entry.discard,
+          entry.originalIndex,
+          entry.sideways,
+          riverIndex,
+        ),
+    );
+  });
+  for (const [index, tile] of (player.nuki_tiles ?? []).entries()) {
+    const key = `nuki:${player.seat}:${tile.id}`;
+    visible.add(key);
+    updateLayer(
+      runtime,
+      key,
+      signature([
+        dimensionsKey(runtime),
+        view.id,
+        view.hand_index,
+        player.seat,
+        tile,
+        index,
+        view.dora_indicators,
+      ]),
+      () => addNukiTile(runtime, view, player, tile, index),
+    );
+  }
+  clearMissingDiscardLayers(
+    runtime,
+    player.seat,
+    visible,
+    `${view.id}:${view.hand_index}`,
+  );
+}
+
+function clearMissingDiscardLayers(
+  runtime: TableRuntime,
+  seat: number,
+  visible: Set<string>,
+  scopeKey: string,
+): void {
+  for (const key of [...runtime.layers.keys()]) {
+    if (
+      (!key.startsWith(`discard:${seat}:`) &&
+        !key.startsWith(`nuki:${seat}:`)) ||
+      visible.has(key)
+    ) {
+      continue;
+    }
+    updateLayer(runtime, key, `empty:${scopeKey}`, () => {});
+  }
+}
+
+function clearDiscardLayers(
+  runtime: TableRuntime,
+  seat: number,
+  openingKey: string,
+): void {
+  clearMissingDiscardLayers(
+    runtime,
+    seat,
+    new Set(),
+    openingKey,
+  );
+}
+
+function lastDiscardMarkerKey(
+  runtime: TableRuntime,
+  view: MatchView,
+  openingPhase: OpeningPhase,
+): string {
+  const last = runtime.lastDiscard;
+  if (openingPhase !== "play" || !last) {
+    return `hidden:${view.id}:${view.hand_index}:${openingPhase}`;
+  }
+  const player = view.players.find((candidate) => candidate.seat === last.seat);
+  return signature([
+    dimensionsKey(runtime),
+    view.id,
+    view.hand_index,
+    last,
+    player?.discards,
   ]);
 }
 
@@ -498,7 +692,11 @@ function clearPlayerLayers(
   openingKey: string,
 ): void {
   for (const kind of ["hand", "discards", "melds"]) {
-    updateLayer(runtime, `${kind}:${seat}`, `hidden:${openingKey}`, () => {});
+    if (kind === "discards") {
+      clearDiscardLayers(runtime, seat, openingKey);
+    } else {
+      updateLayer(runtime, `${kind}:${seat}`, `hidden:${openingKey}`, () => {});
+    }
   }
   updateLayer(runtime, "self-draw", `hidden:${openingKey}`, () => {});
 }
@@ -576,10 +774,16 @@ function updateLayer(
   }
 
   runtime.root.add(group);
-  if (key.startsWith("discards:") || key.startsWith("melds:")) {
+  if (
+    key.startsWith("discard:") ||
+    key.startsWith("nuki:") ||
+    key.startsWith("melds:")
+  ) {
     runtime.highlightIndexDirty = true;
   }
   if (previous) {
+    /* 旧层先退出绘制，但要活到新层真正画完一帧之后才释放 GPU 资源。 */
+    previous.group.visible = false;
     runtime.pendingLayerDisposals.push(previous.group);
   }
   runtime.layers.set(key, { signature: nextSignature, group });
@@ -590,45 +794,4 @@ function refreshTableTileHighlights(runtime: TableRuntime): void {
   rebuildTableTileHighlights(runtime);
   applyTableTileHighlight(runtime);
   runtime.highlightIndexDirty = false;
-}
-
-/** 一份视图涉及的所有局部层一次提交；下一次 rAF 只会看见提交后的完整场景。 */
-function commitLayerUpdates(runtime: TableRuntime): void {
-  if (runtime.pendingLayerDisposals.length === 0) return;
-  for (const group of runtime.pendingLayerDisposals) {
-    removeLayerRuntimeState(runtime, group);
-    runtime.root.remove(group);
-    disposeGroup(group);
-    group.clear();
-  }
-  runtime.pendingLayerDisposals = [];
-}
-
-/** 去掉被替换子树留下的动画、拾取与临时特效引用。 */
-function removeLayerRuntimeState(
-  runtime: TableRuntime,
-  group: THREE.Group,
-): void {
-  const belongs = (object: THREE.Object3D): boolean => {
-    let current: THREE.Object3D | null = object;
-    while (current) {
-      if (current === group) return true;
-      current = current.parent;
-    }
-    return false;
-  };
-  runtime.selectable = runtime.selectable.filter((mesh) => !belongs(mesh));
-  if (runtime.hovered && belongs(runtime.hovered)) runtime.hovered = null;
-  runtime.animations = runtime.animations.filter(
-    (animation) => !belongs(animation.group),
-  );
-  runtime.tilts = runtime.tilts.filter((tilt) => !belongs(tilt.group));
-  runtime.spinners = runtime.spinners.filter((spinner) => !belongs(spinner));
-  runtime.transients = runtime.transients.filter(
-    (transient) => !belongs(transient.group),
-  );
-  runtime.impacts = runtime.impacts.filter((impact) => !belongs(impact.mesh));
-  runtime.diceRolls = runtime.diceRolls.filter(
-    (roll) => !belongs(roll.object),
-  );
 }

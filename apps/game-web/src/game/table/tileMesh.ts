@@ -26,27 +26,50 @@ export function makeTile(
   const normalized = code === "back" ? "back" : normalizeTileCode(code);
   const isBack = normalized === "back";
   const faceTexture = runtime.textures.get(normalized);
-  const upperSide = new THREE.MeshStandardMaterial({
-    color: 0xc9c9c6,
-    roughness: 0.55,
-  });
-  const back = new THREE.MeshStandardMaterial({
-    color: 0x689974,
-    roughness: 0.64,
-  });
-  const face = new THREE.MeshBasicMaterial({
-    color: 0xdfdfdc,
-  });
+  const upperSide = sharedTileMaterial(
+    runtime,
+    "body:upper",
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0xc9c9c6,
+        roughness: 0.55,
+      }),
+  );
+  const back = sharedTileMaterial(
+    runtime,
+    "body:back",
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: 0x689974,
+        roughness: 0.64,
+      }),
+  );
+  /* 牌背用不到白色牌面；旧实现仍为每张背牌 new 一份且永远无法释放。 */
+  const face = isBack
+    ? null
+    : new THREE.MeshBasicMaterial({ color: 0xdfdfdc });
   const artwork = isBack
     ? null
-    : new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        map: faceTexture,
-        transparent: true,
-        alphaTest: 0.01,
-        depthWrite: false,
-        toneMapped: false,
-      });
+    : sharedTileMaterial(
+        runtime,
+        `artwork:${normalized}`,
+        () =>
+          new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            map: faceTexture,
+            /* 牌面是镂空图案，用 alpha cutout 进入不透明队列；这样几百张牌不再
+               每帧参与透明物体距离排序，新增一张牌也不会打乱整桌绘制顺序。 */
+            transparent: false,
+            alphaTest: 0.035,
+            alphaToCoverage: true,
+            depthWrite: true,
+            /* 把图案稳定地压到牌坯前面，杜绝动画时与白底争抢深度。 */
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+            polygonOffsetUnits: -2,
+            toneMapped: false,
+          }),
+      );
   const faceLayerDepth = depth * 0.58;
   const backLayerDepth = depth - faceLayerDepth;
   const upperLayerDepth = isBack ? backLayerDepth : faceLayerDepth;
@@ -92,7 +115,7 @@ export function makeTile(
     markSharedTileGeometries(geometries);
     runtime.tileGeometries.set(geometryKey, geometries);
   }
-  const upperMaterial = isBack
+  const upperMaterial = isBack || !face
     ? back
     : [upperSide, upperSide, face, upperSide, upperSide, upperSide];
   const upper = new THREE.Mesh(geometries.upper, upperMaterial);
@@ -126,6 +149,7 @@ export function makeTile(
   lowerSeam.receiveShadow = false;
 
   const body = new THREE.Group();
+  let groupArtworkMesh: THREE.Mesh | null = null;
   body.add(upper, lower, upperSeam, lowerSeam);
   if (artwork && geometries.artwork) {
     const artworkMesh = new THREE.Mesh(
@@ -133,11 +157,13 @@ export function makeTile(
       artwork,
     );
     artworkMesh.rotation.x = -Math.PI / 2;
-    artworkMesh.position.y = depth / 2 + 0.001;
+    /* 0.001 在部分移动端的 16/24 位深度缓冲里不足以分层。 */
+    artworkMesh.position.y = depth / 2 + Math.max(0.004, depth * 0.018);
     artworkMesh.renderOrder = 1;
     artworkMesh.castShadow = false;
     artworkMesh.receiveShadow = false;
     body.add(artworkMesh);
+    groupArtworkMesh = artworkMesh;
   }
   const pivot = new THREE.Group();
   body.position.y = depth / 2;
@@ -154,9 +180,23 @@ export function makeTile(
   group.userData.faceMaterial = isBack ? back : artwork;
   /* 牌面那块白底，点亮同种牌时染的是它，不是上面的图案。 */
   group.userData.facePlateMaterial = isBack ? null : face;
+  group.userData.artworkMesh = groupArtworkMesh;
   group.userData.hovered = false;
   group.userData.hoverLift = 0;
   return group;
+}
+
+function sharedTileMaterial<T extends THREE.Material>(
+  runtime: TableRuntime,
+  key: string,
+  create: () => T,
+): T {
+  const cached = runtime.tileMaterials.get(key) as T | undefined;
+  if (cached) return cached;
+  const material = create();
+  material.userData.shared = true;
+  runtime.tileMaterials.set(key, material);
+  return material;
 }
 
 function artworkPlaneGeometry(
@@ -186,26 +226,53 @@ function markSharedTileGeometries(geometries: TileGeometrySet): void {
  * 顺手推掉的还是从手里挑出来的。牌身、牌面、图案一起压，只暗牌面会看着像脏了。
  *
  * 两条得记住的：
- * - 材质是每张牌自己 `new` 的，改这一张的颜色不会牵连别的牌；
+ * - 普通牌身/图案现在由 runtime 共用；变暗前必须先为这一张做写时复制；
  * - 一张牌的几个面共用同一个材质实例（`upperSide` 就挂在五个面上），所以得去重，
  *   否则同一块颜色会被连乘好几次，直接压成黑的；
  * - 要在 `registerTableTile` 之前调——点亮同种牌那套记的是调用当时的颜色，晚了
  *   压暗就会被高亮还原掉。
  */
 export function dimTile(group: THREE.Group, factor: number): void {
+  const replacements = new Map<THREE.Material, THREE.Material>();
   const seen = new Set<THREE.Material>();
   group.traverse((object) => {
     const mesh = object as THREE.Mesh;
     if (!mesh.isMesh) return;
-    const materials = Array.isArray(mesh.material)
+    const originalMaterials = Array.isArray(mesh.material)
       ? mesh.material
       : [mesh.material];
+    const materials = originalMaterials.map((original) => {
+      /* 扫光 Shader 也标记为 shared，但它没有颜色且必须继续共用同一个 uPhase。 */
+      if (
+        !original.userData.shared ||
+        !("color" in original)
+      ) {
+        return original;
+      }
+      const existing = replacements.get(original);
+      if (existing) return existing;
+      const clone = original.clone();
+      clone.userData = { ...original.userData, shared: false };
+      replacements.set(original, clone);
+      return clone;
+    });
+    mesh.material = Array.isArray(mesh.material) ? materials : materials[0]!;
     for (const material of materials) {
       if (!material || seen.has(material)) continue;
       seen.add(material);
       (material as THREE.MeshStandardMaterial).color?.multiplyScalar(factor);
     }
   });
+  const faceMaterial = group.userData.faceMaterial as THREE.Material | null;
+  const facePlateMaterial = group.userData.facePlateMaterial as
+    | THREE.Material
+    | null;
+  if (faceMaterial && replacements.has(faceMaterial)) {
+    group.userData.faceMaterial = replacements.get(faceMaterial);
+  }
+  if (facePlateMaterial && replacements.has(facePlateMaterial)) {
+    group.userData.facePlateMaterial = replacements.get(facePlateMaterial);
+  }
 }
 
 function roundedSeamGeometry(
@@ -269,10 +336,18 @@ export function markTileAsDora(
   runtime: TableRuntime,
   group: THREE.Group,
 ): void {
-  const face = group.userData.faceMaterial as
+  let face = group.userData.faceMaterial as
     | THREE.MeshBasicMaterial
     | undefined;
   if (!face) return;
+  if (face.userData.shared) {
+    const clone = face.clone();
+    clone.userData = { ...face.userData, shared: false };
+    const artworkMesh = group.userData.artworkMesh as THREE.Mesh | undefined;
+    if (artworkMesh) artworkMesh.material = clone;
+    group.userData.faceMaterial = clone;
+    face = clone;
+  }
   face.color.setRGB(0.92, 0.95, 1);
   const body = group.userData.tileBody as THREE.Group | undefined;
   const width = group.userData.tileWidth as number | undefined;
@@ -281,7 +356,7 @@ export function markTileAsDora(
   if (!body || width == null || length == null || depth == null) return;
   const shine = makeDoraShine(runtime.doraShine, width, length);
   /* 压在图案那一层之上，牌面上所有东西都会被它扫到。 */
-  shine.position.y = depth / 2 + 0.002;
+  shine.position.y = depth / 2 + Math.max(0.007, depth * 0.028);
   body.add(shine);
 }
 
