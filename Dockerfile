@@ -30,7 +30,7 @@ COPY crates ./crates
 RUN --mount=type=cache,id=mamahjong-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=mamahjong-target,target=/build/target,sharing=locked \
     cargo build --locked --release --package mamahjong-server \
-    && mkdir --parents /artifacts/data /artifacts/admin /artifacts/game \
+    && mkdir --parents /artifacts/data/assets /artifacts/admin /artifacts/game \
     && cp /build/target/release/mamahjong-server /artifacts/ \
     && cp /build/target/release/mamahjong-healthcheck /artifacts/
 

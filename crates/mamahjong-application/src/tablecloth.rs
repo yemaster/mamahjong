@@ -128,14 +128,18 @@ fn validate_name(value: &str) -> Result<(), ApplicationError> {
 }
 
 fn validate_path(value: &str) -> Result<(), ApplicationError> {
-    if value.starts_with("/game/assets/")
+    if (value.starts_with("/game/assets/") || value.starts_with("/user-assets/"))
         && !value.chars().any(char::is_control)
+        && !value.contains('\\')
+        && !value
+            .split('/')
+            .any(|segment| segment == "." || segment == "..")
         && value.len() <= 512
     {
         Ok(())
     } else {
         Err(invalid_tablecloth(
-            "tablecloth texture path must be an absolute local game asset path",
+            "tablecloth texture path must use /game/assets/ or /user-assets/",
         ))
     }
 }

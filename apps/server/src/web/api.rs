@@ -1,4 +1,7 @@
-use axum::extract::{Path, State};
+#[path = "api_assets.rs"]
+mod assets;
+
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::header::{COOKIE, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -44,6 +47,7 @@ pub(super) fn routes() -> Router<AppState> {
         )
         .route("/music", get(music).post(create_music))
         .route("/music/{music_id}", put(update_music).delete(delete_music))
+        .merge(assets::routes().layer(DefaultBodyLimit::max(50 * 1024 * 1024)))
         .route("/database", get(database))
         .route("/audit", get(audit))
 }
@@ -105,6 +109,17 @@ async fn update_character(
     require_csrf(&headers, &authenticated)?;
     if character_id != request.id {
         return Err(AdminApiError::invalid_id());
+    }
+    if !state
+        .application()
+        .list_characters()?
+        .iter()
+        .any(|character| character.id() == character_id)
+    {
+        return Err(AdminApiError::not_found(
+            "character.not_found",
+            "角色不存在",
+        ));
     }
     request.id = character_id;
     let character = state.application().save_character(request)?;
@@ -222,6 +237,17 @@ async fn update_tablecloth(
     if tablecloth_id != request.id {
         return Err(AdminApiError::invalid_id());
     }
+    if !state
+        .application()
+        .list_tablecloths()?
+        .iter()
+        .any(|tablecloth| tablecloth.id() == tablecloth_id)
+    {
+        return Err(AdminApiError::not_found(
+            "tablecloth.not_found",
+            "桌布不存在",
+        ));
+    }
     request.id = tablecloth_id;
     let tablecloth = state.application().save_tablecloth(request)?;
     record_tablecloth_audit(
@@ -337,6 +363,14 @@ async fn update_music(
     require_csrf(&headers, &authenticated)?;
     if music_id != request.id {
         return Err(AdminApiError::invalid_id());
+    }
+    if !state
+        .application()
+        .list_music_tracks()?
+        .iter()
+        .any(|track| track.id() == music_id)
+    {
+        return Err(AdminApiError::not_found("music.not_found", "音乐不存在"));
     }
     request.id = music_id;
     let track = state.application().save_music_track(request)?;
@@ -1003,6 +1037,14 @@ struct AdminApiError {
 }
 
 impl AdminApiError {
+    fn bad_request(code: &'static str, message: &'static str) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            code,
+            message,
+        }
+    }
+
     fn disabled() -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
@@ -1413,7 +1455,7 @@ mod tests {
         assert!(database.expect("database")["tables"].is_array());
 
         let (status, _, track) = request(
-            router,
+            router.clone(),
             Method::POST,
             "/api/v1/admin/music",
             Some(json!({
@@ -1431,6 +1473,173 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(track.expect("track")["id"], "admin-test-track");
+
+        let (status, _, track) = request(
+            router.clone(),
+            Method::PUT,
+            "/api/v1/admin/music/admin-test-track",
+            Some(json!({
+                "id": "admin-test-track",
+                "name": "测试音乐（已编辑）",
+                "scene": "lobby",
+                "audio_path": "/user-assets/music/admin-test.mp3",
+                "duration_ms": 61000,
+                "enabled": true,
+                "is_default": false
+            })),
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(track.expect("updated track")["version"], 2);
+
+        let (status, _, _) = request(
+            router.clone(),
+            Method::PUT,
+            "/api/v1/admin/music/missing-track",
+            Some(json!({
+                "id": "missing-track",
+                "name": "不存在",
+                "scene": "lobby",
+                "audio_path": "/user-assets/music/missing.mp3",
+                "duration_ms": 61000,
+                "enabled": true,
+                "is_default": false
+            })),
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _, _) = request(
+            router.clone(),
+            Method::DELETE,
+            "/api/v1/admin/music/lobby-default",
+            None,
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        let (status, _, _) = request(
+            router.clone(),
+            Method::DELETE,
+            "/api/v1/admin/music/admin-test-track",
+            None,
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let (status, _, tablecloth) = request(
+            router.clone(),
+            Method::POST,
+            "/api/v1/admin/tablecloths",
+            Some(json!({
+                "id": "admin-test-cloth",
+                "name": "资源库桌布",
+                "texture_path": "/user-assets/tablecloths/admin-test.png",
+                "enabled": true,
+                "is_default": false
+            })),
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(
+            tablecloth.expect("tablecloth")["texture_path"],
+            "/user-assets/tablecloths/admin-test.png"
+        );
+
+        let (status, _, _) = request(
+            router,
+            Method::DELETE,
+            "/api/v1/admin/tablecloths/admin-test-cloth",
+            None,
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        std::fs::remove_dir_all(directory).expect("cleanup");
+    }
+
+    #[tokio::test]
+    async fn managed_assets_can_be_uploaded_listed_served_and_deleted() {
+        let (state, directory) = admin_state();
+        let router = build_router(state);
+        let (cookie, csrf) = login(router.clone()).await;
+
+        let upload = Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/admin/assets/files?path=characters&name=hero.png")
+            .header(COOKIE, &cookie)
+            .header(CSRF_HEADER, &csrf)
+            .body(Body::from("image-bytes"))
+            .expect("upload request");
+        let response = router
+            .clone()
+            .oneshot(upload)
+            .await
+            .expect("upload response");
+        assert_eq!(response.status(), StatusCode::CREATED);
+
+        let (status, _, listing) = request(
+            router.clone(),
+            Method::GET,
+            "/api/v1/admin/assets?path=characters",
+            None,
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            listing.expect("listing")["entries"][0]["path"],
+            "characters/hero.png"
+        );
+
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/user-assets/characters/hero.png")
+                    .body(Body::empty())
+                    .expect("static request"),
+            )
+            .await
+            .expect("static response");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("content-security-policy")
+                .expect("asset CSP"),
+            "default-src 'none'; sandbox"
+        );
+        assert_eq!(
+            to_bytes(response.into_body(), 1024)
+                .await
+                .expect("asset body"),
+            "image-bytes"
+        );
+
+        let (status, _, _) = request(
+            router,
+            Method::DELETE,
+            "/api/v1/admin/assets?path=characters%2Fhero.png",
+            None,
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(!directory.join("assets/characters/hero.png").exists());
         std::fs::remove_dir_all(directory).expect("cleanup");
     }
 }

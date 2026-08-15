@@ -690,11 +690,13 @@ impl Application {
         let mut store = self.write_store()?;
         let existing = store.music_tracks.get(&command.id);
         // 同一场景里必须始终留着一首默认曲，否则新玩家没有音乐可放。
-        let removing_only_default = existing.is_some_and(MusicTrack::is_default)
-            && !command.is_default
-            && !store.music_tracks.values().any(|track| {
-                track.id() != command.id && track.scene() == command.scene && track.is_default()
-            });
+        let removing_only_default = existing.is_some_and(|track| {
+            track.is_default()
+                && (!command.is_default || track.scene() != command.scene)
+                && !store.music_tracks.values().any(|other| {
+                    other.id() != command.id && other.scene() == track.scene() && other.is_default()
+                })
+        });
         if removing_only_default {
             return Err(ApplicationError::new(
                 ErrorCode::MusicTrackDefaultRequired,
@@ -1501,8 +1503,8 @@ mod tests {
         UpdateProfile, UpdateRoom, UpdateTablecloth,
     };
     use crate::{
-        AccountRole, AccountStatus, ErrorCode, GameCommand, MatchmakingStatus, RoomVisibility,
-        SubmitGameCommand,
+        AccountRole, AccountStatus, ErrorCode, GameCommand, MatchmakingStatus, MusicScene,
+        RoomVisibility, SaveMusicTrack, SubmitGameCommand,
     };
 
     /// 结算的两段握手：先报告动画播完，服务端开了确认窗口才收得下确认。
@@ -1519,6 +1521,31 @@ mod tests {
                 nickname: format!("雀士{suffix}"),
             })
             .expect("register")
+    }
+
+    #[test]
+    fn moving_the_only_default_music_does_not_orphan_its_original_scene() {
+        let application = Application::new();
+        let error = application
+            .save_music_track(SaveMusicTrack {
+                id: "lobby-default".to_owned(),
+                name: "默认".to_owned(),
+                scene: MusicScene::Match,
+                audio_path: "/user-assets/music/lobby-default.mp3".to_owned(),
+                duration_ms: 75_572,
+                enabled: true,
+                is_default: true,
+            })
+            .expect_err("the original scene still needs a default");
+
+        assert_eq!(error.code(), ErrorCode::MusicTrackDefaultRequired);
+        assert_eq!(
+            application
+                .default_music_track(MusicScene::Lobby)
+                .expect("lobby default")
+                .id(),
+            "lobby-default"
+        );
     }
 
     #[test]

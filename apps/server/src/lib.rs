@@ -9,12 +9,14 @@ mod testing;
 mod token;
 mod web;
 
+use axum::http::{HeaderValue, header};
 use axum::{Router, routing::get};
 use mahjong_core::{MatchId, UserId};
 use mamahjong_application::Application;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tower_http::trace::TraceLayer;
+use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
 
 pub use archive::{ArchiveError, MatchArchive, MatchRecordSummary, PlayerStatistics};
 pub use audit::{AuditDraft, AuditError, AuditEvent, AuditLog};
@@ -33,6 +35,7 @@ pub struct AppState {
     realtime: api::RealtimeHub,
     ws_tickets: api::WsTickets,
     clock: clock::MonotonicClock,
+    assets_dir: PathBuf,
 }
 
 impl AppState {
@@ -47,6 +50,7 @@ impl AppState {
             realtime: api::RealtimeHub::new(),
             ws_tickets: api::WsTickets::new(),
             clock: clock::MonotonicClock::new(),
+            assets_dir: PathBuf::from("data/assets"),
         }
     }
 
@@ -81,6 +85,9 @@ impl AppState {
         cookie_secure: Option<bool>,
         database_url: Option<&str>,
     ) -> Result<Self, StateError> {
+        let data_dir = data_dir.as_ref();
+        let assets_dir = data_dir.join("assets");
+        std::fs::create_dir_all(&assets_dir).map_err(StateError::Assets)?;
         Ok(Self {
             readiness: Readiness::new(),
             application: match database_url {
@@ -89,7 +96,7 @@ impl AppState {
                 }
                 None => Application::new(),
             },
-            archive: MatchArchive::open(&data_dir).map_err(StateError::Archive)?,
+            archive: MatchArchive::open(data_dir).map_err(StateError::Archive)?,
             audit: AuditLog::open(data_dir).map_err(StateError::Audit)?,
             admin_sessions: match cookie_secure {
                 Some(cookie_secure) => {
@@ -100,6 +107,7 @@ impl AppState {
             realtime: api::RealtimeHub::new(),
             ws_tickets: api::WsTickets::new(),
             clock: clock::MonotonicClock::new(),
+            assets_dir,
         })
     }
 
@@ -128,6 +136,10 @@ impl AppState {
 
     pub(crate) const fn ws_tickets(&self) -> &api::WsTickets {
         &self.ws_tickets
+    }
+
+    pub(crate) fn assets_dir(&self) -> &Path {
+        &self.assets_dir
     }
 
     /// Milliseconds since this process started; the only time source seat
@@ -248,11 +260,27 @@ pub fn build_router_with_web(
     admin_web_dir: impl AsRef<Path>,
     game_web_dir: impl AsRef<Path>,
 ) -> Router {
+    let assets_dir = state.assets_dir().to_owned();
+    let asset_static = Router::new()
+        .nest_service("/user-assets", ServeDir::new(assets_dir))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=60, must-revalidate"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("default-src 'none'; sandbox"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ));
     Router::new()
         .route("/health/live", get(health::live))
         .route("/health/ready", get(health::ready))
         .merge(api::routes())
         .merge(web::routes(admin_web_dir.as_ref(), game_web_dir.as_ref()))
+        .merge(asset_static)
         .with_state(state)
         .layer(TraceLayer::new_for_http().on_response(
             |response: &axum::http::Response<_>, latency: Duration, _span: &tracing::Span| {
@@ -275,6 +303,7 @@ pub enum StateError {
     Archive(ArchiveError),
     Audit(AuditError),
     AdminSession(web::AdminSessionError),
+    Assets(std::io::Error),
 }
 
 impl std::fmt::Display for StateError {
@@ -284,6 +313,7 @@ impl std::fmt::Display for StateError {
             Self::Archive(error) => error.fmt(formatter),
             Self::Audit(error) => error.fmt(formatter),
             Self::AdminSession(error) => error.fmt(formatter),
+            Self::Assets(error) => error.fmt(formatter),
         }
     }
 }
@@ -295,6 +325,7 @@ impl std::error::Error for StateError {
             Self::Archive(error) => Some(error),
             Self::Audit(error) => Some(error),
             Self::AdminSession(error) => Some(error),
+            Self::Assets(error) => Some(error),
         }
     }
 }

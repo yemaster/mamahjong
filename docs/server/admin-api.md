@@ -32,8 +32,13 @@
 | PUT、DELETE | `/tablecloths/:id` | 编辑、删除 |
 | GET、POST | `/music` | 列表、添加 |
 | PUT、DELETE | `/music/:id` | 编辑、删除 |
+| GET、DELETE | `/assets?path=...` | 浏览或递归删除持久化资源 |
+| POST | `/assets/folders` | 在指定路径新建文件夹 |
+| POST | `/assets/files?path=...&name=...` | 上传二进制文件，最大 50 MB |
 
 素材导入由前端读取版本化 JSON，并按编号调用上述新增或编辑接口；导出不请求服务端。文件格式见[素材导入导出](../admin/import-export.md)。
+运行时文件通过 `/user-assets/...` 公开读取；路径会执行目录穿越和符号链接校验，
+写操作同时受管理员会话与 CSRF 保护。
 
 ## 系统
 

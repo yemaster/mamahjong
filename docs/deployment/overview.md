@@ -55,8 +55,9 @@ cp .env.example .env
 | `MAMAHJONG_ADMIN_COOKIE_SECURE` | `false` | HTTPS 部署时设为 `true` |
 
 容器内部固定监听 `0.0.0.0:8080`。`.env` 不会进入镜像，也不应提交到 Git。
-单局和整场记录保存在 Compose 命名卷 `mamahjong_match-records`，执行普通
-`docker compose down` 不会删除该卷。
+单局和整场记录保存在 Compose 命名卷 `mamahjong_match-records`，管理端上传的运行时
+静态资源保存在 `mamahjong_user-assets`。执行普通 `docker compose down` 不会删除这些卷；
+只有显式使用 `docker compose down --volumes` 才会一并删除持久化数据。
 
 启用管理端：
 

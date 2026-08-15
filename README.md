@@ -135,6 +135,11 @@ apps/game-web/public/assets/sfx/                # 操作与结算音效
 [素材管线文档](docs/client/asset-pipeline.md)。这些目录已加入 `.gitignore`，不会被
 Git 提交；未补齐时，对应的图片或音频不会显示或播放。
 
+启用管理后台后，也可以在“素材管理 → 资源库”中上传和整理运行时静态资源。
+这些文件保存在 Compose 命名卷 `user-assets` 中，并通过同源路径
+`/user-assets/...` 同时提供给游戏端与管理端；普通 `docker compose down` 和镜像更新
+不会删除它们。角色、桌布和音乐编辑页可直接从资源库选取，或上传后立即设置。
+
 ---
 
 ## 机器人测试

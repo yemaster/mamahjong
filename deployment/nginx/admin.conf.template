@@ -3,6 +3,7 @@ server {
     server_name _;
     server_tokens off;
     absolute_redirect off;
+    client_max_body_size 50m;
 
     root /usr/share/nginx/html;
 
@@ -26,6 +27,19 @@ server {
 
     location /admin/ {
         try_files $uri $uri/ /admin/index.html;
+    }
+
+    location = /user-assets {
+        return 301 /user-assets/;
+    }
+
+    location /user-assets/ {
+        alias /var/lib/mamahjong/assets/;
+        autoindex off;
+        disable_symlinks on;
+        add_header Cache-Control "public, max-age=60, must-revalidate" always;
+        add_header Content-Security-Policy "default-src 'none'; sandbox" always;
+        add_header X-Content-Type-Options "nosniff" always;
     }
 
     location /api/ {
