@@ -489,7 +489,14 @@ export function syncHiddenOpponentHand(
     group.userData.opponentHandTileIndex = index;
     group.userData.baseY = destination.y;
 
-    if (!created.includes(group)) {
+    /*
+     * React 会把“杠成立 → 等待动画 → 岭上补摸”三份快照合并到同一个屏幕帧。
+     * 这时对手暗手的净变化是 -3（移出四张、补回一张），对象池不会创建新节点。
+     * 但 `rinshanDrawNumber` 已经明确说明最后这个独立槽位是刚摸的牌，必须复用一
+     * 张现有牌背从岭上飞过来，不能仅凭节点是否新启用来判断动画。
+     */
+    const animatesReplacementDraw = rinshanDrawNumber != null && isDrawn;
+    if (!created.includes(group) && !animatesReplacementDraw) {
       group.position.copy(destination);
       group.quaternion.copy(handQuaternion(relative, false));
       continue;
@@ -510,6 +517,10 @@ export function syncHiddenOpponentHand(
     const handBody = tileBody(group);
     const standingTilt = standingHandTilt(true);
     handBody.rotation.x = 0;
+    runtime.animations = runtime.animations.filter(
+      (animation) => animation.group !== group,
+    );
+    runtime.tilts = runtime.tilts.filter((tilt) => tilt.group !== group);
     group.position.copy(start);
     group.quaternion.copy(startRotation);
     runtime.animations.push({

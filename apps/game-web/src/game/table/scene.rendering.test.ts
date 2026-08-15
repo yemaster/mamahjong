@@ -232,6 +232,50 @@ describe("牌桌局部渲染边界", () => {
     expect(layer(runtime, "console")).toBe(consoleBefore);
   });
 
+  it("杠成立和岭上补摸被合并成一帧时仍从岭上飞一张牌", () => {
+    const runtime = renderingRuntime();
+    const before = cloneView();
+    before.variant_kind = "impact";
+    before.completed_rinshan_draws = 2;
+    before.phase = { kind: "awaiting_turn_action", seat: 1 };
+    renderTable(runtime, before, "play", [2, 5], []);
+    const handBefore = layer(runtime, "hand:1");
+    runtime.animations = [];
+    runtime.tilts = [];
+
+    const after = structuredClone(before);
+    const player = after.players.find((candidate) => candidate.seat === 1)!;
+    player.melds.push({
+      id: 9900,
+      kind: "open_kan",
+      tiles: [
+        { id: 9901, code: "3s" },
+        { id: 9902, code: "3s" },
+        { id: 9903, code: "3s" },
+        { id: 9904, code: "3s" },
+      ],
+      called_from: 2,
+      called_tile_id: 9904,
+    });
+    /* 四张移入副露、岭上补回一张：中间帧被批处理后净减少三张。 */
+    player.concealed_tile_count -= 3;
+    after.completed_rinshan_draws = 3;
+    after.remaining_live_draws -= 1;
+    after.version += 1;
+
+    renderTable(runtime, after, "play", [2, 5], []);
+
+    expect(layer(runtime, "hand:1")).toBe(handBefore);
+    expect(runtime.animations).toHaveLength(1);
+    expect(runtime.tilts).toHaveLength(1);
+    expect(runtime.pendingRinshanDraws.has(1)).toBe(false);
+    const animated = runtime.animations[0]!.group;
+    expect(animated.visible).toBe(true);
+    expect(animated.userData.opponentHandTileIndex).toBe(
+      player.concealed_tile_count - 1,
+    );
+  });
+
   it("对手手切空隙结束后原地归拢，不二次重建整排手牌", () => {
     vi.useFakeTimers();
     try {
