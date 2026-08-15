@@ -62,7 +62,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
   );
 }
 
-function VolumeRow({
+export function VolumeRow({
   label,
   value,
   onChange,

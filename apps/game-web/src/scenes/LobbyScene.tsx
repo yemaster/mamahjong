@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Brush,
   CircleHelp,
   LogOut,
   Maximize2,
   Minimize2,
-  Music4,
   ScrollText,
+  Settings,
   UserRound,
 } from "lucide-react";
 import { apiFailure, gameApi } from "../api";
@@ -185,6 +186,14 @@ export default function LobbyScene({
         </button>
         <button
           type="button"
+          onClick={() => navigateTo({ kind: "profile", tab: "options" })}
+          aria-label="选项设置"
+          title="选项设置"
+        >
+          <Settings aria-hidden="true" />
+        </button>
+        <button
+          type="button"
           onClick={() => void toggleFullscreen()}
           aria-label={fullscreen ? "退出全屏" : "进入全屏"}
           title={fullscreen ? "退出全屏" : "进入全屏"}
@@ -205,7 +214,7 @@ export default function LobbyScene({
         </button>
       </div>
 
-      {/* 靠右排，从右往左依次是牌谱、音乐、角色。 */}
+      {/* 靠右排，从右往左依次是牌谱、个性化、角色。 */}
       <div className="game-lobby__functions" aria-label="功能">
         <LobbyFunctionButton
           icon={UserRound}
@@ -213,9 +222,11 @@ export default function LobbyScene({
           onClick={() => navigateTo({ kind: "profile", tab: "character" })}
         />
         <LobbyFunctionButton
-          icon={Music4}
-          label="音乐"
-          onClick={() => navigateTo({ kind: "profile", tab: "music" })}
+          icon={Brush}
+          label="个性化"
+          onClick={() =>
+            navigateTo({ kind: "profile", tab: "personalization" })
+          }
         />
         <LobbyFunctionButton
           icon={ScrollText}

@@ -14,7 +14,7 @@ export type GameScene =
   | {
       kind: "profile";
       userId?: string;
-      tab?: "info" | "character" | "interface" | "music";
+      tab?: "info" | "character" | "personalization" | "options";
       returnRoomId?: string;
     };
 
@@ -46,15 +46,19 @@ function parseScene(hash: string): GameScene {
     case "profile":
       {
         const parameters = new URLSearchParams(query);
+        const requestedTab = parameters.get("tab");
+        const tab =
+          requestedTab === "character" ||
+          requestedTab === "personalization" ||
+          requestedTab === "options"
+            ? requestedTab
+            : requestedTab === "interface" || requestedTab === "music"
+              ? "personalization"
+              : undefined;
         return {
           kind: "profile",
           userId: id || undefined,
-          tab:
-            parameters.get("tab") === "character" ||
-            parameters.get("tab") === "interface" ||
-            parameters.get("tab") === "music"
-              ? (parameters.get("tab") as "character" | "interface" | "music")
-              : undefined,
+          tab,
           returnRoomId: parameters.get("return_room") ?? undefined,
         };
       }

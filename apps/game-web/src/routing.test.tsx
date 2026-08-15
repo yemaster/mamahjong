@@ -59,14 +59,27 @@ describe("useGameScene", () => {
     expect(container.textContent).toBe("profile:character:123456");
   });
 
-  it("保留界面设置标签", () => {
+  it("保留个性化和选项标签", () => {
     act(() => root.render(<SceneProbe />));
     act(() => {
-      navigateTo({ kind: "profile", tab: "interface" });
+      navigateTo({ kind: "profile", tab: "personalization" });
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
 
-    expect(window.location.hash).toContain("tab=interface");
-    expect(container.textContent).toBe("profile:interface:");
+    expect(window.location.hash).toContain("tab=personalization");
+    expect(container.textContent).toBe("profile:personalization:");
+
+    act(() => {
+      navigateTo({ kind: "profile", tab: "options" });
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    expect(window.location.hash).toContain("tab=options");
+    expect(container.textContent).toBe("profile:options:");
+  });
+
+  it("旧界面和音乐链接统一兼容到个性化", () => {
+    window.history.replaceState(null, "", "#profile?tab=music");
+    act(() => root.render(<SceneProbe />));
+    expect(container.textContent).toBe("profile:personalization:");
   });
 });

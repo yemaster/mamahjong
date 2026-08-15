@@ -79,7 +79,7 @@ export default function TableSettingsScene() {
     setSettings((current) => ({ ...current, [key]: value }));
   };
 
-  const leave = () => navigateTo({ kind: "profile", tab: "interface" });
+  const leave = () => navigateTo({ kind: "profile", tab: "personalization" });
 
   return (
     <div className="match-screen match-preview">

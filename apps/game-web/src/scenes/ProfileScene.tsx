@@ -3,7 +3,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFailure, gameApi } from "../api";
 import { useSceneReady } from "../components/SceneTransition";
 import { navigateTo } from "../routing";
+import { VolumeRow } from "../game/SettingsPanel";
 import { useAuthStore } from "../stores/authStore";
+import { useAudioSettings } from "../stores/audioSettingsStore";
 import {
   formatDuration,
   previewMusic,
@@ -27,7 +29,7 @@ import type {
 const profileBackground = `${import.meta.env.BASE_URL}assets/ui/sakura-campus-empty.png`;
 const fallbackAvatar = `${import.meta.env.BASE_URL}assets/local-characters/mahjong-soul/ichihime/emotes/8.png`;
 
-type ProfileTab = "info" | "character" | "interface" | "music";
+type ProfileTab = "info" | "character" | "personalization" | "options";
 
 export default function ProfileScene({
   userId,
@@ -151,20 +153,20 @@ export default function ProfileScene({
                 <button
                   type="button"
                   role="tab"
-                  aria-selected={activeTab === "interface"}
-                  className={activeTab === "interface" ? "is-active" : ""}
-                  onClick={() => setActiveTab("interface")}
+                  aria-selected={activeTab === "personalization"}
+                  className={activeTab === "personalization" ? "is-active" : ""}
+                  onClick={() => setActiveTab("personalization")}
                 >
-                  界面设置
+                  个性化
                 </button>
                 <button
                   type="button"
                   role="tab"
-                  aria-selected={activeTab === "music"}
-                  className={activeTab === "music" ? "is-active" : ""}
-                  onClick={() => setActiveTab("music")}
+                  aria-selected={activeTab === "options"}
+                  className={activeTab === "options" ? "is-active" : ""}
+                  onClick={() => setActiveTab("options")}
                 >
-                  音乐设置
+                  选项
                 </button>
               </div>
             )}
@@ -189,10 +191,10 @@ export default function ProfileScene({
                     void profile.refetch();
                   }}
                 />
-              ) : activeTab === "interface" && isOwn ? (
-                <InterfaceSettings />
-              ) : activeTab === "music" && isOwn ? (
-                <MusicSettings />
+              ) : activeTab === "personalization" && isOwn ? (
+                <PersonalizationSettings />
+              ) : activeTab === "options" && isOwn ? (
+                <OptionsSettings />
               ) : (
                 <>
                   <StatisticsPanel statistics={profile.data.statistics} />
@@ -203,6 +205,73 @@ export default function ProfileScene({
           </div>
         </div>
       </div>
+    </section>
+  );
+}
+
+function PersonalizationSettings() {
+  const [activeSection, setActiveSection] = useState<"interface" | "music">(
+    "interface",
+  );
+
+  return (
+    <div className="profile-personalization-settings" aria-label="个性化">
+      <div
+        className="profile-personalization-tabs"
+        role="tablist"
+        aria-label="个性化设置分类"
+      >
+        <button
+          type="button"
+          id="personalization-interface-tab"
+          role="tab"
+          aria-controls="personalization-interface-panel"
+          aria-selected={activeSection === "interface"}
+          className={activeSection === "interface" ? "is-active" : ""}
+          onClick={() => setActiveSection("interface")}
+        >
+          牌桌与界面
+        </button>
+        <button
+          type="button"
+          id="personalization-music-tab"
+          role="tab"
+          aria-controls="personalization-music-panel"
+          aria-selected={activeSection === "music"}
+          className={activeSection === "music" ? "is-active" : ""}
+          onClick={() => setActiveSection("music")}
+        >
+          音乐
+        </button>
+      </div>
+      {activeSection === "interface" ? (
+        <InterfaceSettings />
+      ) : (
+        <MusicSettings />
+      )}
+    </div>
+  );
+}
+
+function OptionsSettings() {
+  const { musicVolume, sfxVolume, setMusicVolume, setSfxVolume } =
+    useAudioSettings();
+  return (
+    <section
+      className="profile-section profile-options-settings"
+      aria-label="选项"
+    >
+      <h2>音量</h2>
+      <VolumeRow
+        label="背景音"
+        value={musicVolume}
+        onChange={setMusicVolume}
+      />
+      <VolumeRow
+        label="音效"
+        value={sfxVolume}
+        onChange={setSfxVolume}
+      />
     </section>
   );
 }
@@ -219,8 +288,8 @@ function InterfaceSettings() {
   const [selectedId, setSelectedId] = useState(
     identity?.profile.selected_tablecloth_id ?? "",
   );
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const requestSequence = useRef(0);
 
   useEffect(() => {
     if (!selectedId && defaultTablecloth) {
@@ -234,33 +303,38 @@ function InterfaceSettings() {
     selectedId,
   ]);
 
-  const saveTablecloth = async () => {
-    if (!token || !selectedId || saving) return;
-    setSaving(true);
-    setMessage(null);
+  const applyTablecloth = async (id: string) => {
+    if (!token || !id || id === selectedId) return;
+    const previous = selectedId;
+    requestSequence.current += 1;
+    const sequence = requestSequence.current;
+    setSelectedId(id);
+    setFailed(false);
     try {
-      const updated = await gameApi.updateTablecloth(token, selectedId);
+      const updated = await gameApi.updateTablecloth(token, id);
+      if (requestSequence.current !== sequence) return;
       setIdentity(updated);
-      setMessage("桌布已保存");
     } catch {
-      setMessage("桌布保存失败");
-    } finally {
-      setSaving(false);
+      if (requestSequence.current !== sequence) return;
+      setSelectedId(previous);
+      setFailed(true);
     }
   };
 
   return (
-    <section className="profile-section profile-interface-settings">
-      <h2>界面设置</h2>
+    <section
+      id="personalization-interface-panel"
+      className="profile-section profile-interface-settings"
+      role="tabpanel"
+      aria-labelledby="personalization-interface-tab"
+    >
+      <h3>牌桌设置</h3>
       <button
         type="button"
         className="profile-interface-settings__entry"
         onClick={() => navigateTo({ kind: "table-settings" })}
       >
-        <span>
-          <strong>牌桌设置</strong>
-          <small>调整对局镜头</small>
-        </span>
+        <small>调整对局镜头</small>
         <b>进入</b>
       </button>
       <div className="profile-tablecloth-settings">
@@ -271,30 +345,16 @@ function InterfaceSettings() {
               type="button"
               key={tablecloth.id}
               className={selectedId === tablecloth.id ? "is-selected" : ""}
-              onClick={() => {
-                setSelectedId(tablecloth.id);
-                setMessage(null);
-              }}
+              onClick={() => void applyTablecloth(tablecloth.id)}
             >
               <img src={tablecloth.texture_path} alt="" />
               <span>{tablecloth.name}</span>
             </button>
           ))}
         </div>
-        <div className="profile-tablecloth-settings__actions">
-          {message && <span>{message}</span>}
-          <button
-            type="button"
-            disabled={
-              saving ||
-              !selectedId ||
-              selectedId === identity?.profile.selected_tablecloth_id
-            }
-            onClick={() => void saveTablecloth()}
-          >
-            {saving ? "保存中…" : "保存桌布"}
-          </button>
-        </div>
+        {failed && (
+          <p className="profile-tablecloth-settings__failed">桌布未能应用</p>
+        )}
       </div>
     </section>
   );
@@ -380,8 +440,12 @@ function MusicSettings() {
   };
 
   return (
-    <section className="profile-section profile-music-settings">
-      <h2>音乐设置</h2>
+    <section
+      id="personalization-music-panel"
+      className="profile-section profile-music-settings"
+      role="tabpanel"
+      aria-labelledby="personalization-music-tab"
+    >
       <MusicPicker
         title="大厅音乐"
         scene="lobby"

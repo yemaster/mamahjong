@@ -75,7 +75,7 @@ export function App() {
     playMusic(track?.audio_path ?? null);
   }, [musicCatalog, inMatch, lobbyMusicId, matchMusicId]);
 
-  /* 非对局界面、非加载过渡中的点击/触屏播一下点击音。 */
+  /* 非对局界面的鼠标/触屏点击声属于“音效”，实时跟随选项页的音效音量。 */
   useEffect(() => {
     void preloadSfx(MOUSECLICK_SFX);
     const onClick = () => {
