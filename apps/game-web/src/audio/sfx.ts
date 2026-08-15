@@ -13,6 +13,12 @@ const PRELOAD_TIMEOUT_MS = 10_000;
 
 const cache = new Map<string, HTMLAudioElement>();
 
+useAudioSettings.subscribe((current, previous) => {
+  if (current.sfxVolume === previous.sfxVolume) return;
+  /* 包括已经开始播放的长音效；HTMLAudio.volume 修改后会立即生效。 */
+  for (const audio of cache.values()) audio.volume = current.sfxVolume;
+});
+
 /** 把音效文件 load 进 cache。同一个 src 多次调用等同于一次。 */
 export function preloadSfx(
   src: string,

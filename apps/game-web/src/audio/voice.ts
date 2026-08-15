@@ -5,10 +5,14 @@ import { useAudioSettings } from "../stores/audioSettingsStore";
  * 角色语音的基础音量。要盖过背景音乐（0.45），牌桌上喊出来才听得见。
  */
 const BASE_VOICE_VOLUME = 0.9;
-/** 试听音量。玩家是主动去听的，和音乐试听给一样的响度。 */
+/** 试听的基础音量；仍然受玩家的语音音量设置控制。 */
 const PREVIEW_VOLUME = 0.9;
 function voiceVolume(): number {
   return BASE_VOICE_VOLUME * useAudioSettings.getState().voiceVolume;
+}
+
+function previewVolume(): number {
+  return PREVIEW_VOLUME * useAudioSettings.getState().voiceVolume;
 }
 
 /** 素材没进 git，缺文件时不能把玩家卡在开局加载里，到点就当load完了。 */
@@ -18,6 +22,13 @@ const cache = new Map<string, HTMLAudioElement>();
 
 /** 正在试听的那一条。对局里的喊话不走这里，各喊各的不互相打断。 */
 let preview: HTMLAudioElement | null = null;
+
+useAudioSettings.subscribe((current, previous) => {
+  if (current.voiceVolume === previous.voiceVolume) return;
+  for (const audio of cache.values()) {
+    audio.volume = audio === preview ? previewVolume() : voiceVolume();
+  }
+});
 
 const audioAvailable = () => typeof Audio !== "undefined";
 
@@ -123,7 +134,7 @@ export async function previewVoice(
   await preloadVoice(src);
   const audio = element(src);
   audio.loop = false;
-  audio.volume = PREVIEW_VOLUME;
+  audio.volume = previewVolume();
   try {
     audio.currentTime = 0;
   } catch {

@@ -8,8 +8,11 @@ function musicVolume(): number {
   return BASE_MUSIC_VOLUME * useAudioSettings.getState().musicVolume;
 }
 
-/** 试听音量。玩家是主动去听的，给足一点。 */
+/** 试听的基础音量；仍然受玩家的背景音乐音量设置控制。 */
 const PREVIEW_VOLUME = 0.7;
+function previewVolume(): number {
+  return PREVIEW_VOLUME * useAudioSettings.getState().musicVolume;
+}
 /** 换曲淡入淡出的时长。 */
 const FADE_MS = 700;
 /** 淡入淡出的步进间隔。 */
@@ -29,6 +32,9 @@ let pendingRetry = false;
 /** 正在播放的立直音乐；不是立直状态就是 null。 */
 let riichiMusic: HTMLAudioElement | null = null;
 let riichiMusicSrc: string | null = null;
+
+/** 每个音频最多只有一条淡入淡出，实时拖音量时先结束旧淡变，避免下一拍覆盖滑块。 */
+const fadeTimers = new WeakMap<HTMLAudioElement, number>();
 
 const audioAvailable = () => typeof Audio !== "undefined";
 
@@ -72,6 +78,7 @@ function element(src: string): HTMLAudioElement {
 }
 
 function fade(audio: HTMLAudioElement, to: number, done?: () => void): void {
+  cancelFade(audio);
   const from = audio.volume;
   const steps = Math.max(1, Math.round(FADE_MS / FADE_STEP_MS));
   let step = 0;
@@ -81,10 +88,45 @@ function fade(audio: HTMLAudioElement, to: number, done?: () => void): void {
     audio.volume = Math.min(1, Math.max(0, from + (to - from) * ratio));
     if (ratio >= 1) {
       window.clearInterval(timer);
+      if (fadeTimers.get(audio) === timer) fadeTimers.delete(audio);
       done?.();
     }
   }, FADE_STEP_MS);
+  fadeTimers.set(audio, timer);
 }
+
+function cancelFade(audio: HTMLAudioElement): void {
+  const timer = fadeTimers.get(audio);
+  if (timer == null) return;
+  window.clearInterval(timer);
+  fadeTimers.delete(audio);
+}
+
+/** 把新的设置立即应用到当前正在响的实例，不等切歌或下一次 play。 */
+function syncPlayingMusicVolume(): void {
+  if (preview) {
+    cancelFade(preview);
+    preview.volume = previewVolume();
+  }
+  if (riichiMusic && riichiMusic !== preview) {
+    cancelFade(riichiMusic);
+    riichiMusic.volume = musicVolume();
+  }
+  if (
+    background &&
+    background !== preview &&
+    background !== riichiMusic
+  ) {
+    cancelFade(background);
+    background.volume = backgroundDucked || riichiMusic ? 0 : musicVolume();
+  }
+}
+
+useAudioSettings.subscribe((current, previous) => {
+  if (current.musicVolume !== previous.musicVolume) {
+    syncPlayingMusicVolume();
+  }
+});
 
 /**
  * 把一首曲子load到能连续播放为止。
@@ -183,7 +225,7 @@ export async function previewMusic(
   const audio = element(src);
   audio.loop = false;
   audio.currentTime = 0;
-  audio.volume = PREVIEW_VOLUME;
+  audio.volume = previewVolume();
   preview = audio;
   if (background && background !== audio) {
     backgroundDucked = true;
