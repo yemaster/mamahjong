@@ -78,6 +78,15 @@ describe("SceneTransition", () => {
     expect(
       container.querySelector(".fixed-dom-stage--transition"),
     ).not.toBeNull();
+    expect(container.querySelectorAll(".scene-transition__mist")).toHaveLength(2);
+    expect(container.querySelector(".scene-transition__mist-bank")).toBeNull();
+    const mistImages = container.querySelectorAll<HTMLImageElement>(
+      ".scene-transition__mist img",
+    );
+    expect(mistImages).toHaveLength(2);
+    expect(mistImages[0]?.src).toContain(
+      "/assets/ui/scene-transition-mist.png",
+    );
 
     /* 650ms 雾气动画结束后，旧页面仍留到安全帧结束。 */
     act(() => vi.advanceTimersByTime(SCENE_GATHER_DURATION_MS - 1));

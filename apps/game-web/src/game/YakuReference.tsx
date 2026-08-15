@@ -17,6 +17,7 @@ import {
   impactYakuEntries,
   type ImpactReferenceTab,
 } from "./impactReferenceData";
+import { projectAboutTemplate } from "./projectAboutData";
 
 export function YakuReferencePage({
   onBack,
@@ -107,7 +108,7 @@ function YakuReferenceHeader({
 }
 
 /**
- * 帮助页分两级：先选麻将种类，点进去才是那一种的规则。
+ * 帮助页分两级：先选帮助类别，再进入对应内容。
  *
  * 不做成并排的一排 tab，是因为两家的内容从数据到画法都不共用，摆在同一排上像是
  * 同一份东西的两个筛选项。分成两级之后，进来先看到的是「有哪几种麻将」，
@@ -118,11 +119,19 @@ const REFERENCE_FAMILIES = [
     key: "riichi",
     label: "立直麻将",
     summary: "经典四人 / 三人立直麻将。",
+    action: "查看规则 →",
   },
   {
     key: "impact",
     label: "冲击麻将",
     summary: "宁波余慈地区冲击麻将。",
+    action: "查看规则 →",
+  },
+  {
+    key: "about",
+    label: "关于本项目",
+    summary: "查看项目介绍与更新日志。",
+    action: "查看内容 →",
   },
 ] as const;
 
@@ -130,6 +139,7 @@ type ReferenceFamily = (typeof REFERENCE_FAMILIES)[number]["key"];
 
 function referenceTitle(family: ReferenceFamily | null): string {
   if (family === null) return "帮助";
+  if (family === "about") return "关于本项目";
   const label = REFERENCE_FAMILIES.find((entry) => entry.key === family)?.label;
   return `${label ?? "麻将"}-帮助`;
 }
@@ -151,7 +161,7 @@ function YakuReferenceBrowser({
               <button type="button" onClick={() => onFamilyChange(entry.key)}>
                 <h2>{entry.label}</h2>
                 <p>{entry.summary}</p>
-                <span aria-hidden="true">查看规则 →</span>
+                <span aria-hidden="true">{entry.action}</span>
               </button>
             </li>
           ))}
@@ -162,8 +172,48 @@ function YakuReferenceBrowser({
 
   return (
     <div className="yaku-reference__browser">
-      {family === "riichi" ? <RiichiReference /> : <ImpactReference />}
+      {family === "riichi" && <RiichiReference />}
+      {family === "impact" && <ImpactReference />}
+      {family === "about" && <ProjectAbout />}
     </div>
+  );
+}
+
+function ProjectAbout() {
+  return (
+    <main
+      className="project-about"
+      role="region"
+      aria-label="项目介绍与更新日志"
+    >
+      {projectAboutTemplate.sections.map((section) => (
+        <section className="project-about__section" key={section.title}>
+          <h2>{section.title}</h2>
+          {section.paragraphs.map((paragraph, paragraphIndex) => (
+            <p key={paragraphIndex}>{paragraph}</p>
+          ))}
+        </section>
+      ))}
+
+      <section className="project-about__section">
+        <h2>更新日志</h2>
+        <ol className="project-about__changelog">
+          {projectAboutTemplate.changelog.map((entry) => (
+            <li key={`${entry.version}-${entry.date}`}>
+              <header>
+                <strong>{entry.version}</strong>
+                <time>{entry.date}</time>
+              </header>
+              <ul>
+                {entry.changes.map((change, changeIndex) => (
+                  <li key={changeIndex}>{change}</li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ol>
+      </section>
+    </main>
   );
 }
 

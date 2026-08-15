@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LogOut, Maximize2, Minimize2 } from "lucide-react";
+import { preloadSceneTransitionMist } from "../sceneTransitionAssets";
 
 const splashBackground = `${import.meta.env.BASE_URL}assets/ui/sakura-campus-splash.png`;
 const splashLogo = `${import.meta.env.BASE_URL}assets/ui/mamahjong-splash-logo.png`;
@@ -61,6 +62,11 @@ export function SplashScreen({
   const backgroundHandled = useRef(false);
   const petalList = useMemo(() => createPetals(28), []);
   const backgroundReady = backgroundLoaded && gameLogoHoldComplete;
+
+  /* 登录/初始页停留期间先下载并解码雾图，转场开始后不再抢占主线程。 */
+  useEffect(() => {
+    void preloadSceneTransitionMist().catch(() => {});
+  }, []);
 
   const handleBackgroundLoaded = useCallback(() => {
     if (backgroundHandled.current) return;

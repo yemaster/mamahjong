@@ -1,6 +1,15 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  preloadSceneTransitionMist: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../sceneTransitionAssets", () => ({
+  preloadSceneTransitionMist: mocks.preloadSceneTransitionMist,
+}));
+
 import { SplashScreen } from "./SplashScreen";
 
 describe("SplashScreen", () => {
@@ -8,6 +17,7 @@ describe("SplashScreen", () => {
   let root: Root;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.useFakeTimers();
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -40,6 +50,8 @@ describe("SplashScreen", () => {
         />,
       ),
     );
+
+    expect(mocks.preloadSceneTransitionMist).toHaveBeenCalledOnce();
 
     const screen =
       container.querySelector<HTMLButtonElement>(".splash-entry-hit-area");

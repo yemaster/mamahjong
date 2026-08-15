@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { SCENE_TRANSITION_MIST } from "../sceneTransitionAssets";
 import { FixedDomStage } from "./FixedDomStage";
 
 type TransitionPhase = "idle" | "gathering" | "loading" | "revealing";
@@ -150,20 +151,20 @@ export function SceneTransition({ sceneKey, children }: Props) {
           >
             <div className="scene-transition__white" />
             <div className="scene-transition__mist scene-transition__mist--left">
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--one" />
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--two" />
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--three" />
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--four" />
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--five" />
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--six" />
+              <img
+                src={SCENE_TRANSITION_MIST}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+              />
             </div>
             <div className="scene-transition__mist scene-transition__mist--right">
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--one" />
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--two" />
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--three" />
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--four" />
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--five" />
-              <i className="scene-transition__mist-bank scene-transition__mist-bank--six" />
+              <img
+                src={SCENE_TRANSITION_MIST}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+              />
             </div>
             {waitingPeers ? (
               <div className="scene-transition__waiting">
