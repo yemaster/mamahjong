@@ -27,6 +27,11 @@ export const projectAboutTemplate = {
   ] satisfies readonly ProjectAboutSection[],
   changelog: [
     {
+      version: "v0.2.6",
+      date: "2026-08-14",
+      changes: ["优化了部分 UI", "修复了部分 bug"],
+    },
+    {
       version: "v0.2.5",
       date: "2026-08-13",
       changes: ["修复游戏内对局聊天无法接受的问题", "修复了牌局多次渲染刷新的问题", "优化了部分 UI", "修复了部分 bug"],
