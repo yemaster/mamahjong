@@ -18,6 +18,7 @@ import { useAdminActions } from "../composables/useAdminActions";
 import { useResource } from "../composables/useResource";
 import { useAdminSession } from "../session";
 import type { AdminTablecloth } from "../types";
+import { completeAdminBatch } from "../batchActions";
 
 const router = useRouter();
 const session = useAdminSession();
@@ -31,12 +32,14 @@ const pageError = computed(() => resource.error.value ?? actions.error.value);
 async function remove(ids: string[]) {
   const csrf = session.identity.value?.csrf_token;
   if (!csrf || !ids.length) return;
-  const success = await actions.run(() => Promise.all(ids.map((id) => adminApi.deleteTablecloth(id, csrf))), "桌布已删除");
-  if (success) { selected.value = []; await resource.reload(); }
+  const success = await actions.run(() => completeAdminBatch(ids.map((id) => () => adminApi.deleteTablecloth(id, csrf))), "桌布已删除");
+  await resource.reload();
+  if (success) selected.value = [];
 }
 
 function confirmRemove(event: Event, items: AdminTablecloth[]) {
   const ids = items.filter((item) => !item.is_default).map((item) => item.id);
+  if (!ids.length) return;
   actions.require(event, ids.length > 1 ? "批量删除桌布" : "删除桌布", `确定删除 ${ids.length} 个桌布？`, () => remove(ids), true);
 }
 
@@ -52,18 +55,15 @@ async function importTablecloths(event: FileUploadUploaderEvent) {
     const items = await readAssetBundle(file, "tablecloths", isTableclothInput);
     await upsertAssetItems(items, (resource.data.value?.tablecloths ?? []).map((item) => item.id), (item) => adminApi.createTablecloth(item, csrf), (item) => adminApi.updateTablecloth(item, csrf));
   }, "桌布导入完成");
-  if (success) {
-    selected.value = [];
-    await resource.reload();
-  }
+  await resource.reload();
+  if (success) selected.value = [];
 }
 </script>
 
 <template>
-  <PageShell title="桌布" :error="pageError" :loading="resource.loading.value">
-    <template #actions><Button icon="pi pi-refresh" severity="secondary" variant="outlined" aria-label="刷新" :loading="resource.loading.value" @click="resource.reload" /><Button label="添加桌布" icon="pi pi-plus" @click="router.push({ name: 'tablecloth-new' })" /></template>
+  <PageShell title="桌布管理" :error="pageError" :loading="resource.loading.value">
     <DataTable v-model:selection="selected" :value="rows" data-key="id" paginator :rows="10" :rows-per-page-options="[10, 20, 50]" scrollable table-style="min-width: 58rem">
-        <template #header><div class="flex align-items-center justify-content-between gap-3 flex-wrap"><span>全部桌布（{{ rows.length }}）</span><div class="flex gap-2 flex-wrap"><IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="搜索名称或编号" /></IconField><FileUpload mode="basic" accept=".json,application/json" :max-file-size="5242880" auto custom-upload choose-label="导入" choose-icon="pi pi-upload" :disabled="actions.pending.value" @uploader="importTablecloths" /><Button label="导出所选" icon="pi pi-download" severity="secondary" variant="outlined" :disabled="!selected.length" @click="exportSelected" /><Button v-if="selected.length" :label="`删除所选（${selected.filter((item) => !item.is_default).length}）`" icon="pi pi-trash" severity="danger" variant="outlined" @click="confirmRemove($event, selected)" /></div></div></template>
+        <template #header><div class="management-toolbar"><IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="搜索桌布" /></IconField><div class="management-actions"><Button icon="pi pi-refresh" severity="secondary" variant="text" aria-label="刷新" :loading="resource.loading.value" @click="resource.reload" /><Button label="添加" icon="pi pi-plus" @click="router.push({ name: 'tablecloth-new' })" /><FileUpload mode="basic" accept=".json,application/json" :max-file-size="5242880" auto custom-upload choose-label="导入" choose-icon="pi pi-upload" :disabled="actions.pending.value" @uploader="importTablecloths" /><Button label="导出" icon="pi pi-download" severity="secondary" variant="text" :disabled="!selected.length" @click="exportSelected" /><Button v-if="selected.length" :label="`删除（${selected.filter((item) => !item.is_default).length}）`" icon="pi pi-trash" severity="danger" variant="text" :disabled="!selected.some((item) => !item.is_default)" @click="confirmRemove($event, selected)" /></div></div></template>
         <Column selection-mode="multiple" header-style="width: 3rem" />
         <Column header="桌布" style="width: 14rem"><template #body="{ data }"><div class="flex align-items-center gap-3"><Image :src="data.texture_path" :alt="data.name" width="54" /><span class="font-medium">{{ data.name }}</span></div></template></Column>
         <Column field="id" header="编号" style="width: 13rem" />

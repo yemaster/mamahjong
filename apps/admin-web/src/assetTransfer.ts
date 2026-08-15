@@ -107,14 +107,17 @@ export async function readAssetBundle<T>(file: File, kind: AssetBundleKind, guar
   return parseAssetBundle(await file.text(), kind, guard);
 }
 
-export async function upsertAssetItems<T extends { id: string }>(
+export async function upsertAssetItems<T extends { id: string; is_default?: boolean }>(
   items: T[],
   existingIds: Iterable<string>,
   create: (item: T) => Promise<unknown>,
   update: (item: T) => Promise<unknown>,
 ) {
   const existing = new Set(existingIds);
-  for (const item of items) {
+  // Apply new defaults first so replacing an existing default never leaves a
+  // catalog temporarily without one and does not depend on JSON item order.
+  const ordered = [...items].sort((left, right) => Number(Boolean(right.is_default)) - Number(Boolean(left.is_default)));
+  for (const item of ordered) {
     if (existing.has(item.id)) await update(item);
     else {
       await create(item);

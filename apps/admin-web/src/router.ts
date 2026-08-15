@@ -18,6 +18,7 @@ export const router = createRouter({
         { path: "matches", name: "matches", component: () => import("./pages/MatchesPage.vue") },
         { path: "matches/:matchId", name: "match-detail", component: () => import("./pages/MatchDetailPage.vue"), props: true },
         { path: "characters", name: "characters", component: () => import("./pages/CharactersPage.vue") },
+        { path: "assets", name: "assets", component: () => import("./pages/AssetsPage.vue") },
         { path: "characters/new", name: "character-new", component: () => import("./pages/CharacterFormPage.vue") },
         { path: "characters/:characterId/edit", name: "character-edit", component: () => import("./pages/CharacterFormPage.vue"), props: true },
         { path: "tablecloths", name: "tablecloths", component: () => import("./pages/TableclothsPage.vue") },

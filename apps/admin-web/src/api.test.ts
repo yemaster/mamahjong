@@ -71,4 +71,24 @@ describe("adminApi", () => {
     expect(init.method).toBe("POST");
     expect(new Headers(init.headers).get("x-csrf-token")).toBe("csrf_2");
   });
+
+  it("uploads a managed asset as a binary body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ name: "hero.png", path: "characters/hero.png" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File(["image"], "hero.png", { type: "image/png" });
+
+    await adminApi.uploadAsset("characters", file, "csrf_asset");
+
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(path).toContain("/api/v1/admin/assets/files?");
+    expect(path).toContain("path=characters");
+    expect(init.body).toBe(file);
+    expect(new Headers(init.headers).get("content-type")).toBeNull();
+    expect(new Headers(init.headers).get("x-csrf-token")).toBe("csrf_asset");
+  });
 });

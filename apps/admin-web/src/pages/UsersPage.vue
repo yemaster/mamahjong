@@ -15,6 +15,7 @@ import { useAdminActions } from "../composables/useAdminActions";
 import { useResource } from "../composables/useResource";
 import { useAdminSession } from "../session";
 import type { AccountStatus, AdminUser } from "../types";
+import { completeAdminBatch } from "../batchActions";
 
 const session = useAdminSession();
 const actions = useAdminActions();
@@ -29,6 +30,12 @@ const users = computed(() => {
   const keyword = search.value.trim().toLocaleLowerCase();
   return (resource.data.value?.users ?? []).filter((user) => !keyword || `${user.login_name} ${user.nickname}`.toLocaleLowerCase().includes(keyword));
 });
+
+function selectedStatusIds(status: AccountStatus) {
+  return selected.value
+    .filter((user) => user.id !== session.identity.value?.id && user.status !== status)
+    .map((user) => user.id);
+}
 
 function openEdit(user: AdminUser) {
   editing.value = user;
@@ -49,8 +56,9 @@ async function saveUser() {
 async function updateUsers(ids: string[], status: AccountStatus) {
   const csrf = session.identity.value?.csrf_token;
   if (!csrf || !ids.length) return;
-  const success = await actions.run(() => Promise.all(ids.map((id) => adminApi.updateUserStatus(id, status, csrf))), "账号状态已更新");
-  if (success) { selected.value = []; await resource.reload(); }
+  const success = await actions.run(() => completeAdminBatch(ids.map((id) => () => adminApi.updateUserStatus(id, status, csrf))), "账号状态已更新");
+  await resource.reload();
+  if (success) selected.value = [];
 }
 
 function confirmUser(event: Event, user: AdminUser) {
@@ -59,19 +67,20 @@ function confirmUser(event: Event, user: AdminUser) {
 }
 
 function confirmSelected(event: Event, status: AccountStatus) {
-  const ids = selected.value.map((user) => user.id).filter((id) => id !== session.identity.value?.id);
+  const ids = selectedStatusIds(status);
+  if (!ids.length) return;
   actions.require(event, status === "suspended" ? "批量停用" : "批量恢复", `确定${status === "suspended" ? "停用" : "恢复"} ${ids.length} 个账号？`, () => updateUsers(ids, status), status === "suspended");
 }
 </script>
 
 <template>
-  <PageShell title="用户" :error="pageError" :loading="resource.loading.value">
+  <PageShell title="用户管理" :error="pageError" :loading="resource.loading.value">
     <DataTable v-model:selection="selected" :value="users" data-key="id" paginator :rows="10" :rows-per-page-options="[10, 20, 50]" scrollable table-style="min-width: 50rem">
-      <template #header><div class="flex align-items-center justify-content-between gap-3 flex-wrap"><span>全部用户（{{ users.length }}）</span><div class="flex gap-2 flex-wrap">
-        <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="搜索昵称或账号" /></IconField>
-        <Button icon="pi pi-refresh" severity="secondary" variant="outlined" aria-label="刷新" :loading="resource.loading.value" @click="resource.reload" />
-        <Button v-if="selected.length" label="恢复所选" severity="secondary" variant="outlined" @click="confirmSelected($event, 'active')" />
-        <Button v-if="selected.length" label="停用所选" severity="danger" variant="outlined" @click="confirmSelected($event, 'suspended')" />
+      <template #header><div class="management-toolbar"><div class="management-filters">
+        <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="搜索用户" /></IconField>
+      </div><div class="management-actions"><Button icon="pi pi-refresh" severity="secondary" variant="text" aria-label="刷新" :loading="resource.loading.value" @click="resource.reload" />
+        <Button v-if="selected.length" :label="`恢复所选（${selectedStatusIds('active').length}）`" icon="pi pi-check-circle" severity="secondary" variant="outlined" :disabled="!selectedStatusIds('active').length" @click="confirmSelected($event, 'active')" />
+        <Button v-if="selected.length" :label="`停用所选（${selectedStatusIds('suspended').length}）`" icon="pi pi-ban" severity="danger" variant="outlined" :disabled="!selectedStatusIds('suspended').length" @click="confirmSelected($event, 'suspended')" />
       </div></div></template>
         <Column selection-mode="multiple" header-style="width: 3rem" />
         <Column field="nickname" header="昵称" style="width: 12rem" />

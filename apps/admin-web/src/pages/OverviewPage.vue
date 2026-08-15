@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import Avatar from "primevue/avatar";
 import Card from "primevue/card";
 import Column from "primevue/column";
 import DataTable from "primevue/datatable";
@@ -12,29 +11,24 @@ import { actionLabel, formatDateTime } from "../format";
 
 const resource = useResource(adminApi.overview);
 const statistics = computed(() => [
-  { label: "用户", value: resource.data.value?.user_count ?? 0, suffix: "人", icon: "pi pi-users" },
-  { label: "等待中的房间", value: resource.data.value?.waiting_room_count ?? 0, suffix: "间", icon: "pi pi-clock" },
-  { label: "进行中的房间", value: resource.data.value?.playing_room_count ?? 0, suffix: "间", icon: "pi pi-play-circle" },
-  { label: "已归档对局", value: resource.data.value?.match_count ?? 0, suffix: "局", icon: "pi pi-history" },
-  { label: "角色", value: resource.data.value?.character_count ?? 0, suffix: "", icon: "pi pi-id-card" },
-  { label: "桌布", value: resource.data.value?.tablecloth_count ?? 0, suffix: "", icon: "pi pi-image" },
-  { label: "音乐", value: resource.data.value?.music_count ?? 0, suffix: "", icon: "pi pi-headphones" },
+  { label: "用户", value: resource.data.value?.user_count ?? 0, suffix: "人" },
+  { label: "等待房间", value: resource.data.value?.waiting_room_count ?? 0, suffix: "间" },
+  { label: "进行房间", value: resource.data.value?.playing_room_count ?? 0, suffix: "间" },
+  { label: "对局", value: resource.data.value?.match_count ?? 0, suffix: "局" },
+  { label: "角色", value: resource.data.value?.character_count ?? 0, suffix: "" },
+  { label: "桌布", value: resource.data.value?.tablecloth_count ?? 0, suffix: "" },
+  { label: "音乐", value: resource.data.value?.music_count ?? 0, suffix: "" },
 ]);
 </script>
 
 <template>
-  <PageShell title="概览" :error="resource.error.value" :loading="resource.loading.value">
+  <PageShell title="运营概览" :error="resource.error.value" :loading="resource.loading.value">
     <div class="grid">
       <div v-for="item in statistics" :key="item.label" class="col-12 sm:col-6 lg:col-3">
-        <Card class="h-full">
+        <Card class="h-full overview-stat-card">
           <template #content>
-            <div class="flex align-items-start justify-content-between gap-3">
-              <div>
-                <div class="text-color-secondary mb-2">{{ item.label }}</div>
-                <div class="text-3xl font-semibold">{{ item.value }}<span class="text-base font-normal ml-1">{{ item.suffix }}</span></div>
-              </div>
-              <Avatar :icon="item.icon" size="large" shape="circle" class="bg-primary-50 text-primary" />
-            </div>
+            <div class="text-color-secondary mb-2">{{ item.label }}</div>
+            <div class="text-3xl font-semibold">{{ item.value }}<span class="text-base font-normal ml-1">{{ item.suffix }}</span></div>
           </template>
         </Card>
       </div>

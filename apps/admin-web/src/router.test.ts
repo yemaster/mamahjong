@@ -15,4 +15,9 @@ describe("admin router", () => {
     await router.push({ name: "match-detail", params: { matchId: "match/测试" } });
     expect(router.currentRoute.value.params.matchId).toBe("match/测试");
   });
+
+  it("exposes the persistent asset manager", async () => {
+    await router.push({ name: "assets" });
+    expect(window.location.pathname).toBe("/admin/assets");
+  });
 });

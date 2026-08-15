@@ -68,10 +68,11 @@ describe("AdminLayout", () => {
 
     expect(wrapper.find(".admin-mobile-bar").exists()).toBe(false);
     expect(wrapper.find(".admin-sidebar .p-menu").exists()).toBe(true);
-    expect(wrapper.find(".admin-sidebar-title .pi").exists()).toBe(false);
+    expect(wrapper.find(".admin-brand-mark").exists()).toBe(false);
     expect(wrapper.find(".admin-sidebar-footer").exists()).toBe(true);
     expect(wrapper.find('[aria-label="打开菜单"]').exists()).toBe(false);
     expect(wrapper.text()).toContain("运营管理");
+    expect(wrapper.text()).toContain("资源库");
   });
 
   it("opens the PrimeVue Drawer on mobile", async () => {

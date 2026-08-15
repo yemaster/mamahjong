@@ -19,6 +19,8 @@ import type {
   AdminMusic,
   MusicInput,
   MusicList,
+  AssetList,
+  ManagedAsset,
 } from "./types";
 
 export class ApiError extends Error {
@@ -37,7 +39,7 @@ async function request<T>(
   csrfToken?: string,
 ): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (init?.body) {
+  if (typeof init?.body === "string") {
     headers.set("content-type", "application/json");
   }
   if (csrfToken) {
@@ -169,4 +171,24 @@ export const adminApi = {
       csrfToken,
     ),
   database: () => request<DatabaseInfo>("/database"),
+  assets: (path = "") =>
+    request<AssetList>(`/assets?${new URLSearchParams({ path })}`),
+  createAssetFolder: (path: string, name: string, csrfToken: string) =>
+    request<ManagedAsset>(
+      "/assets/folders",
+      { method: "POST", body: JSON.stringify({ path, name }) },
+      csrfToken,
+    ),
+  uploadAsset: (path: string, file: File, csrfToken: string) =>
+    request<ManagedAsset>(
+      `/assets/files?${new URLSearchParams({ path, name: file.name })}`,
+      { method: "POST", body: file },
+      csrfToken,
+    ),
+  deleteAsset: (path: string, csrfToken: string) =>
+    request<void>(
+      `/assets?${new URLSearchParams({ path })}`,
+      { method: "DELETE" },
+      csrfToken,
+    ),
 };

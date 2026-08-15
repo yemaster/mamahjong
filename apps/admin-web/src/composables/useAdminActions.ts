@@ -9,6 +9,7 @@ export function useAdminActions() {
   const error = ref<Error>();
 
   async function run(task: () => Promise<unknown>, success: string) {
+    if (pending.value) return false;
     pending.value = true;
     error.value = undefined;
     try {

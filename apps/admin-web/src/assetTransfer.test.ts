@@ -35,4 +35,19 @@ describe("asset transfer", () => {
     expect(update).toHaveBeenCalledWith(tablecloth);
     expect(create).toHaveBeenCalledWith(added);
   });
+
+  it("imports replacement defaults before clearing existing defaults", async () => {
+    const order: string[] = [];
+    const oldDefault = { ...tablecloth, is_default: false };
+    const newDefault = { ...tablecloth, id: "blue", is_default: true };
+
+    await upsertAssetItems(
+      [oldDefault, newDefault],
+      ["green"],
+      async (item) => { order.push(`create:${item.id}`); },
+      async (item) => { order.push(`update:${item.id}`); },
+    );
+
+    expect(order).toEqual(["create:blue", "update:green"]);
+  });
 });

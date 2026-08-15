@@ -54,13 +54,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <main class="flex align-items-center justify-content-center min-h-screen p-3 bg-surface-50">
+  <main class="admin-login-page">
     <ProgressSpinner v-if="loading" aria-label="正在加载" />
-    <Card v-else class="w-full max-w-30rem shadow-3">
+    <Card v-else class="admin-login-card">
       <template #content>
-        <div class="text-center mb-6">
-          <h1 class="m-0 text-3xl font-semibold">登录管理控制台</h1>
-          <p class="mt-2 mb-0 text-color-secondary">麻麻的将</p>
+        <div class="admin-login-heading">
+          <h1>管理后台</h1>
         </div>
 
         <Message v-if="!bootstrap?.enabled && !error" severity="warn" :closable="false" class="mb-4">管理端未启用</Message>

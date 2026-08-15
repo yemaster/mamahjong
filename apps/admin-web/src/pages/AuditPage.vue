@@ -32,15 +32,14 @@ const events = computed(() => {
 
 <template>
   <PageShell title="审计日志" :error="resource.error.value" :loading="resource.loading.value">
-    <template #actions><Button icon="pi pi-refresh" severity="secondary" variant="outlined" aria-label="刷新" :loading="resource.loading.value" @click="resource.reload" /></template>
     <DataTable :value="events" data-key="sequence" paginator :rows="20" :rows-per-page-options="[10, 20, 50]" sort-field="sequence" :sort-order="-1" scrollable table-style="min-width: 68rem" current-page-report-template="共 {totalRecords} 项">
       <template #header>
-        <div class="flex align-items-center justify-content-between gap-3 flex-wrap px-1">
-          <span>审计记录（{{ events.length }}）</span>
-          <div class="flex gap-2 flex-wrap">
+        <div class="management-toolbar">
+          <div class="management-filters">
             <Select v-model="category" :options="categories" option-label="label" option-value="value" show-clear placeholder="全部类别" />
-            <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="搜索操作、说明或目标 ID" /></IconField>
+            <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="搜索日志" /></IconField>
           </div>
+          <div class="management-actions"><Button icon="pi pi-refresh" severity="secondary" variant="text" aria-label="刷新" :loading="resource.loading.value" @click="resource.reload" /></div>
         </div>
       </template>
       <Column field="sequence" header="序号" sortable style="width: 6rem" />

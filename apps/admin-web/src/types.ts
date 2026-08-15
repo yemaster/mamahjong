@@ -142,6 +142,24 @@ export interface MusicList {
   music_tracks: AdminMusic[];
 }
 
+export type AssetMediaType = "folder" | "image" | "audio" | "video" | "text" | "binary";
+
+export interface ManagedAsset {
+  name: string;
+  path: string;
+  kind: "folder" | "file";
+  size: number;
+  modified_at_ms: number;
+  media_type: AssetMediaType;
+}
+
+export interface AssetList {
+  schema: "admin_asset_list.v1";
+  path: string;
+  public_base: "/user-assets";
+  entries: ManagedAsset[];
+}
+
 export interface MatchSeatSummary {
   seat: number;
   nickname: string;

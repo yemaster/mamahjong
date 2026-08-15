@@ -18,6 +18,7 @@ import { useAdminActions } from "../composables/useAdminActions";
 import { useResource } from "../composables/useResource";
 import { useAdminSession } from "../session";
 import type { AdminMusic, MusicScene } from "../types";
+import { completeAdminBatch } from "../batchActions";
 
 const router = useRouter();
 const session = useAdminSession();
@@ -35,11 +36,13 @@ function duration(value: number) { return `${Math.floor(value / 60000)}:${String
 async function remove(ids: string[]) {
   const csrf = session.identity.value?.csrf_token;
   if (!csrf || !ids.length) return;
-  const success = await actions.run(() => Promise.all(ids.map((id) => adminApi.deleteMusic(id, csrf))), "音乐已删除");
-  if (success) { selected.value = []; await resource.reload(); }
+  const success = await actions.run(() => completeAdminBatch(ids.map((id) => () => adminApi.deleteMusic(id, csrf))), "音乐已删除");
+  await resource.reload();
+  if (success) selected.value = [];
 }
 function confirmRemove(event: Event, items: AdminMusic[]) {
   const ids = items.filter((item) => !item.is_default).map((item) => item.id);
+  if (!ids.length) return;
   actions.require(event, ids.length > 1 ? "批量删除音乐" : "删除音乐", `确定删除 ${ids.length} 首音乐？`, () => remove(ids), true);
 }
 
@@ -55,18 +58,15 @@ async function importMusic(event: FileUploadUploaderEvent) {
     const items = await readAssetBundle(file, "music", isMusicInput);
     await upsertAssetItems(items, (resource.data.value?.music_tracks ?? []).map((item) => item.id), (item) => adminApi.createMusic(item, csrf), (item) => adminApi.updateMusic(item, csrf));
   }, "音乐导入完成");
-  if (success) {
-    selected.value = [];
-    await resource.reload();
-  }
+  await resource.reload();
+  if (success) selected.value = [];
 }
 </script>
 
 <template>
-  <PageShell title="音乐" :error="pageError" :loading="resource.loading.value">
-    <template #actions><Button icon="pi pi-refresh" severity="secondary" variant="outlined" aria-label="刷新" :loading="resource.loading.value" @click="resource.reload" /><Button label="添加音乐" icon="pi pi-plus" @click="router.push({ name: 'music-new' })" /></template>
+  <PageShell title="音乐管理" :error="pageError" :loading="resource.loading.value">
     <DataTable v-model:selection="selected" :value="rows" data-key="id" paginator :rows="10" :rows-per-page-options="[10, 20, 50]" scrollable table-style="min-width: 66rem">
-        <template #header><div class="flex align-items-center justify-content-between gap-3 flex-wrap"><span>全部音乐（{{ rows.length }}）</span><div class="flex gap-2 flex-wrap"><IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="搜索名称或编号" /></IconField><Select v-model="scene" :options="sceneOptions" option-label="label" option-value="value" show-clear placeholder="全部场景" /><FileUpload mode="basic" accept=".json,application/json" :max-file-size="5242880" auto custom-upload choose-label="导入" choose-icon="pi pi-upload" :disabled="actions.pending.value" @uploader="importMusic" /><Button label="导出所选" icon="pi pi-download" severity="secondary" variant="outlined" :disabled="!selected.length" @click="exportSelected" /><Button v-if="selected.length" :label="`删除所选（${selected.filter((item) => !item.is_default).length}）`" icon="pi pi-trash" severity="danger" variant="outlined" @click="confirmRemove($event, selected)" /></div></div></template>
+        <template #header><div class="management-toolbar"><div class="management-filters"><IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="搜索音乐" /></IconField><Select v-model="scene" :options="sceneOptions" option-label="label" option-value="value" show-clear placeholder="全部场景" /></div><div class="management-actions"><Button icon="pi pi-refresh" severity="secondary" variant="text" aria-label="刷新" :loading="resource.loading.value" @click="resource.reload" /><Button label="添加" icon="pi pi-plus" @click="router.push({ name: 'music-new' })" /><FileUpload mode="basic" accept=".json,application/json" :max-file-size="5242880" auto custom-upload choose-label="导入" choose-icon="pi pi-upload" :disabled="actions.pending.value" @uploader="importMusic" /><Button label="导出" icon="pi pi-download" severity="secondary" variant="text" :disabled="!selected.length" @click="exportSelected" /><Button v-if="selected.length" :label="`删除（${selected.filter((item) => !item.is_default).length}）`" icon="pi pi-trash" severity="danger" variant="text" :disabled="!selected.some((item) => !item.is_default)" @click="confirmRemove($event, selected)" /></div></div></template>
         <Column selection-mode="multiple" header-style="width: 3rem" />
         <Column field="name" header="名称" style="width: 12rem" />
         <Column field="id" header="编号" style="width: 13rem" />

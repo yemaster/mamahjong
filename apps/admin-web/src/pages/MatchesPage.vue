@@ -31,17 +31,16 @@ const rows = computed(() => {
 </script>
 
 <template>
-  <PageShell title="对局" :error="resource.error.value" :loading="resource.loading.value">
-    <template #actions><Button icon="pi pi-refresh" severity="secondary" variant="outlined" aria-label="刷新" :loading="resource.loading.value" @click="resource.reload" /></template>
+  <PageShell title="对局记录" :error="resource.error.value" :loading="resource.loading.value">
     <DataTable v-model:selection="selected" :value="rows" data-key="match_id" paginator :rows="20" :rows-per-page-options="[10, 20, 50]" sort-field="finished_at_ms" :sort-order="-1" scrollable table-style="min-width: 72rem" current-page-report-template="共 {totalRecords} 局">
       <template #header>
-        <div class="flex align-items-center justify-content-between gap-3 flex-wrap px-1">
-          <span>全部对局（{{ rows.length }}）</span>
-          <div class="flex align-items-center gap-2 flex-wrap">
-            <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="搜索对局编号或玩家" /></IconField>
+        <div class="management-toolbar">
+          <div class="management-filters">
+            <IconField><InputIcon class="pi pi-search" /><InputText v-model="search" placeholder="搜索对局" /></IconField>
             <Select v-model="family" :options="families" option-label="label" option-value="value" show-clear placeholder="全部规则" />
             <Tag v-if="selected.length" severity="info" :value="`已选择 ${selected.length} 项`" />
           </div>
+          <div class="management-actions"><Button icon="pi pi-refresh" severity="secondary" variant="text" aria-label="刷新" :loading="resource.loading.value" @click="resource.reload" /></div>
         </div>
       </template>
       <Column selection-mode="multiple" header-style="width: 3rem" />

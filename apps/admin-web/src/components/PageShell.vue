@@ -13,7 +13,9 @@ defineProps<{
 <template>
   <section class="page-content">
     <Toolbar class="page-heading border-none p-0 bg-transparent">
-      <template #start><h1 class="m-0 text-2xl md:text-3xl font-semibold">{{ title }}</h1></template>
+      <template #start>
+        <h1 class="m-0">{{ title }}</h1>
+      </template>
       <template v-if="$slots.actions" #end><div class="flex align-items-center gap-2 flex-wrap"><slot name="actions" /></div></template>
     </Toolbar>
     <Message v-if="error" severity="error" :closable="false" class="mt-4">{{ error.message }}</Message>

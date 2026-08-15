@@ -40,6 +40,7 @@ const navigation: MenuItem[] = [
     label: "素材管理",
     icon: "pi pi-folder",
     items: [
+      { label: "资源库", icon: "pi pi-folder-open", route: "/assets" },
       { label: "角色", icon: "pi pi-id-card", route: "/characters" },
       { label: "桌布", icon: "pi pi-image", route: "/tablecloths" },
       { label: "音乐", icon: "pi pi-headphones", route: "/music" },
@@ -87,14 +88,10 @@ onBeforeUnmount(() => {
 <template>
   <div class="admin-shell">
     <aside class="admin-sidebar" aria-label="后台导航">
-      <RouterLink to="/" class="admin-sidebar-title" aria-label="返回总览">
-        <span class="font-semibold text-lg">麻麻的将</span>
-        <span class="text-xs text-color-secondary">管理后台</span>
-      </RouterLink>
-
       <AdminNavigation :model="navigation" />
 
       <div class="admin-sidebar-footer">
+        <span class="admin-user-avatar"><i class="pi pi-user" aria-hidden="true" /></span>
         <div class="min-w-0">
           <div class="font-medium overflow-hidden text-overflow-ellipsis white-space-nowrap">{{ session.identity.value?.nickname }}</div>
           <div class="text-xs text-color-secondary mt-1">管理员</div>
@@ -108,7 +105,7 @@ onBeforeUnmount(() => {
         <template #start>
           <div class="flex align-items-center gap-2">
             <Button icon="pi pi-bars" severity="secondary" variant="text" aria-label="打开菜单" aria-controls="admin-navigation" :aria-expanded="mobileNavigationVisible" @click="mobileNavigationVisible = true" />
-            <span class="font-semibold">管理后台</span>
+            <strong>管理后台</strong>
           </div>
         </template>
         <template #end>
