@@ -253,6 +253,11 @@ function WinBoard({
 
   const seatLabel = winner.dealer ? "庄" : "子";
   const limit = winner.limit && winner.limit.length > 0 ? winner.limit : null;
+  /* 四倍及以上役满的后端名是含糊的「多倍役满」，这里换成具体倍数。 */
+  const limitLabel =
+    limit && winner.yakuman_multiplier >= 4
+      ? `${winner.yakuman_multiplier}倍役满`
+      : limit;
 
   return (
     <div className="win-board">
@@ -341,10 +346,8 @@ function WinBoard({
           {impact ? null : (
             <div className={`win-board__tally${showTally ? " is-revealed" : ""}`}>
               {winner.yakuman_multiplier > 0 ? (
-                <>
-                  <b>{winner.yakuman_multiplier}</b>
-                  <i>倍役满</i>
-                </>
+                /* 有役满番种就只写「役满」，倍数统一进横幅大字。 */
+                <b className="is-han">役满</b>
               ) : (
                 <>
                   <b className="is-han">{winner.han}</b>
@@ -365,7 +368,7 @@ function WinBoard({
                     <b>{winner.points.toLocaleString("en-US")}</b>
                     <i>点</i>
                   </div>
-                  {limit && <div className="win-board__limit">{limit}</div>}
+                  {limitLabel && <div className="win-board__limit">{limitLabel}</div>}
                 </>
               )}
             </div>
