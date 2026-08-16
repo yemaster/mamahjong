@@ -1560,12 +1560,26 @@ impl RiichiRuntime {
 
     /// The most conservative action for a seat that ran out of time.
     ///
-    /// Discards the drawn tile when there is one, otherwise the rightmost
-    /// concealed tile that the rules accept. Never wins, calls or declares
-    /// riichi on the player's behalf.
+    /// A win is never passed up: when the seat can ron a discard, it rons; when
+    /// it can tsumo on its own draw, it tsumos. Otherwise it discards the drawn
+    /// tile when there is one, or the rightmost concealed tile the rules accept.
+    /// Calls and riichi declarations are never made on the player's behalf.
     fn timeout_command(&self, seat: Seat) -> Result<GameCommand, ApplicationError> {
         if matches!(self.hand.phase(), HandPhase::AwaitingResponses { .. }) {
-            return Ok(GameCommand::Pass);
+            let can_ron = self
+                .hand
+                .available_reactions(seat, &RiichiScorer)
+                .map_err(|error| internal_error(error.to_string()))?
+                .iter()
+                .any(|reaction| matches!(reaction, Reaction::Ron));
+            return Ok(if can_ron {
+                GameCommand::Ron
+            } else {
+                GameCommand::Pass
+            });
+        }
+        if self.hand.evaluate_tsumo(seat).is_ok() {
+            return Ok(GameCommand::Tsumo);
         }
         let player = self
             .hand

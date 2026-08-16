@@ -3289,6 +3289,150 @@ mod tests {
     }
 
     #[test]
+    fn a_timeout_declares_tsumo_when_the_drawn_tile_completes_a_win() {
+        let application = Application::new();
+        let (players, match_id) = started_sanma_table(&application, "clock_tsumo");
+        let mahjong_riichi::HandPhase::AwaitingTurnAction { seat } = application
+            .match_view(players[0].id(), &match_id)
+            .expect("view")
+            .phase()
+        else {
+            panic!("a fresh hand waits for the dealer");
+        };
+        let public_view = application
+            .match_view(players[0].id(), &match_id)
+            .expect("public match view");
+        let dealer_user_id = public_view.players()[usize::from(seat.index())]
+            .player()
+            .user_id();
+        let dealer = players
+            .iter()
+            .find(|player| player.id() == dealer_user_id)
+            .expect("dealer seat belongs to a registered player");
+
+        // 三麻没有二到八万，凑一副断幺九的听牌：任意一张都是完整牌型的一员，
+        // 摸上来的那张正好凑齐四副顺子加一对，超时后应该自摸而不是切牌。
+        let hand_codes = [
+            "2p", "3p", "4p", "2s", "3s", "4s", "3p", "4p", "5p", "3s", "4s", "5s", "6s", "6s",
+        ]
+        .map(str::to_owned);
+        application
+            .set_dev_hand(dealer.id(), &match_id, &hand_codes)
+            .expect("dev hand");
+
+        let expiries = application
+            .expire_clocks(full_thinking_time(0))
+            .expect("sweep");
+
+        assert_eq!(expiries.len(), 1);
+        assert_eq!(expiries[0].match_id, match_id);
+        let view = application
+            .match_view(dealer.id(), &match_id)
+            .expect("view after timeout");
+        let settlement = view
+            .hand_settlement()
+            .expect("the timeout declared a tsumo");
+        assert_eq!(settlement.winners().len(), 1);
+        assert_eq!(settlement.winners()[0].seat(), seat);
+    }
+
+    #[test]
+    fn a_timeout_declares_ron_when_a_discard_completes_a_win() {
+        let application = Application::new();
+        let (players, match_id) = started_sanma_table(&application, "clock_ron");
+        let view = application
+            .match_view(players[0].id(), &match_id)
+            .expect("view");
+        let mahjong_riichi::HandPhase::AwaitingTurnAction { seat } = view.phase() else {
+            panic!("a fresh hand waits for the dealer");
+        };
+        let dealer_user_id = view.players()[usize::from(seat.index())].player().user_id();
+        let dealer = players
+            .iter()
+            .find(|player| player.id() == dealer_user_id)
+            .expect("dealer seat belongs to a registered player");
+        let responder_seat = mahjong_riichi::Seat::new(
+            mahjong_riichi::RiichiVariant::Sanma,
+            (seat.index() + 1) % 3,
+        )
+        .expect("the next seat exists");
+        let responder_user_id = view.players()[usize::from(responder_seat.index())]
+            .player()
+            .user_id();
+        let responder = players
+            .iter()
+            .find(|player| player.id() == responder_user_id)
+            .expect("responder seat belongs to a registered player");
+
+        // 让庄家摸上来的那张是 2s，弃牌必是 2s。
+        let dealer_view = application
+            .match_view(dealer.id(), &match_id)
+            .expect("dealer view");
+        let dealer_player = &dealer_view.players()[usize::from(seat.index())];
+        let drawn_id = dealer_player
+            .drawn_tile_id()
+            .expect("dealer holds a drawn tile");
+        let drawn_index = dealer_player
+            .concealed_tiles()
+            .expect("own concealed hand")
+            .iter()
+            .position(|tile| tile.id() == drawn_id)
+            .expect("drawn tile is in hand");
+        let mut dealer_codes = vec!["1p".to_owned(); 14];
+        dealer_codes[drawn_index] = "2s".to_owned();
+        application
+            .set_dev_hand(dealer.id(), &match_id, &dealer_codes)
+            .expect("dealer dev hand");
+
+        // 下一家单骑听 2s（断幺九），荣到 2s 就能和。
+        let responder_codes = [
+            "2p", "3p", "4p", "4p", "5p", "6p", "2p", "3p", "4p", "4p", "5p", "6p", "2s",
+        ]
+        .map(str::to_owned);
+        application
+            .set_dev_hand(responder.id(), &match_id, &responder_codes)
+            .expect("responder dev hand");
+
+        // 庄家弃掉 2s，下家进入可以荣和的等待。
+        let dealer_view = application
+            .match_view(dealer.id(), &match_id)
+            .expect("dealer view after dev hand");
+        let discard_tile_id = dealer_view.players()[usize::from(seat.index())]
+            .drawn_tile_id()
+            .expect("drawn tile")
+            .value();
+        let discarded_at_ms = 1_000;
+        application
+            .submit_game_command(
+                dealer.id(),
+                &match_id,
+                SubmitGameCommand {
+                    expected_version: dealer_view.version(),
+                    command: GameCommand::Discard {
+                        tile_id: discard_tile_id,
+                    },
+                },
+                discarded_at_ms,
+            )
+            .expect("discard");
+
+        // 下家能荣 2s，超时后应该自动荣和，而不是过牌。
+        let grace_ms = crate::discard_animation_ms();
+        let expiries = application
+            .expire_clocks(discarded_at_ms + grace_ms + full_thinking_time(0))
+            .expect("sweep");
+
+        assert_eq!(expiries.len(), 1);
+        assert_eq!(expiries[0].match_id, match_id);
+        let view = application
+            .match_view(responder.id(), &match_id)
+            .expect("view after timeout");
+        let settlement = view.hand_settlement().expect("the timeout declared a ron");
+        assert_eq!(settlement.winners().len(), 1);
+        assert_eq!(settlement.winners()[0].seat(), responder_seat);
+    }
+
+    #[test]
     fn deciding_in_time_keeps_the_reserve_intact() {
         let application = Application::new();
         let (players, match_id) = started_sanma_table(&application, "clock_reserve");
