@@ -29,7 +29,7 @@ export const projectAboutTemplate = {
     {
       version: "v0.2.6",
       date: "2026-08-14",
-      changes: ["优化了部分 UI", "修复了部分 bug"],
+      changes: ["修复了音量调整失效的问题", "优化了部分 UI", "修复了部分 bug"],
     },
     {
       version: "v0.2.5",
