@@ -66,6 +66,7 @@ vi.mock("./wall", async (importOriginal) => ({
 }));
 
 import { renderTable } from "./scene";
+import { addSelfDraw } from "./selfMotion";
 
 function renderingRuntime(): TableRuntime {
   const root = new THREE.Group();
@@ -274,6 +275,57 @@ describe("牌桌局部渲染边界", () => {
     expect(animated.userData.opponentHandTileIndex).toBe(
       player.concealed_tile_count - 1,
     );
+  });
+
+  it("自摸视角杠后从岭上摸牌，飞牌动画拿到正确的岭上槽位", () => {
+    const runtime = renderingRuntime();
+    const before = cloneView();
+    before.variant_kind = "impact";
+    before.completed_rinshan_draws = 0;
+    before.phase = { kind: "awaiting_turn_action", seat: 0 };
+    renderTable(runtime, before, "play", [2, 5], []);
+
+    /* 自己暗杠：四张进副露、阶段进 waiting_kan_animation，drawn 暂时不动。 */
+    const waiting = structuredClone(before);
+    const selfWaiting = waiting.players.find((candidate) => candidate.seat === 0)!;
+    selfWaiting.concealed_tiles = selfWaiting.concealed_tiles!.slice(0, -4);
+    selfWaiting.concealed_tile_count -= 4;
+    selfWaiting.melds.push({
+      id: 9900,
+      kind: "concealed_kan",
+      tiles: [
+        { id: 9901, code: "1m" },
+        { id: 9902, code: "1m" },
+        { id: 9903, code: "1m" },
+        { id: 9904, code: "1m" },
+      ],
+      called_from: null,
+      called_tile_id: null,
+    });
+    waiting.phase = { kind: "awaiting_kan_animation", seat: 0 };
+    renderTable(runtime, waiting, "play", [2, 5], []);
+
+    /* 服务端补摸：岭上计数 +1、轮到自己、摸入一张新牌。 */
+    const drawn = structuredClone(waiting);
+    const selfDrawn = drawn.players.find((candidate) => candidate.seat === 0)!;
+    selfDrawn.concealed_tiles = [
+      ...(selfDrawn.concealed_tiles ?? []),
+      { id: 9999, code: "5m" },
+    ];
+    selfDrawn.concealed_tile_count += 1;
+    selfDrawn.drawn_tile_id = 9999;
+    drawn.completed_rinshan_draws = 1;
+    drawn.remaining_live_draws -= 1;
+    drawn.phase = { kind: "awaiting_turn_action", seat: 0 };
+    drawn.version += 1;
+
+    vi.mocked(addSelfDraw).mockClear();
+    renderTable(runtime, drawn, "play", [2, 5], []);
+
+    const calls = vi.mocked(addSelfDraw).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    /* 第 8 个参数是 rinshanDrawNumber。 */
+    expect(calls[calls.length - 1]![7]).toBe(1);
   });
 
   it("对手手切空隙结束后原地归拢，不二次重建整排手牌", () => {

@@ -412,8 +412,12 @@ export default function GameScene({ matchId }: GameSceneProps) {
       if (!view) return;
 
       if (wsState === "connected" && streamRef.current) {
-        streamRef.current.sendCommand(name, payload, view.version);
-        return;
+        if (streamRef.current.sendCommand(name, payload, view.version)) {
+          return;
+        }
+        /* 连接状态刚标成 connected、底层 socket 却已关闭的空窗里，别把这条
+           指令丢掉——尤其 impact.kan_animation_played 这种一次性的握手，
+           掉了服务端会一直卡到超时。退回去走 HTTP 保证它一定送到。 */
       }
 
       gameApi
@@ -992,7 +996,16 @@ export default function GameScene({ matchId }: GameSceneProps) {
   useEffect(() => {
     if (!matchView || kanBaselineMatchId.current === matchView.id) return;
     kanBaselineMatchId.current = matchView.id;
-    playedKanId.current = matchView.last_kan?.id ?? 0;
+    /*
+     * 若进入时正处于 awaiting_kan_animation，说明这次杠的浮层还没播过——不能把
+     * 当前 last_kan.id 纳入"已播"基线，否则第二个 effect 看到 id <= played 就
+     * 直接跳过，覆层永不出现，impact.kan_animation_played 也就永远发不出去，服
+     * 务端会一直卡在等待状态直到超时。把基线设成 id - 1，让这次杠正常触发。
+     */
+    const awaitingKan = matchView.phase.kind === "awaiting_kan_animation";
+    playedKanId.current = awaitingKan
+      ? Math.max(0, (matchView.last_kan?.id ?? 1) - 1)
+      : (matchView.last_kan?.id ?? 0);
     kanOverlayHandIndex.current = matchView.hand_index;
   }, [matchView]);
   useEffect(() => {

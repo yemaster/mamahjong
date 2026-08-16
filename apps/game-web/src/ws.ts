@@ -88,9 +88,9 @@ export class MatchStream {
     this.setState("disconnected");
   }
 
-  sendCommand(name: string, payload?: unknown, expectedVersion?: number): void {
+  sendCommand(name: string, payload?: unknown, expectedVersion?: number): boolean {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return;
+      return false;
     }
     const commandId = `c${++this.commandIdCounter}`;
     const envelope: Record<string, unknown> = {
@@ -104,6 +104,7 @@ export class MatchStream {
       envelope.payload = payload;
     }
     this.ws.send(JSON.stringify(envelope));
+    return true;
   }
 
   sendChat(type: "text" | "emoji", content: string): boolean {

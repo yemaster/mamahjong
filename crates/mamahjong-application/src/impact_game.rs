@@ -607,8 +607,8 @@ impl ImpactRuntime {
                 && self.exit_vote.is_none()
                 && self.exit_vote_used_hand[usize::from(observer_seat)] != Some(self.hand_index)
                 && !self.terminated_by_exit_vote
-                && self.pending.is_none()
                 && self.pending_kan_animation.is_none()
+                && self.pending.is_none()
                 && self.result.is_none(),
             exit_vote: self.exit_vote.as_ref().map(|vote| ObserverImpactExitVote {
                 initiator: vote.initiator,
@@ -743,7 +743,7 @@ impl ImpactRuntime {
                 }
                 pending.played[index] = true;
                 if pending.played.iter().all(|played| *played) {
-                    self.advance_kan_animation(now_ms)?;
+                    self.advance_kan_animation()?;
                     self.rearm_clocks(now_ms)?;
                 }
                 return self.bump_version();
@@ -912,6 +912,7 @@ impl ImpactRuntime {
                 let added_kan = hand.last_discard().is_none();
                 hand.apply_reaction(seat, ReactionKind::Pass)
                     .map_err(invalid_command)?;
+                // 加杠的抢杠窗口被全家通过后，还要等杠点动画播完再摸岭上牌。
                 (added_kan && matches!(hand.phase(), HandPhase::AwaitingKanAnimation { .. }))
                     .then_some(MeldKind::AddedKan.as_str())
             }
@@ -973,8 +974,6 @@ impl ImpactRuntime {
         self.pending
             .take()
             .ok_or_else(|| invalid_command("there is no hand settlement to advance"))?;
-        // 安全起见：新的一局开始前清除残留的杠动画挂起状态。
-        self.pending_kan_animation = None;
         if self.result.is_some() {
             return Ok(());
         }
@@ -993,38 +992,36 @@ impl ImpactRuntime {
         ));
         self.opening.reset_hand(now_ms);
         self.last_kan = None;
+        self.pending_kan_animation = None;
         Ok(())
     }
 
-    /// 四家都报告动画播完（或兜底超时后）摸岭上牌。
-    fn advance_kan_animation(&mut self, now_ms: u64) -> Result<(), ApplicationError> {
+    /// 摸岭上牌：把挂起的杠点动画状态消费掉，让 `seat` 从牌山尾部摸牌并进入新回合。
+    ///
+    /// 不负责 `bump_version` 与 `rearm_clocks`，由调用方决定是否再推一版。
+    fn advance_kan_animation(&mut self) -> Result<(), ApplicationError> {
         let pending = self
             .pending_kan_animation
             .take()
-            .ok_or_else(|| internal_error("advance_kan_animation called with no pending"))?;
-        let hand = self
-            .game
+            .ok_or_else(|| internal_error("there is no kan animation to advance"))?;
+        self.game
             .hand_mut()
-            .ok_or_else(|| internal_error("hand vanished during kan animation"))?;
-        hand.advance_from_kan_animation(pending.seat)
+            .ok_or_else(|| internal_error("there is no hand in progress"))?
+            .advance_from_kan_animation(pending.seat)
             .map_err(|error| internal_error(error.to_string()))?;
-        // 摸牌后如果立即结局（最后一张岭上牌摸到了），需要走结算流程。
-        if self.game.hand().is_some_and(|h| h.outcome().is_some()) {
-            self.finish_hand(now_ms)?;
-        }
+        self.last_kan = None;
         Ok(())
     }
 
-    /// 杠点动画兜底：超时后替全家报告完成，强制摸岭上牌。
+    /// 兜底：杠点动画超时还没收齐四家回执，就强制摸岭上牌。
     fn advance_kan_animation_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
-        let due = self
-            .pending_kan_animation
-            .as_ref()
-            .is_some_and(|p| now_ms.saturating_sub(p.started_at_ms) >= KAN_ANIMATION_FALLBACK_MS);
-        if !due {
+        let Some(pending) = self.pending_kan_animation.as_ref() else {
+            return Ok(false);
+        };
+        if now_ms < pending.started_at_ms.saturating_add(KAN_ANIMATION_FALLBACK_MS) {
             return Ok(false);
         }
-        self.advance_kan_animation(now_ms)?;
+        self.advance_kan_animation()?;
         self.bump_version()?;
         self.rearm_clocks(now_ms)?;
         Ok(true)
@@ -1201,14 +1198,23 @@ impl ImpactRuntime {
         }
     }
 
-    /// 超时代打：等响应就 Pass，轮到自己就打摸上来那张，再不行就打最右边那张。
+    /// 超时代打：
+    /// - 等响应（荣和窗口）时，能荣和就自动荣和，否则取消；
+    /// - 轮到自己时，能自摸就自动自摸，否则打摸上来那张，再不行就打最右边那张。
     fn timeout_command(&self, seat: Seat) -> Result<GameCommand, ApplicationError> {
         let hand = self
             .game
             .hand()
             .ok_or_else(|| internal_error("there is no hand in progress"))?;
         if matches!(hand.phase(), HandPhase::AwaitingResponses { .. }) {
-            return Ok(GameCommand::ImpactPass);
+            return Ok(if hand.reaction_options(seat).can_ron {
+                GameCommand::ImpactRon
+            } else {
+                GameCommand::ImpactPass
+            });
+        }
+        if hand.turn_actions(seat).can_tsumo {
+            return Ok(GameCommand::ImpactTsumo);
         }
         let player = hand.player(seat);
         let candidates = player
@@ -1239,9 +1245,13 @@ impl ImpactRuntime {
         if self.opening.opening_blocked() {
             return Ok(None);
         }
-        // 杠点动画兜底超时。
         if self.advance_kan_animation_if_due(now_ms)? {
-            return Ok(None);
+            let actor = self
+                .players
+                .first()
+                .map(|player| player.user_id.clone())
+                .ok_or_else(|| internal_error("no players in match"))?;
+            return Ok(Some(actor));
         }
         let Some(index) = (0..SEATS).find(|index| self.clocks[*index].expired(now_ms)) else {
             return Ok(None);

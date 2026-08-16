@@ -2613,6 +2613,278 @@ mod tests {
         panic!("the hand never reached a settlement");
     }
 
+    /// 开一张四人冲击麻将桌，过掉素材 load 与开局动画两道门。
+    fn started_impact_table(
+        application: &Application,
+        prefix: &str,
+    ) -> (Vec<crate::User>, mahjong_core::MatchId) {
+        let players = (0..4)
+            .map(|index| register(application, &format!("{prefix}_{index}")).0)
+            .collect::<Vec<_>>();
+        let mut room = application
+            .create_room(
+                players[0].id(),
+                CreateRoom {
+                    name: format!("{prefix} impact table"),
+                    visibility: RoomVisibility::Private,
+                    rules: RoomRuleSelection::Impact {
+                        request: mahjong_impact::ImpactRoomRuleRequest::default(),
+                    },
+                },
+            )
+            .expect("room");
+        for player in &players[1..] {
+            room = application
+                .join_room(player.id(), room.id(), room.version())
+                .expect("join");
+        }
+        for player in &players {
+            room = application
+                .set_ready(player.id(), room.id(), room.version(), true)
+                .expect("ready");
+        }
+        let (_, match_id) = application
+            .start_room(players[0].id(), room.id(), room.version(), 0)
+            .expect("start");
+        // 冲击麻将没有立直那套牌谱投影，命令只能走通用的 submit_game。
+        for player in &players {
+            application
+                .submit_game(
+                    player.id(),
+                    &match_id,
+                    SubmitGameCommand {
+                        expected_version: 0,
+                        command: GameCommand::MatchAssetsReady,
+                    },
+                    0,
+                )
+                .expect("assets ready");
+        }
+        for player in &players {
+            application
+                .submit_game(
+                    player.id(),
+                    &match_id,
+                    SubmitGameCommand {
+                        expected_version: 0,
+                        command: GameCommand::ReadyForHand { hand_index: 0 },
+                    },
+                    0,
+                )
+                .expect("opening ready");
+        }
+        (players, match_id)
+    }
+
+    /// 四家都报告杠点动画播完后，服务端才摸岭上牌。
+    #[test]
+    fn all_four_seats_acking_the_kan_animation_draws_the_rinshan_tile() {
+        let application = Application::new();
+        let (players, match_id) = started_impact_table(&application, "impact_kan");
+
+        let projection = application
+            .match_projection(players[0].id(), &match_id)
+            .expect("projection");
+        let view = projection.as_impact().expect("impact view").clone();
+        let dealer_seat = view.dealer;
+        let dealer_user = projection
+            .seated()
+            .into_iter()
+            .find(|(seat, _)| *seat == dealer_seat)
+            .map(|(_, user)| user.clone())
+            .expect("dealer seat");
+        let dealer = players
+            .iter()
+            .find(|player| player.id() == &dealer_user)
+            .expect("dealer player");
+
+        // 挑一张既不是财神、也不是指示牌的字牌来暗杠，避开财神/指示牌的岔路。
+        let candidates = ["1z", "2z", "3z", "4z", "5z", "6z", "7z"]
+            .into_iter()
+            .map(str::to_owned)
+            .filter(|code| {
+                Some(code) != view.joker_code.as_ref()
+                    && Some(code) != view.joker_indicator.as_ref().map(|tile| &tile.code)
+            })
+            .collect::<Vec<_>>();
+        let kan_code = candidates[0].clone();
+        let mut hand_codes = vec![kan_code.clone(); 4];
+        hand_codes.extend(std::iter::repeat_n(candidates[1].clone(), 4));
+        hand_codes.extend(std::iter::repeat_n(candidates[2].clone(), 3));
+        hand_codes.extend(std::iter::repeat_n(candidates[3].clone(), 3));
+        application
+            .set_dev_hand(dealer.id(), &match_id, &hand_codes)
+            .expect("dev hand");
+
+        let dealer_view = application
+            .match_projection(dealer.id(), &match_id)
+            .expect("dealer view");
+        let version = dealer_view.version();
+        assert_eq!(
+            dealer_view.as_impact().expect("impact").completed_rinshan_draws,
+            0,
+            "杠之前还没有岭上补摸"
+        );
+
+        let after_kan = application
+            .submit_game(
+                dealer.id(),
+                &match_id,
+                SubmitGameCommand {
+                    expected_version: version,
+                    command: GameCommand::ImpactConcealedKan {
+                        tile_code: kan_code,
+                    },
+                },
+                0,
+            )
+            .expect("concealed kan");
+        let kan_view = after_kan.as_impact().expect("impact").clone();
+        // 杠完先等四家播杠点动画，还没摸岭上牌。
+        assert_eq!(kan_view.phase_kind, "awaiting_kan_animation");
+        assert_eq!(kan_view.completed_rinshan_draws, 0);
+        let kan_id = kan_view.last_kan.expect("last kan").id;
+
+        // 前三家报告播完，还差一家，岭上牌仍不摸。
+        for player in &players[..3] {
+            let v = application
+                .match_projection(player.id(), &match_id)
+                .expect("ack view")
+                .version();
+            application
+                .submit_game(
+                    player.id(),
+                    &match_id,
+                    SubmitGameCommand {
+                        expected_version: v,
+                        command: GameCommand::ImpactKanAnimationPlayed { kan_id },
+                    },
+                    0,
+                )
+                .expect("ack");
+        }
+        let after_three = application
+            .match_projection(players[0].id(), &match_id)
+            .expect("after three acks");
+        let after_three = after_three.as_impact().expect("impact");
+        assert_eq!(after_three.phase_kind, "awaiting_kan_animation");
+        assert_eq!(after_three.completed_rinshan_draws, 0);
+
+        // 最后一家报告播完，服务端才摸岭上牌。
+        let last = &players[3];
+        let v = application
+            .match_projection(last.id(), &match_id)
+            .expect("last ack view")
+            .version();
+        let after_all = application
+            .submit_game(
+                last.id(),
+                &match_id,
+                SubmitGameCommand {
+                    expected_version: v,
+                    command: GameCommand::ImpactKanAnimationPlayed { kan_id },
+                },
+                0,
+            )
+            .expect("final ack");
+        let after_all = after_all.as_impact().expect("impact");
+        assert_eq!(after_all.phase_kind, "awaiting_turn_action");
+        assert_eq!(after_all.completed_rinshan_draws, 1);
+
+        // 岭上牌只在庄家自己的投影里露脸（对手视角应当藏起来，否则等于摊牌）。
+        let dealer_projection = application
+            .match_projection(dealer.id(), &match_id)
+            .expect("dealer projection");
+        let dealer_view = dealer_projection.as_impact().expect("impact");
+        let drawn_player = dealer_view
+            .players
+            .iter()
+            .find(|player| player.player.seat() == dealer_seat)
+            .expect("dealer player view");
+        assert!(
+            drawn_player.drawn_tile_id.is_some(),
+            "庄家摸到一张新的岭上牌"
+        );
+    }
+
+    /// 四家都没报告、杠点动画兜底超时后，服务端仍要广播摸岭上牌，不能只改状态不广播。
+    #[test]
+    fn a_kan_animation_timeout_still_broadcasts_the_rinshan_draw() {
+        let application = Application::new();
+        let (players, match_id) = started_impact_table(&application, "impact_kan_timeout");
+
+        let projection = application
+            .match_projection(players[0].id(), &match_id)
+            .expect("projection");
+        let view = projection.as_impact().expect("impact view").clone();
+        let dealer_seat = view.dealer;
+        let dealer_user = projection
+            .seated()
+            .into_iter()
+            .find(|(seat, _)| *seat == dealer_seat)
+            .map(|(_, user)| user.clone())
+            .expect("dealer seat");
+        let dealer = players
+            .iter()
+            .find(|player| player.id() == &dealer_user)
+            .expect("dealer player");
+
+        let candidates = ["1z", "2z", "3z", "4z", "5z", "6z", "7z"]
+            .into_iter()
+            .map(str::to_owned)
+            .filter(|code| {
+                Some(code) != view.joker_code.as_ref()
+                    && Some(code) != view.joker_indicator.as_ref().map(|tile| &tile.code)
+            })
+            .collect::<Vec<_>>();
+        let kan_code = candidates[0].clone();
+        let mut hand_codes = vec![kan_code.clone(); 4];
+        hand_codes.extend(std::iter::repeat_n(candidates[1].clone(), 4));
+        hand_codes.extend(std::iter::repeat_n(candidates[2].clone(), 3));
+        hand_codes.extend(std::iter::repeat_n(candidates[3].clone(), 3));
+        application
+            .set_dev_hand(dealer.id(), &match_id, &hand_codes)
+            .expect("dev hand");
+
+        let dealer_view = application
+            .match_projection(dealer.id(), &match_id)
+            .expect("dealer view");
+        let version = dealer_view.version();
+        let after_kan = application
+            .submit_game(
+                dealer.id(),
+                &match_id,
+                SubmitGameCommand {
+                    expected_version: version,
+                    command: GameCommand::ImpactConcealedKan {
+                        tile_code: kan_code,
+                    },
+                },
+                0,
+            )
+            .expect("concealed kan");
+        let kan_view = after_kan.as_impact().expect("impact").clone();
+        assert_eq!(kan_view.phase_kind, "awaiting_kan_animation");
+        assert_eq!(kan_view.completed_rinshan_draws, 0);
+
+        // 谁都没报告，直接越过 6 秒兜底：扫描必须返回一次广播，否则前端永远看不到岭上牌。
+        let expiries = application
+            .expire_clocks(6_000)
+            .expect("sweep past the kan animation fallback");
+        assert_eq!(
+            expiries.len(),
+            1,
+            "兜底超时也要广播一次，通知全体摸岭上牌"
+        );
+
+        let after_timeout = application
+            .match_projection(players[0].id(), &match_id)
+            .expect("after timeout view");
+        let after_timeout = after_timeout.as_impact().expect("impact");
+        assert_eq!(after_timeout.phase_kind, "awaiting_turn_action");
+        assert_eq!(after_timeout.completed_rinshan_draws, 1);
+    }
+
     #[test]
     fn the_settlement_confirm_window_opens_for_everybody_at_once() {
         let application = Application::new();
