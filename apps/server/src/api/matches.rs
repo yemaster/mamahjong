@@ -17,6 +17,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/matches/{match_id}", get(get_match))
         .route("/matches/{match_id}/record", get(get_match_record))
         .route("/matches/{match_id}/commands", post(submit_command))
+        .route("/matches/{match_id}/dev/hand", post(set_dev_hand))
 }
 
 async fn get_match(
@@ -85,6 +86,12 @@ fn attach_rule_name(record: &mut Value) {
 struct CommandRequest {
     expected_version: u64,
     command: CommandPayload,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DevHandRequest {
+    tiles: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -195,6 +202,40 @@ impl From<CommandPayload> for GameCommand {
             }
         }
     }
+}
+
+/// 开发/测试专用：把本家 13 张暗手换成给定牌码。只有开了 `MAMAHJONG_DEV_MODE`
+/// 的服务端才会受理；改动直接落在服务端权威状态上，随后广播，各家都能看到。
+async fn set_dev_hand(
+    State(state): State<AppState>,
+    user: AuthenticatedUser,
+    Path(match_id): Path<String>,
+    payload: Result<Json<DevHandRequest>, JsonRejection>,
+) -> Result<Json<MatchViewResponse>, ApiError> {
+    if !dev_tools_enabled() {
+        return Err(ApiError::dev_tools_disabled());
+    }
+    let match_id = parse_match_id(match_id)?;
+    let Json(payload) = payload.map_err(ApiError::invalid_json)?;
+    let view = state
+        .application()
+        .set_dev_hand(user.user().id(), &match_id, &payload.tiles)?;
+    state.realtime().publish(
+        &super::realtime::match_stream(&match_id),
+        super::realtime::StreamNotice::Changed {
+            version: view.version(),
+            latest_sequence: view.event_sequence(),
+        },
+    );
+    Ok(Json(MatchViewResponse::from_projection(
+        &view,
+        state.now_ms(),
+        state.application(),
+    )))
+}
+
+fn dev_tools_enabled() -> bool {
+    std::env::var("MAMAHJONG_DEV_MODE").is_ok_and(|value| value == "true")
 }
 
 async fn submit_command(

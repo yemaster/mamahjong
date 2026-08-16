@@ -41,6 +41,7 @@ import {
   GameTable,
   type GameTableHandle,
   settlementCoveringSeats,
+  sortHandForDisplay,
   TSUMO_THROW_MS,
 } from "../game/table";
 import { CallBannerLayer } from "../game/CallBanner";
@@ -75,6 +76,12 @@ import { PointChangeOverlay } from "../game/PointChangeOverlay";
 import { MatchAssistControls } from "../game/MatchAssistControls";
 import { PlayerHand2D } from "../game/PlayerHand2D";
 import { applyViewPatch } from "../game/viewPatch";
+import {
+  advanceTileCode,
+  DEV_HAND_KEYS,
+  isDevModeEnabled,
+  validTileCodes,
+} from "../game/devMode";
 import { YakuReferenceModal } from "../game/YakuReference";
 import {
   automaticMatchCommand,
@@ -1070,6 +1077,61 @@ export default function GameScene({ matchId }: GameSceneProps) {
     },
     [onCommand, riichiSelecting],
   );
+
+  /* ── 开发模式：改手牌 ─────────────────── */
+  /*
+   * 只在 `MAMAHJONG_DEV_MODE` 打开的构建里挂监听。q..f 依次对应暗手第 1..14 张
+   * （显示顺序，刚摸上来的那张在末尾），按一下就把那张牌在当前牌山的牌码循环里
+   * 推进一张。按键超出当前暗手范围（副露之后更少）就无视。改动走服务端的
+   * `/dev/hand` 接口落到权威状态，改的是牌面、牌 id 不变，所以轮到自己的 14 张
+   * 也不会凭空少一张。
+   */
+  useEffect(() => {
+    if (!isDevModeEnabled()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const keyIndex = DEV_HAND_KEYS.indexOf(event.key.toLowerCase());
+      if (keyIndex < 0) return;
+      const view = useGameStore.getState().matchView;
+      if (!view || view.id !== matchId) return;
+      const player = view.players.find((candidate) => candidate.seat === view.observer_seat);
+      if (!player?.concealed_tiles) return;
+      const drawnId = player.drawn_tile_id ?? null;
+      /* 存储顺序的暗手（含刚摸上来的那张），和服务端改牌的遍历顺序一致。 */
+      const stored = player.concealed_tiles;
+      /* 显示顺序的暗手，按键位置对的是这一份；摸上来的那张排在末尾。 */
+      const displayed = sortHandForDisplay(
+        player.concealed_tiles,
+        drawnId,
+        view.joker_code,
+      );
+      const targetId = displayed[keyIndex]?.id;
+      if (targetId == null) return;
+      const valid = validTileCodes(
+        view.variant_kind,
+        view.sanma_north_rule != null,
+      );
+      const tiles = stored.map((tile) =>
+        tile.id === targetId ? advanceTileCode(tile.code, valid) : tile.code,
+      );
+      if (!token) return;
+      gameApi
+        .setDevHand(matchId, tiles, token)
+        .then((next) => setMatchView(next))
+        .catch((err: unknown) => setError(apiFailure(err).message));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [matchId, token, setMatchView]);
 
   /* ── Render ───────────────────────────── */
 

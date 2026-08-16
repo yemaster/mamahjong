@@ -3,8 +3,8 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::{
     Discard, DrawSource, EndReason, HandEvent, HandJudge, HandPhase, HandTransition, PlayerHand,
-    Reaction, RiichiRules, RiichiScorer, RiichiVariant, Seat, TableProgress, Tile, TileId,
-    TileKind, TileSet, TileSetError, ValidationErrors, Wall, WallSeed, WinQuery, WinSource,
+    Reaction, RiichiRules, RiichiScorer, RiichiVariant, Seat, TableProgress, Tile, TileFace,
+    TileId, TileKind, TileSet, TileSetError, ValidationErrors, Wall, WallSeed, WinQuery, WinSource,
 };
 
 const INITIAL_CONCEALED_TILES: usize = 13;
@@ -287,6 +287,38 @@ impl RiichiHand {
             && (discard_furiten || player.is_temporary_furiten() || player.is_riichi_furiten()))
     }
 
+    /// 开发/测试专用：把某个座位的暗手整体换成给定牌码。牌 id 保持不变（含刚摸上来的那张，
+    /// 它的 `drawn_tile` 指向不变），所以改动不会让「新摸的牌」凭空消失，只是换牌面。暗手
+    /// 有几张就收几张（副露之后会更少）。这里只改牌面，不校验整场牌数一致性——正常对局不走
+    /// 这条，纯粹是给手工测各种胡牌牌型留的后门。
+    pub fn set_concealed_tiles(
+        &mut self,
+        seat: Seat,
+        codes: &[String],
+    ) -> Result<(), HandError> {
+        self.validate_seat(seat)?;
+        let player = &mut self.players[usize::from(seat.index())];
+        if codes.len() != player.concealed.len() {
+            return Err(HandError::WrongConcealedTileCount {
+                expected: player.concealed.len(),
+                actual: codes.len(),
+            });
+        }
+        let faces = codes
+            .iter()
+            .map(|code| {
+                code.parse::<TileFace>()
+                    .map_err(|_| HandError::InvalidTileCode(code.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for (tile, face) in player.concealed.iter_mut().zip(faces) {
+            *tile = Tile::new(tile.id(), face.kind(), face.is_red())
+                .map_err(|error| HandError::InvalidTileCode(error.to_string()))?;
+        }
+        Ok(())
+    }
+
     pub fn discard(&mut self, actor: Seat, tile_id: TileId) -> Result<HandTransition, HandError> {
         self.discard_internal(actor, tile_id, false)
     }
@@ -502,6 +534,11 @@ pub enum HandError {
     AlreadyResponded {
         seat: Seat,
     },
+    InvalidTileCode(String),
+    WrongConcealedTileCount {
+        expected: usize,
+        actual: usize,
+    },
 }
 
 impl Display for HandError {
@@ -585,6 +622,10 @@ impl Display for HandError {
             }
             Self::AlreadyResponded { seat } => {
                 write!(formatter, "seat {} already responded", seat.index())
+            }
+            Self::InvalidTileCode(code) => write!(formatter, "invalid tile code {code}"),
+            Self::WrongConcealedTileCount { expected, actual } => {
+                write!(formatter, "expected {expected} concealed tiles, got {actual}")
             }
         }
     }

@@ -68,6 +68,15 @@ impl ApiError {
         }
     }
 
+    pub(super) fn dev_tools_disabled() -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            code: "dev.tools_disabled",
+            message: "dev tools are disabled on this server".to_owned(),
+            retryable: false,
+        }
+    }
+
     pub(super) fn internal() -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

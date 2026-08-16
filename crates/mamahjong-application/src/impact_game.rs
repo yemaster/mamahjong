@@ -345,6 +345,23 @@ impl ImpactRuntime {
         self.seat(user_id)
     }
 
+    /// 开发/测试专用：把该玩家暗手整体换成给定牌码。走权威状态，改的是牌面、牌 id 不变。
+    pub(crate) fn set_dev_hand(
+        &mut self,
+        actor: &UserId,
+        codes: &[String],
+    ) -> Result<(), ApplicationError> {
+        let seat = self.seat(actor)?;
+        let hand = self
+            .game
+            .hand_mut()
+            .ok_or_else(|| internal_error("there is no hand in progress"))?;
+        hand.set_concealed_tiles(seat_of(seat)?, codes)
+            .map_err(|error| internal_error(error.to_string()))?;
+        self.version = self.version.saturating_add(1);
+        Ok(())
+    }
+
     fn assets_loading(&self) -> bool {
         self.opening.assets_loading()
     }

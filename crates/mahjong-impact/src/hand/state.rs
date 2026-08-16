@@ -458,6 +458,38 @@ impl ImpactHand {
         self.last_discard
     }
 
+    /// 开发/测试专用：把某个座位的暗手整体换成给定牌码。牌 id 保持不变（含 `drawn` 指向的
+    /// 那张），换完按牌种重排，维持 `PlayerHand::insert` 依赖的有序不变量。这里只改牌面，
+    /// 不校验整场牌数一致性——正常对局不走这条，纯粹是给手工测各种胡牌牌型留的后门。
+    pub fn set_concealed_tiles(
+        &mut self,
+        seat: Seat,
+        codes: &[String],
+    ) -> Result<(), HandError> {
+        let player = &mut self.players[slot(seat)];
+        if codes.len() != player.concealed.len() {
+            return Err(HandError::WrongConcealedTileCount {
+                expected: player.concealed.len(),
+                actual: codes.len(),
+            });
+        }
+        let kinds = codes
+            .iter()
+            .map(|code| {
+                code.parse::<TileKind>()
+                    .map_err(|_| HandError::InvalidTileCode(code.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for (tile, kind) in player.concealed.iter_mut().zip(kinds) {
+            *tile = Tile::new(tile.id(), kind);
+        }
+        player
+            .concealed
+            .sort_unstable_by_key(|tile| sort_key(*tile));
+        Ok(())
+    }
+
     /// 还没表态的座位。
     #[must_use]
     pub fn pending_reactions(&self) -> Vec<Seat> {

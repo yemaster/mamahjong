@@ -292,7 +292,7 @@ impl Reaction {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HandError {
     /// 现在不该这个座位动。
     OutOfTurn { seat: Seat },
@@ -310,6 +310,13 @@ pub enum HandError {
     WallExhausted,
     /// 本局已经结束。
     HandAlreadyEnded,
+    /// 开发模式给了一个认不出的牌码。
+    InvalidTileCode(String),
+    /// 开发模式给的牌码张数和暗手对不上。
+    WrongConcealedTileCount {
+        expected: usize,
+        actual: usize,
+    },
 }
 
 impl Display for HandError {
@@ -329,6 +336,10 @@ impl Display for HandError {
             Self::NotAWinningHand => formatter.write_str("the hand is not complete"),
             Self::WallExhausted => formatter.write_str("the wall has no drawable tiles left"),
             Self::HandAlreadyEnded => formatter.write_str("the hand has already ended"),
+            Self::InvalidTileCode(code) => write!(formatter, "invalid tile code {code}"),
+            Self::WrongConcealedTileCount { expected, actual } => {
+                write!(formatter, "expected {expected} concealed tiles, got {actual}")
+            }
         }
     }
 }

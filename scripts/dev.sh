@@ -6,6 +6,10 @@ PROJECT_ROOT="$(dirname -- "$SCRIPT_DIR")"
 PROJECT_NAME="${MAMAHJONG_DEV_PROJECT:-mamahjong}"
 ADMIN_PASSWORD_IS_DEFAULT=false
 
+# 本地开发才开：游戏客户端进入开发模式，可以用键盘 q..p,a,s,d 逐张自定义自己的
+# 手牌。这个开关经 compose 的 build-arg 打进 web 镜像，别处（生产、其它脚本）不设。
+export MAMAHJONG_DEV_MODE="${MAMAHJONG_DEV_MODE:-true}"
+
 if [[ -z "${MAMAHJONG_ADMIN_PASSWORD:-}" ]]; then
   export MAMAHJONG_ADMIN_PASSWORD="abc123456"
   export MAMAHJONG_ADMIN_ALLOW_INSECURE_PASSWORD="true"

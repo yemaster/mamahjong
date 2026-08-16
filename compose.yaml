@@ -45,6 +45,7 @@ services:
       MAMAHJONG_ADMIN_ALLOW_INSECURE_PASSWORD: ${MAMAHJONG_ADMIN_ALLOW_INSECURE_PASSWORD:-false}
       MAMAHJONG_ADMIN_NICKNAME: ${MAMAHJONG_ADMIN_NICKNAME:-管理员}
       MAMAHJONG_ADMIN_COOKIE_SECURE: ${MAMAHJONG_ADMIN_COOKIE_SECURE:-false}
+      MAMAHJONG_DEV_MODE: ${MAMAHJONG_DEV_MODE:-false}
       RUST_LOG: ${RUST_LOG:-info}
     depends_on:
       database:
@@ -75,6 +76,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: web
+      args:
+        MAMAHJONG_DEV_MODE: ${MAMAHJONG_DEV_MODE:-false}
     restart: unless-stopped
     environment:
       MAMAHJONG_SERVER_URL: ${MAMAHJONG_SERVER_URL:-http://server:8080}

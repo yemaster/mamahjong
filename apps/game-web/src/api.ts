@@ -251,6 +251,14 @@ export const gameApi = {
       token,
     }),
 
+  /* 开发模式：把手牌换成给定牌码。只有开了 MAMAHJONG_DEV_MODE 的服务端才受理。 */
+  setDevHand: (matchId: string, tiles: string[], token: string) =>
+    request<MatchView>(`/matches/${matchId}/dev/hand`, {
+      method: "POST",
+      body: JSON.stringify({ tiles }),
+      token,
+    }),
+
   /* ── Records ────────────────────────────── */
 
   records: (token: string) =>

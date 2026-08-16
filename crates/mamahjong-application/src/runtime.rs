@@ -148,6 +148,9 @@ trait RuleRuntime: std::fmt::Debug + Send + Sync {
     fn open_settlement_confirm_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError>;
     fn release_opening_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError>;
     fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError>;
+    fn set_dev_hand(&mut self, _actor: &UserId, _codes: &[String]) -> Result<(), ApplicationError> {
+        Err(not_riichi())
+    }
 }
 
 #[derive(Debug)]
@@ -208,6 +211,14 @@ impl GameRuntime {
         now_ms: u64,
     ) -> Result<(), ApplicationError> {
         self.inner.execute(actor, command, now_ms)
+    }
+
+    pub(crate) fn set_dev_hand(
+        &mut self,
+        actor: &UserId,
+        codes: &[String],
+    ) -> Result<(), ApplicationError> {
+        self.inner.set_dev_hand(actor, codes)
     }
 
     pub(crate) fn is_finished(&self) -> bool {
@@ -317,6 +328,10 @@ impl RuleRuntime for RiichiRuntime {
     fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError> {
         self.expire(now_ms)
     }
+
+    fn set_dev_hand(&mut self, actor: &UserId, codes: &[String]) -> Result<(), ApplicationError> {
+        self.set_dev_hand(actor, codes)
+    }
 }
 
 impl RuleRuntime for ImpactRuntime {
@@ -384,6 +399,10 @@ impl RuleRuntime for ImpactRuntime {
 
     fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError> {
         self.expire(now_ms)
+    }
+
+    fn set_dev_hand(&mut self, actor: &UserId, codes: &[String]) -> Result<(), ApplicationError> {
+        self.set_dev_hand(actor, codes)
     }
 }
 

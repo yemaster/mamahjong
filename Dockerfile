@@ -6,6 +6,10 @@ COPY apps/game-web/package.json apps/game-web/package-lock.json ./
 RUN --mount=type=cache,id=mamahjong-npm-game,target=/root/.npm,sharing=locked \
     npm ci
 COPY apps/game-web ./
+# 开发模式开关：compose 的 build-arg 到这里变成 Vite 构建期环境变量，前端用
+# import.meta.env.VITE_MAMAHJONG_DEV_MODE 读它。默认 false（生产构建关闭）。
+ARG MAMAHJONG_DEV_MODE=false
+ENV VITE_MAMAHJONG_DEV_MODE=${MAMAHJONG_DEV_MODE}
 RUN npm run build
 
 FROM node:24.14.1-bookworm-slim@sha256:b506e7321f176aae77317f99d67a24b272c1f09f1d10f1761f2773447d8da26c AS admin-web-builder

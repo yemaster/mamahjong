@@ -1030,6 +1030,22 @@ impl Application {
         Ok(view)
     }
 
+    /// 开发/测试专用：把某位玩家的 13 张暗手整体替换成给定牌码。只有开着的服务器才该调。
+    pub fn set_dev_hand(
+        &self,
+        actor: &UserId,
+        match_id: &MatchId,
+        codes: &[String],
+    ) -> Result<MatchProjection, ApplicationError> {
+        let mut store = self.write_store()?;
+        let game = store
+            .matches
+            .get_mut(match_id)
+            .ok_or_else(match_not_found)?;
+        game.set_dev_hand(actor, codes)?;
+        game.projection(actor)
+    }
+
     /// 只认立直投影的调用方走这条。
     ///
     /// # Errors

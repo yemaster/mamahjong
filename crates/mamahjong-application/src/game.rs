@@ -756,6 +756,20 @@ impl RiichiRuntime {
         Ok(runtime)
     }
 
+    /// 开发/测试专用：把本家暗手换成给定牌码（副露后更少），服务端权威状态跟着变，广播后各家可见。
+    pub(crate) fn set_dev_hand(
+        &mut self,
+        actor: &UserId,
+        codes: &[String],
+    ) -> Result<(), ApplicationError> {
+        let seat = self.seat_for(actor)?;
+        self.hand
+            .set_concealed_tiles(seat, codes)
+            .map_err(|error| internal_error(error.to_string()))?;
+        self.version = self.version.saturating_add(1);
+        Ok(())
+    }
+
     pub(crate) fn view(&self, actor: &UserId) -> Result<ObserverMatch, ApplicationError> {
         let actor_seat = self.seat_for(actor)?;
         // 流局摊牌时把听牌者听的牌一并公开，其余情况只有本人看得到自己的听牌。
