@@ -107,47 +107,93 @@ fn decompose(
         counts[index] += from_hand;
     }
 
-    // 顺子：最小的那张必须是真牌，另外两张可以用财神补。
-    if runs_allowed && is_suited(index) && rank_offset(index) <= RANKS_PER_SUIT - 3 {
-        for joker_for_second in [false, true] {
-            for joker_for_third in [false, true] {
-                let used_jokers = u8::from(joker_for_second) + u8::from(joker_for_third);
-                if jokers < used_jokers {
-                    continue;
-                }
-                if !joker_for_second && counts[index + 1] == 0 {
-                    continue;
-                }
-                if !joker_for_third && counts[index + 2] == 0 {
-                    continue;
-                }
+    // 顺子：`index` 当第一、第二、第三张都试。第二、第三张时，更小的那些位置
+    // 由财神顶上（此时它们已经低过当前最小的真牌，必然是空的）。
+    if runs_allowed && is_suited(index) {
+        for offset in 0..=2_usize {
+            if take_run(
+                counts,
+                jokers,
+                index,
+                offset,
+                sets_needed,
+                need_pair,
+                runs_allowed,
+            ) {
+                return true;
+            }
+        }
+    }
 
-                counts[index] -= 1;
-                if !joker_for_second {
-                    counts[index + 1] -= 1;
-                }
-                if !joker_for_third {
-                    counts[index + 2] -= 1;
-                }
+    false
+}
 
-                let matched = decompose(
-                    counts,
-                    jokers - used_jokers,
-                    sets_needed - 1,
-                    need_pair,
-                    runs_allowed,
-                );
+/// 把 `index` 当作顺子里的第 `offset` 张（0 = 最小）取走，其余两格有真牌取真牌、
+/// 缺的用财神顶，逐一枚举两格的取法后递归。
+///
+/// 顺子只能落在同一花色，且不得越过 1..9。`index` 必是真牌——它正是当前最小的那张，
+/// 不会反过来用财神替掉它。
+fn take_run(
+    counts: &mut KindCounts,
+    jokers: u8,
+    index: usize,
+    offset: usize,
+    sets_needed: u8,
+    need_pair: bool,
+    runs_allowed: bool,
+) -> bool {
+    let rank = rank_offset(index);
+    // 顺子的起点不能落到上一花色：更小的真牌本就不存在，起点必然低过 `base`。
+    if rank < offset {
+        return false;
+    }
+    let base = index - rank;
+    let start = index - offset;
+    if start + 2 >= base + RANKS_PER_SUIT {
+        return false;
+    }
 
-                counts[index] += 1;
-                if !joker_for_second {
-                    counts[index + 1] += 1;
-                }
-                if !joker_for_third {
-                    counts[index + 2] += 1;
-                }
-                if matched {
-                    return true;
-                }
+    // 顺子三格里去掉 `index` 后剩两格：`offset` 决定 index 是第几张。
+    let others = [start + (offset + 1) % 3, start + (offset + 2) % 3];
+
+    for joker_first in [false, true] {
+        for joker_second in [false, true] {
+            let used_jokers = u8::from(joker_first) + u8::from(joker_second);
+            if jokers < used_jokers {
+                continue;
+            }
+            if !joker_first && counts[others[0]] == 0 {
+                continue;
+            }
+            if !joker_second && counts[others[1]] == 0 {
+                continue;
+            }
+
+            counts[index] -= 1;
+            if !joker_first {
+                counts[others[0]] -= 1;
+            }
+            if !joker_second {
+                counts[others[1]] -= 1;
+            }
+
+            let matched = decompose(
+                counts,
+                jokers - used_jokers,
+                sets_needed - 1,
+                need_pair,
+                runs_allowed,
+            );
+
+            counts[index] += 1;
+            if !joker_first {
+                counts[others[0]] += 1;
+            }
+            if !joker_second {
+                counts[others[1]] += 1;
+            }
+            if matched {
+                return true;
             }
         }
     }
@@ -341,6 +387,30 @@ mod tests {
         let tiles = hand("1m 2m 3m 4p 5p 6p 7s 8s 9s 2z 2z");
 
         assert!(standard(&tiles, 3, 4, true, true));
+    }
+
+    #[test]
+    fn joker_can_start_a_run_below_the_lowest_real_tile() {
+        // 8m9m + 345s + 66s + 789p：财神顶 7m，凑成 789m。旧实现只认「最小张是真牌」的顺子。
+        let tiles = hand("8m 9m 3s 4s 5s 6s 6s 7p 8p 9p");
+
+        assert!(standard(&tiles, 1, 3, true, true));
+    }
+
+    #[test]
+    fn two_jokers_start_a_run_below_the_lowest_real_tile() {
+        // 9m + 345s + 66s + 789p：两张财神顶 7m8m，再搭 9m 成 789m。
+        let tiles = hand("9m 3s 4s 5s 6s 6s 7p 8p 9p");
+
+        assert!(standard(&tiles, 2, 3, true, true));
+    }
+
+    #[test]
+    fn joker_starting_a_run_still_needs_the_upper_tiles() {
+        // 9m + 345s + 66s + 789p + 一张财神：只有一张财神顶不出 7m8m 两格，不该和。
+        let tiles = hand("9m 3s 4s 5s 6s 6s 7p 8p 9p");
+
+        assert!(!standard(&tiles, 1, 3, true, true));
     }
 
     #[test]

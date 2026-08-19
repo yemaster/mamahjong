@@ -551,6 +551,17 @@ mod tests {
     }
 
     #[test]
+    fn joker_opens_the_run_below_the_lowest_real_tile() {
+        // 财神 6m；8m9m 345s 66s 789p + 碰 7z，摸 8p：财神顶 7m 即成 789m。
+        let mut case = Case::new("6m", "6m 8m 9m 3s 4s 5s 6s 6s 7p 8p 9p", "8p");
+        case.melds = vec![MeldSummary::new(MeldKind::Pon, kind("7z"))];
+
+        let win = case.win();
+
+        assert!(win.shapes().standard);
+    }
+
+    #[test]
     fn seven_pairs_with_substituting_jokers_is_not_pure() {
         let case = Case::new("5m", "1m 1m 3m 3m 5p 5p 7p 7p 2s 2s 4s 9s 5m 5m", "9s");
         let win = case.win();
