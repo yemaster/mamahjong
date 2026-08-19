@@ -291,11 +291,7 @@ impl RiichiHand {
     /// 它的 `drawn_tile` 指向不变），所以改动不会让「新摸的牌」凭空消失，只是换牌面。暗手
     /// 有几张就收几张（副露之后会更少）。这里只改牌面，不校验整场牌数一致性——正常对局不走
     /// 这条，纯粹是给手工测各种胡牌牌型留的后门。
-    pub fn set_concealed_tiles(
-        &mut self,
-        seat: Seat,
-        codes: &[String],
-    ) -> Result<(), HandError> {
+    pub fn set_concealed_tiles(&mut self, seat: Seat, codes: &[String]) -> Result<(), HandError> {
         self.validate_seat(seat)?;
         let player = &mut self.players[usize::from(seat.index())];
         if codes.len() != player.concealed.len() {
@@ -625,7 +621,10 @@ impl Display for HandError {
             }
             Self::InvalidTileCode(code) => write!(formatter, "invalid tile code {code}"),
             Self::WrongConcealedTileCount { expected, actual } => {
-                write!(formatter, "expected {expected} concealed tiles, got {actual}")
+                write!(
+                    formatter,
+                    "expected {expected} concealed tiles, got {actual}"
+                )
             }
         }
     }

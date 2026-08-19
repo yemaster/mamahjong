@@ -461,11 +461,7 @@ impl ImpactHand {
     /// 开发/测试专用：把某个座位的暗手整体换成给定牌码。牌 id 保持不变（含 `drawn` 指向的
     /// 那张），换完按牌种重排，维持 `PlayerHand::insert` 依赖的有序不变量。这里只改牌面，
     /// 不校验整场牌数一致性——正常对局不走这条，纯粹是给手工测各种胡牌牌型留的后门。
-    pub fn set_concealed_tiles(
-        &mut self,
-        seat: Seat,
-        codes: &[String],
-    ) -> Result<(), HandError> {
+    pub fn set_concealed_tiles(&mut self, seat: Seat, codes: &[String]) -> Result<(), HandError> {
         let player = &mut self.players[slot(seat)];
         if codes.len() != player.concealed.len() {
             return Err(HandError::WrongConcealedTileCount {

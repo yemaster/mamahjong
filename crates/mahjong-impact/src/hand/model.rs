@@ -313,10 +313,7 @@ pub enum HandError {
     /// 开发模式给了一个认不出的牌码。
     InvalidTileCode(String),
     /// 开发模式给的牌码张数和暗手对不上。
-    WrongConcealedTileCount {
-        expected: usize,
-        actual: usize,
-    },
+    WrongConcealedTileCount { expected: usize, actual: usize },
 }
 
 impl Display for HandError {
@@ -338,7 +335,10 @@ impl Display for HandError {
             Self::HandAlreadyEnded => formatter.write_str("the hand has already ended"),
             Self::InvalidTileCode(code) => write!(formatter, "invalid tile code {code}"),
             Self::WrongConcealedTileCount { expected, actual } => {
-                write!(formatter, "expected {expected} concealed tiles, got {actual}")
+                write!(
+                    formatter,
+                    "expected {expected} concealed tiles, got {actual}"
+                )
             }
         }
     }
