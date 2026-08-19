@@ -158,6 +158,32 @@ pub(crate) enum CommandPayload {
     ImpactPass,
     #[serde(rename = "impact.kan_animation_played")]
     ImpactKanAnimationPlayed { kan_id: u64 },
+    #[serde(rename = "sichuan.discard")]
+    SichuanDiscard { tile_id: u16 },
+    #[serde(rename = "sichuan.tsumo")]
+    SichuanTsumo,
+    #[serde(rename = "sichuan.ron")]
+    SichuanRon,
+    #[serde(rename = "sichuan.pon")]
+    SichuanPon,
+    #[serde(rename = "sichuan.open_kan")]
+    SichuanOpenKan,
+    #[serde(rename = "sichuan.concealed_kan")]
+    SichuanConcealedKan { tile_code: String },
+    #[serde(rename = "sichuan.added_kan")]
+    SichuanAddedKan { meld_id: u16 },
+    #[serde(rename = "sichuan.pass")]
+    SichuanPass,
+    #[serde(rename = "sichuan.exchange")]
+    SichuanExchange { tile_ids: [u16; 3] },
+    #[serde(rename = "sichuan.ding_que")]
+    SichuanDingQue { suit: String },
+    #[serde(rename = "sichuan.exchange_animation_played")]
+    SichuanExchangeAnimationPlayed,
+    #[serde(rename = "sichuan.win_animation_played")]
+    SichuanWinAnimationPlayed { win_id: u64 },
+    #[serde(rename = "sichuan.kan_animation_played")]
+    SichuanKanAnimationPlayed { kan_id: u64 },
 }
 
 impl From<CommandPayload> for GameCommand {
@@ -199,6 +225,25 @@ impl From<CommandPayload> for GameCommand {
             CommandPayload::ImpactPass => Self::ImpactPass,
             CommandPayload::ImpactKanAnimationPlayed { kan_id } => {
                 Self::ImpactKanAnimationPlayed { kan_id }
+            }
+            CommandPayload::SichuanDiscard { tile_id } => Self::SichuanDiscard { tile_id },
+            CommandPayload::SichuanTsumo => Self::SichuanTsumo,
+            CommandPayload::SichuanRon => Self::SichuanRon,
+            CommandPayload::SichuanPon => Self::SichuanPon,
+            CommandPayload::SichuanOpenKan => Self::SichuanOpenKan,
+            CommandPayload::SichuanConcealedKan { tile_code } => {
+                Self::SichuanConcealedKan { tile_code }
+            }
+            CommandPayload::SichuanAddedKan { meld_id } => Self::SichuanAddedKan { meld_id },
+            CommandPayload::SichuanPass => Self::SichuanPass,
+            CommandPayload::SichuanExchange { tile_ids } => Self::SichuanExchange { tile_ids },
+            CommandPayload::SichuanDingQue { suit } => Self::SichuanDingQue { suit },
+            CommandPayload::SichuanExchangeAnimationPlayed => Self::SichuanExchangeAnimationPlayed,
+            CommandPayload::SichuanWinAnimationPlayed { win_id } => {
+                Self::SichuanWinAnimationPlayed { win_id }
+            }
+            CommandPayload::SichuanKanAnimationPlayed { kan_id } => {
+                Self::SichuanKanAnimationPlayed { kan_id }
             }
         }
     }
@@ -361,6 +406,12 @@ mod tests {
             "impact.open_kan",
             "impact.indicator_concealed_kan",
             "impact.pass",
+            "sichuan.tsumo",
+            "sichuan.ron",
+            "sichuan.pon",
+            "sichuan.open_kan",
+            "sichuan.pass",
+            "sichuan.exchange_animation_played",
         ] {
             let frame = format!(r#"{{"name":"{name}"}}"#);
             serde_json::from_str::<CommandPayload>(&frame)

@@ -3,6 +3,7 @@ use axum::Router;
 use axum::routing::get;
 use mahjong_impact::ImpactRules;
 use mahjong_riichi::{RiichiPreset, RiichiRules, RiichiVariant};
+use mahjong_sichuan::SichuanRules;
 use serde::Serialize;
 
 use crate::AppState;
@@ -99,6 +100,20 @@ async fn rule_sets() -> Json<RuleSetCatalogResponse> {
                  * 多出一个「标准 / 标准 / 自定义」的下拉框——三个选项里有两个
                  * 是同一套规则。解析路径上那一层留着（将来真有流派时不用改
                  * 调用方），但目录里不对外宣告。
+                 */
+                presets: Vec::new(),
+            },
+            RuleSetResponse {
+                id: "sichuan/yonma",
+                family: "sichuan",
+                display_name: "四川麻将",
+                seat_count: 4,
+                default_config: config_of(&SichuanRules::standard()),
+                /*
+                 * 四川麻将血战到底目前只有标准规则一份，`SichuanPreset::Standard`
+                 * 就是 `SichuanRules::standard()` 本身。和冲击麻将同理，解析路径
+                 * 留着，但目录里不对外宣告，免得建房页多出一个全是重复项的
+                 * 下拉框。
                  */
                 presets: Vec::new(),
             },

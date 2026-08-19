@@ -166,8 +166,8 @@ impl AppState {
         actor: &UserId,
         match_id: &MatchId,
     ) -> Result<(), ArchiveError> {
-        // 冲击麻将本期不出牌谱，这里静默跳过；不然每走一步都会把「没有牌谱」
-        // 当成归档失败，整步操作报 500。
+        // 冲击麻将与四川麻将本期不出牌谱，这里静默跳过；不然每走一步都会把
+        // 「没有牌谱」当成归档失败，整步操作报 500。
         if !self.application.match_generates_record(match_id) {
             return Ok(());
         }

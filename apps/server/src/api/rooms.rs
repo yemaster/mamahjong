@@ -6,6 +6,7 @@ use axum::routing::{get, post, put};
 use mahjong_core::{RoomId, UserId};
 use mahjong_impact::ImpactRoomRuleRequest;
 use mahjong_riichi::{RiichiVariant, RoomRuleRequest};
+use mahjong_sichuan::SichuanRoomRuleRequest;
 use mamahjong_application::{CreateRoom, RoomRuleSelection, RoomVisibility, UpdateRoom};
 use serde::Deserialize;
 
@@ -72,6 +73,9 @@ impl RuleSelectionRequest {
             }),
             "impact/yonma" => Ok(RoomRuleSelection::Impact {
                 request: parse_config::<ImpactRoomRuleRequest>(self.config)?,
+            }),
+            "sichuan/yonma" => Ok(RoomRuleSelection::Sichuan {
+                request: parse_config::<SichuanRoomRuleRequest>(self.config)?,
             }),
             _ => Err(rule_configuration_error("unsupported rule_set_id")),
         }

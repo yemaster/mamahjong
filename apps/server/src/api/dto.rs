@@ -4,9 +4,11 @@ use mahjong_riichi::{
 use mamahjong_application::{
     AccountRole, AccountStatus, Application, Character, CharacterSummary, DiscardWaitHint,
     GameRuleSnapshot, ImpactDiscardView, ImpactMeldView, ImpactTileView, MatchProjection,
-    ObserverImpactMatch, ObserverImpactPlayer, ObserverMatch, ObserverPlayer, RankSummary, Room,
-    RoomLifecycle, RoomMember, RoomVisibility, Session, TitleSummary, User, UserProfile,
-    end_reason_name, impact_rule_display_name, limit_name, rule_display_name, wind_name, yaku_name,
+    ObserverImpactMatch, ObserverImpactPlayer, ObserverMatch, ObserverPlayer, ObserverSichuanMatch,
+    ObserverSichuanPlayer, ObserverSichuanWinEvent, RankSummary, Room, RoomLifecycle, RoomMember,
+    RoomVisibility, Session, SichuanDiscardView, SichuanMeldView, SichuanTileView, TitleSummary,
+    User, UserProfile, end_reason_name, impact_rule_display_name, limit_name, rule_display_name,
+    sichuan_rule_display_name, wind_name, yaku_name,
 };
 use serde::Serialize;
 
@@ -220,6 +222,10 @@ impl RoomResponse {
                 serde_json::to_value(snapshot).map_err(|_| ApiError::internal())?,
                 impact_rule_display_name(snapshot),
             ),
+            GameRuleSnapshot::Sichuan(snapshot) => (
+                serde_json::to_value(snapshot).map_err(|_| ApiError::internal())?,
+                sichuan_rule_display_name(snapshot),
+            ),
         };
         Ok(Self {
             schema: "room.v1",
@@ -342,6 +348,36 @@ pub(super) struct MatchViewResponse {
     /// 这局生效的冲击麻将规则，供前端标注按钮与帮助文案。
     #[serde(skip_serializing_if = "Option::is_none")]
     impact_rules: Option<serde_json::Value>,
+    /// 这局生效的四川麻将规则，供前端标注按钮与帮助文案。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sichuan_rules: Option<serde_json::Value>,
+    /// 换三张的传递方向：`clockwise` / `counter_clockwise` / `opposite`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exchange_direction: Option<&'static str>,
+    /// 四川麻将本局实际骰子，和换三张方向来自同一份后端状态。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exchange_dice: Option<[u8; 2]>,
+    /// 决定换三张方向的庄家座次。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    break_seat: Option<u8>,
+    /// 已经提交换三张的座位。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exchange_submitted_seats: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exchange_outgoing_tile_ids: Option<Vec<u16>>,
+    /// 已经报告换三张动画播完的座位。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exchange_animation_played_seats: Option<Vec<u8>>,
+    /// 已经提交定缺的座位。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dingque_submitted_seats: Option<Vec<u8>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_win: Option<SichuanWinResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase_deadline_ms: Option<u64>,
+    /// 四川换牌/定缺阶段剩余毫秒数；由服务端单调时钟换算，供前端显示读秒。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase_remaining_ms: Option<u64>,
     players: Vec<MatchPlayerResponse>,
     available_reactions: Vec<ReactionResponse>,
     turn_actions: TurnActionsResponse,
@@ -369,6 +405,7 @@ impl MatchViewResponse {
         match value {
             MatchProjection::Riichi(view) => Self::new(view, now_ms, application),
             MatchProjection::Impact(view) => Self::impact(view, now_ms, application),
+            MatchProjection::Sichuan(view) => Self::sichuan(view, now_ms, application),
         }
     }
 
@@ -381,6 +418,17 @@ impl MatchViewResponse {
             joker_code: None,
             dealer_streak: None,
             impact_rules: None,
+            sichuan_rules: None,
+            exchange_direction: None,
+            exchange_dice: None,
+            break_seat: None,
+            exchange_submitted_seats: None,
+            exchange_outgoing_tile_ids: None,
+            exchange_animation_played_seats: None,
+            dingque_submitted_seats: None,
+            last_win: None,
+            phase_deadline_ms: None,
+            phase_remaining_ms: None,
             last_kan: None,
             id: value.id().as_str().to_owned(),
             room_id: value.room_id().as_str().to_owned(),
@@ -448,6 +496,8 @@ impl MatchViewResponse {
                 impact_concealed_kan_tile_codes: None,
                 impact_added_kan_meld_ids: None,
                 impact_indicator_concealed_kan: None,
+                sichuan_concealed_kan_tile_codes: None,
+                sichuan_added_kan_meld_ids: None,
             },
             clocks: SeatCountdown::snapshot(value.clocks(), now_ms),
             opening_ready_seats: value
@@ -511,6 +561,10 @@ impl MatchViewResponse {
                                 points: winner.points(),
                                 dealer: winner.is_dealer(),
                                 yaku,
+                                is_tsumo: None,
+                                chankan: None,
+                                payer: None,
+                                winning_tile: None,
                             }
                         })
                         .collect(),
@@ -538,6 +592,7 @@ impl MatchViewResponse {
                     kan_point_deltas: None,
                     kan_points_after: None,
                     void_hand: None,
+                    que: None,
                 }),
             result: value.result().map(MatchResultResponse::from),
             friend_match: value.is_friend_match(),
@@ -585,6 +640,17 @@ impl MatchViewResponse {
             joker_code: value.joker_code.clone(),
             dealer_streak: Some(value.dealer_streak),
             impact_rules: serde_json::to_value(value.rules).ok(),
+            sichuan_rules: None,
+            exchange_direction: None,
+            exchange_dice: None,
+            break_seat: None,
+            exchange_submitted_seats: None,
+            exchange_outgoing_tile_ids: None,
+            exchange_animation_played_seats: None,
+            dingque_submitted_seats: None,
+            last_win: None,
+            phase_deadline_ms: None,
+            phase_remaining_ms: None,
             players: value
                 .players
                 .iter()
@@ -618,6 +684,8 @@ impl MatchViewResponse {
                 impact_concealed_kan_tile_codes: Some(value.turn_actions.concealed_kans.clone()),
                 impact_added_kan_meld_ids: Some(value.turn_actions.added_kans.clone()),
                 impact_indicator_concealed_kan: Some(value.turn_actions.indicator_concealed_kan),
+                sichuan_concealed_kan_tile_codes: None,
+                sichuan_added_kan_meld_ids: None,
             },
             clocks: SeatCountdown::snapshot(&value.clocks, now_ms),
             opening_ready_seats: value.opening_ready_seats.clone(),
@@ -670,6 +738,10 @@ impl MatchViewResponse {
                                 points: settlement.value,
                                 dealer: seat == value.dealer,
                                 yaku,
+                                is_tsumo: None,
+                                chankan: None,
+                                payer: None,
+                                winning_tile: None,
                             }
                         })
                         .into_iter()
@@ -685,6 +757,7 @@ impl MatchViewResponse {
                     kan_point_deltas: Some(settlement.kan_point_deltas.to_vec()),
                     kan_points_after: Some(settlement.kan_points_after.to_vec()),
                     void_hand: Some(settlement.void_hand),
+                    que: None,
                 }
             }),
             last_kan: value.last_kan.as_ref().map(|kan| KanPointsResponse {
@@ -728,6 +801,192 @@ impl MatchViewResponse {
             terminated_by_exit_vote: value.terminated_by_exit_vote,
         }
     }
+
+    /// 四川麻将（血战到底）的牌桌。
+    ///
+    /// 没有场风本场、宝牌、立直状态；定缺花色、胡牌盖牌与换三张的进度走
+    /// Sichuan 专属字段。胡牌家盖牌直到结算摊牌，别人只能看到牌数。
+    fn sichuan(value: &ObserverSichuanMatch, now_ms: u64, application: &Application) -> Self {
+        Self {
+            schema: "match_view.v1",
+            variant_kind: "sichuan",
+            id: value.id.as_str().to_owned(),
+            room_id: value.room_id.as_str().to_owned(),
+            version: value.version,
+            event_sequence: value.event_sequence,
+            hand_index: value.hand_index,
+            observer_seat: value.observer_seat,
+            // 四川麻将没有场风与本场，只有庄家和局数，后者直接由 `hand_index` 表达。
+            progress: ProgressResponse {
+                round_wind: "east",
+                round_number: 1,
+                dealer: value.dealer,
+                honba: 0,
+                riichi_sticks: 0,
+            },
+            phase: PhaseResponse::sichuan(value.phase_kind, value.phase_seat, value.phase_reason),
+            remaining_live_draws: value.remaining_draws,
+            completed_rinshan_draws: value
+                .completed_rinshan_draws
+                .try_into()
+                .expect("a sichuan hand cannot exceed 255 rinshan draws"),
+            dora_indicators: Vec::new(),
+            sanma_north_rule: None,
+            joker_indicator: None,
+            joker_code: None,
+            dealer_streak: None,
+            impact_rules: None,
+            sichuan_rules: serde_json::to_value(value.rules).ok(),
+            exchange_direction: Some(value.exchange_direction),
+            exchange_dice: Some(value.exchange_dice),
+            break_seat: Some(value.break_seat),
+            exchange_submitted_seats: Some(value.exchange_submitted_seats.clone()),
+            exchange_outgoing_tile_ids: value.exchange_outgoing_tile_ids.clone(),
+            exchange_animation_played_seats: Some(value.exchange_animation_played_seats.clone()),
+            dingque_submitted_seats: Some(value.dingque_submitted_seats.clone()),
+            last_win: value.last_win.as_ref().map(SichuanWinResponse::from),
+            phase_deadline_ms: value.phase_deadline_ms,
+            phase_remaining_ms: value
+                .phase_deadline_ms
+                .map(|deadline_ms| deadline_ms.saturating_sub(now_ms)),
+            players: value
+                .players
+                .iter()
+                .map(|player| MatchPlayerResponse::sichuan(player, application))
+                .collect(),
+            available_reactions: ReactionResponse::sichuan(&value.reaction_options),
+            turn_actions: TurnActionsResponse {
+                can_tsumo: value.turn_actions.can_tsumo,
+                riichi_discard_tile_ids: Vec::new(),
+                riichi_discard_hints: Vec::new(),
+                tenpai_discard_hints: value
+                    .turn_actions
+                    .tenpai_discard_hints
+                    .iter()
+                    .map(|(tile_id, codes)| DiscardWaitHintResponse {
+                        tile_id: *tile_id,
+                        waiting_tiles: codes
+                            .iter()
+                            .map(|code| WaitingTileResponse {
+                                code: code.clone(),
+                                // 四川麻将每一手成立的牌型都有分，不存在无役的问题。
+                                has_yaku: true,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+                concealed_kan_tile_ids: Vec::new(),
+                added_kan_options: Vec::new(),
+                nuki_tile_ids: Vec::new(),
+                can_nine_terminals: false,
+                impact_concealed_kan_tile_codes: None,
+                impact_added_kan_meld_ids: None,
+                impact_indicator_concealed_kan: None,
+                sichuan_concealed_kan_tile_codes: Some(value.turn_actions.concealed_kans.clone()),
+                sichuan_added_kan_meld_ids: Some(value.turn_actions.added_kans.clone()),
+            },
+            clocks: SeatCountdown::snapshot(&value.clocks, now_ms),
+            opening_ready_seats: value.opening_ready_seats.clone(),
+            assets_ready_seats: value.assets_ready_seats.clone(),
+            terminated_by_asset_timeout: value.terminated_by_asset_timeout,
+            hand_settlement: value.hand_settlement.as_ref().map(|settlement| {
+                HandSettlementResponse {
+                    reason: settlement.reason,
+                    tenpai_seats: Vec::new(),
+                    point_deltas: settlement.point_deltas.to_vec(),
+                    points_before: settlement
+                        .points_after
+                        .iter()
+                        .zip(settlement.point_deltas.iter())
+                        .map(|(after, delta)| after - delta)
+                        .collect(),
+                    points_after: settlement.points_after.to_vec(),
+                    winners: settlement
+                        .winners
+                        .iter()
+                        .map(|winner| WinnerSettlementResponse {
+                            seat: winner.seat,
+                            han: u8::try_from(winner.fan).unwrap_or(u8::MAX),
+                            fu: 0,
+                            yakuman_multiplier: 0,
+                            limit: "",
+                            points: winner.score,
+                            dealer: winner.seat == value.dealer,
+                            yaku: winner
+                                .yaku
+                                .iter()
+                                .map(|entry| YakuResponse {
+                                    name: entry.name,
+                                    value: entry.value,
+                                    yakuman: false,
+                                })
+                                .collect(),
+                            is_tsumo: Some(winner.is_tsumo),
+                            chankan: Some(winner.chankan),
+                            payer: winner.payer,
+                            winning_tile: winner.winning_tile.as_ref().map(TileResponse::from),
+                        })
+                        .collect(),
+                    played_seats: settlement.played_seats.clone(),
+                    confirm_remaining_ms: settlement
+                        .confirm_deadline_ms
+                        .map(|deadline_ms| deadline_ms.saturating_sub(now_ms)),
+                    confirmed_seats: settlement.confirmed_seats.clone(),
+                    from_seat: None,
+                    ura_dora_indicators: Vec::new(),
+                    all_in: None,
+                    kan_point_deltas: None,
+                    kan_points_after: None,
+                    void_hand: None,
+                    que: settlement.que.as_ref().map(|que| SichuanQueResponse {
+                        flower_pigs: que.flower_pigs.clone(),
+                        tenpai: que.tenpai.clone(),
+                        noten: que.noten.clone(),
+                        deltas: que.deltas.to_vec(),
+                    }),
+                }
+            }),
+            last_kan: value.last_kan.as_ref().map(|kan| KanPointsResponse {
+                id: kan.id,
+                seat: kan.seat,
+                kind: kan.kind,
+                deltas: kan.deltas.to_vec(),
+            }),
+            result: value.result.as_ref().map(|result| MatchResultResponse {
+                end_reason: "scheduled_end",
+                hand_count: value.hand_index,
+                final_points: result.final_points.to_vec(),
+                placements: result
+                    .placements
+                    .iter()
+                    .enumerate()
+                    .map(|(rank, seat)| PlacementResponse {
+                        seat: *seat,
+                        rank: u8::try_from(rank + 1).unwrap_or(u8::MAX),
+                        points: result
+                            .final_points
+                            .get(usize::from(*seat))
+                            .copied()
+                            .unwrap_or_default(),
+                        uma_tenths: 0,
+                        oka_tenths: 0,
+                        score_tenths: 0,
+                    })
+                    .collect(),
+                unclaimed_riichi_sticks_awarded: 0,
+                kan_points: None,
+                point_deltas: Some(result.point_deltas.to_vec()),
+            }),
+            friend_match: value.friend_match,
+            can_start_exit_vote: value.can_start_exit_vote,
+            exit_vote: value.exit_vote.as_ref().map(|vote| ExitVoteResponse {
+                initiator_seat: vote.initiator,
+                remaining_ms: vote.deadline_ms.saturating_sub(now_ms),
+                votes: vote.votes.clone(),
+            }),
+            terminated_by_exit_vote: value.terminated_by_exit_vote,
+        }
+    }
 }
 
 /// 一次杠带来的杠点增减。
@@ -738,6 +997,31 @@ struct KanPointsResponse {
     seat: u8,
     kind: &'static str,
     deltas: Vec<i32>,
+}
+
+#[derive(Serialize)]
+struct SichuanWinResponse {
+    id: u64,
+    seat: u8,
+    is_tsumo: bool,
+    payer: Option<u8>,
+    chankan: bool,
+    winning_tile: Option<TileResponse>,
+    deltas: Vec<i32>,
+}
+
+impl From<&ObserverSichuanWinEvent> for SichuanWinResponse {
+    fn from(value: &ObserverSichuanWinEvent) -> Self {
+        Self {
+            id: value.id,
+            seat: value.seat,
+            is_tsumo: value.is_tsumo,
+            payer: value.payer,
+            chankan: value.chankan,
+            winning_tile: value.winning_tile.as_ref().map(TileResponse::from),
+            deltas: value.deltas.to_vec(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -772,6 +1056,18 @@ struct HandSettlementResponse {
     /// 荒牌：本局不算，同一个庄家直接重开。
     #[serde(skip_serializing_if = "Option::is_none")]
     void_hand: Option<bool>,
+    /// 四川麻将流局结算的花猪、查大叫与各自的增减。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    que: Option<SichuanQueResponse>,
+}
+
+/// 四川麻将流局查花猪、查大叫的结果。
+#[derive(Serialize)]
+struct SichuanQueResponse {
+    flower_pigs: Vec<u8>,
+    tenpai: Vec<u8>,
+    noten: Vec<u8>,
+    deltas: Vec<i32>,
 }
 
 #[derive(Serialize)]
@@ -784,6 +1080,18 @@ struct WinnerSettlementResponse {
     points: u32,
     dealer: bool,
     yaku: Vec<YakuResponse>,
+    /// 四川麻将：是否自摸。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    is_tsumo: Option<bool>,
+    /// 四川麻将：是否抢杠胡。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chankan: Option<bool>,
+    /// 四川麻将：放炮家（自摸为空）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payer: Option<u8>,
+    /// 四川麻将：胡的那张牌，结算摊牌时高亮成浅红。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    winning_tile: Option<TileResponse>,
 }
 
 #[derive(Serialize)]
@@ -812,6 +1120,12 @@ struct TurnActionsResponse {
     /// 手持三张指示牌可以宣告的暗杠：只结算杠点，牌型仍是刻子。
     #[serde(skip_serializing_if = "Option::is_none")]
     impact_indicator_concealed_kan: Option<bool>,
+    /// 四川麻将的暗杠候选，给的是牌码；四张具体是哪四张由引擎挑。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sichuan_concealed_kan_tile_codes: Option<Vec<String>>,
+    /// 四川麻将可以加杠的副露编号。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sichuan_added_kan_meld_ids: Option<Vec<u16>>,
 }
 
 #[derive(Serialize)]
@@ -862,6 +1176,9 @@ enum ReactionResponse {
         indicator: bool,
     },
     ImpactOpenKan,
+    /// 四川麻将的碰。手上凑数的两张由引擎自己挑，所以不带牌号。
+    SichuanPon,
+    SichuanOpenKan,
 }
 
 impl ReactionResponse {
@@ -884,6 +1201,21 @@ impl ReactionResponse {
         }
         if value.can_open_kan {
             options.push(Self::ImpactOpenKan);
+        }
+        options
+    }
+
+    /// 四川麻将的可鸣操作：荣和、碰、明杠，没有吃。
+    fn sichuan(value: &mamahjong_application::SichuanReactionOptionsView) -> Vec<Self> {
+        let mut options = Vec::new();
+        if value.can_ron {
+            options.push(Self::Ron);
+        }
+        if value.can_pon {
+            options.push(Self::SichuanPon);
+        }
+        if value.can_open_kan {
+            options.push(Self::SichuanOpenKan);
         }
         options
     }
@@ -919,11 +1251,29 @@ struct ProgressResponse {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum PhaseResponse {
-    AwaitingTurnAction { seat: u8 },
-    AwaitingDiscard { seat: u8 },
-    AwaitingResponses { trigger_seat: u8 },
-    AwaitingKanAnimation { seat: u8 },
-    Ended { reason: &'static str },
+    AwaitingExchange,
+    AwaitingExchangeAnimation,
+    /* 协议沿用四川术语 dingque，不让 serde 把复合词拆成 ding_que。 */
+    #[serde(rename = "awaiting_dingque")]
+    AwaitingDingQue,
+    AwaitingTurnAction {
+        seat: u8,
+    },
+    AwaitingDiscard {
+        seat: u8,
+    },
+    AwaitingResponses {
+        trigger_seat: u8,
+    },
+    AwaitingKanAnimation {
+        seat: u8,
+    },
+    AwaitingWinAnimation {
+        seat: u8,
+    },
+    Ended {
+        reason: &'static str,
+    },
 }
 
 impl PhaseResponse {
@@ -937,6 +1287,36 @@ impl PhaseResponse {
                 trigger_seat: seat.unwrap_or_default(),
             },
             "awaiting_kan_animation" => Self::AwaitingKanAnimation {
+                seat: seat.unwrap_or_default(),
+            },
+            "awaiting_win_animation" => Self::AwaitingWinAnimation {
+                seat: seat.unwrap_or_default(),
+            },
+            "ended" => Self::Ended {
+                reason: reason.unwrap_or("exhaustive_draw"),
+            },
+            _ => Self::AwaitingTurnAction {
+                seat: seat.unwrap_or_default(),
+            },
+        }
+    }
+
+    /// 四川麻将的阶段。比冲击麻将多出换三张与定缺两个前置阶段。
+    fn sichuan(kind: &'static str, seat: Option<u8>, reason: Option<&'static str>) -> Self {
+        match kind {
+            "awaiting_exchange" => Self::AwaitingExchange,
+            "awaiting_exchange_animation" => Self::AwaitingExchangeAnimation,
+            "awaiting_dingque" => Self::AwaitingDingQue,
+            "awaiting_discard" => Self::AwaitingDiscard {
+                seat: seat.unwrap_or_default(),
+            },
+            "awaiting_responses" => Self::AwaitingResponses {
+                trigger_seat: seat.unwrap_or_default(),
+            },
+            "awaiting_kan_animation" => Self::AwaitingKanAnimation {
+                seat: seat.unwrap_or_default(),
+            },
+            "awaiting_win_animation" => Self::AwaitingWinAnimation {
                 seat: seat.unwrap_or_default(),
             },
             "ended" => Self::Ended {
@@ -997,6 +1377,18 @@ struct MatchPlayerResponse {
     /// 立直音乐路径。玩家选了立直曲目且有对应文件就是它的路径，否则为空。
     #[serde(skip_serializing_if = "Option::is_none")]
     riichi_music_path: Option<String>,
+    /// 四川麻将定缺的花色：`man` / `pin` / `sou`；定缺前为空。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    que_suit: Option<&'static str>,
+    /// 四川麻将：这家已经胡牌、正盖牌继续血战到底。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    won: Option<bool>,
+    /// 四川麻将：这家胡的那张牌，胡牌瞬间染浅红。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    winning_tile: Option<TileResponse>,
+    /// 四川麻将：这家是否自摸。胡后摸牌 id 隐藏，前端据此单独亮出自摸牌。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    win_is_tsumo: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -1047,6 +1439,10 @@ impl MatchPlayerResponse {
             kan_count: None,
             honor_streak: None,
             riichi_music_path: portrait.riichi_music_path,
+            que_suit: None,
+            won: None,
+            winning_tile: None,
+            win_is_tsumo: None,
         }
     }
 
@@ -1077,6 +1473,44 @@ impl MatchPlayerResponse {
             kan_count: Some(value.kan_count),
             honor_streak: Some(value.honor_streak),
             riichi_music_path: portrait.riichi_music_path,
+            que_suit: None,
+            won: None,
+            winning_tile: None,
+            win_is_tsumo: None,
+        }
+    }
+
+    /// 四川麻将的一位玩家。没有立直状态与听牌提示；定缺、胡牌盖牌走专属字段。
+    fn sichuan(value: &ObserverSichuanPlayer, application: &Application) -> Self {
+        let portrait = portrait(application, value.player.user_id());
+        Self {
+            user_id: value.player.user_id().as_str().to_owned(),
+            seat: value.player.seat(),
+            nickname: value.player.nickname().to_owned(),
+            avatar_path: portrait.avatar_path,
+            character_id: portrait.character_id,
+            character_illustration_path: portrait.character_illustration_path,
+            points: value.points,
+            concealed_tiles: value
+                .concealed_tiles
+                .as_ref()
+                .map(|tiles| tiles.iter().map(TileResponse::from).collect()),
+            concealed_tile_count: value.concealed_tile_count,
+            drawn_tile_id: value.drawn_tile_id,
+            melds: value.melds.iter().map(MeldResponse::from).collect(),
+            nuki_tiles: Vec::new(),
+            discards: value.discards.iter().map(DiscardResponse::from).collect(),
+            riichi_status: "none",
+            waiting_tiles: Vec::new(),
+            furiten: false,
+            kan_points: None,
+            kan_count: Some(value.kan_count),
+            honor_streak: None,
+            riichi_music_path: portrait.riichi_music_path,
+            que_suit: value.que_suit,
+            won: Some(value.won),
+            winning_tile: value.winning_tile.as_ref().map(TileResponse::from),
+            win_is_tsumo: value.win_is_tsumo,
         }
     }
 }
@@ -1177,6 +1611,15 @@ impl From<&ImpactTileView> for TileResponse {
     }
 }
 
+impl From<&SichuanTileView> for TileResponse {
+    fn from(value: &SichuanTileView) -> Self {
+        Self {
+            id: value.id,
+            code: value.code.clone(),
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct MeldResponse {
     id: u16,
@@ -1221,6 +1664,18 @@ impl From<&ImpactMeldView> for MeldResponse {
     }
 }
 
+impl From<&SichuanMeldView> for MeldResponse {
+    fn from(value: &SichuanMeldView) -> Self {
+        Self {
+            id: value.id,
+            kind: value.kind,
+            tiles: value.tiles.iter().map(TileResponse::from).collect(),
+            called_from: value.called_from,
+            called_tile_id: value.called_tile_id,
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct DiscardResponse {
     tile: TileResponse,
@@ -1252,6 +1707,19 @@ impl From<&ImpactDiscardView> for DiscardResponse {
             tsumogiri: false,
             riichi_declared: false,
             // 谁鸣走的没记，只记这张被不被鸣了：牌河照样要画上斜杠。
+            claimed_by: None,
+            claimed: value.called,
+        }
+    }
+}
+
+impl From<&SichuanDiscardView> for DiscardResponse {
+    fn from(value: &SichuanDiscardView) -> Self {
+        Self {
+            tile: TileResponse::from(&value.tile),
+            // 四川麻将的牌河不记摸切，也没有立直宣言牌。
+            tsumogiri: false,
+            riichi_declared: false,
             claimed_by: None,
             claimed: value.called,
         }
@@ -1323,6 +1791,15 @@ mod tests {
         assert_eq!(
             serde_json::to_value(phase).expect("serialize phase"),
             json!({"kind": "awaiting_kan_animation", "seat": 2}),
+        );
+    }
+
+    #[test]
+    fn sichuan_dingque_phase_keeps_the_frontend_wire_name() {
+        let phase = PhaseResponse::sichuan("awaiting_dingque", None, None);
+        assert_eq!(
+            serde_json::to_value(phase).expect("serialize phase"),
+            json!({"kind": "awaiting_dingque"}),
         );
     }
 }
