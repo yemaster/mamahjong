@@ -8,6 +8,7 @@ members = [
     "crates/mahjong-core",
     "crates/mahjong-impact",
     "crates/mahjong-riichi",
+    "crates/mahjong-sichuan",
 ]
 
 [workspace.package]

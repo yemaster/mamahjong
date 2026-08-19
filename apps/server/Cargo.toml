@@ -12,6 +12,7 @@ mamahjong-application = { path = "../../crates/mamahjong-application" }
 mahjong-core = { path = "../../crates/mahjong-core" }
 mahjong-impact = { path = "../../crates/mahjong-impact" }
 mahjong-riichi = { path = "../../crates/mahjong-riichi" }
+mahjong-sichuan = { path = "../../crates/mahjong-sichuan" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
