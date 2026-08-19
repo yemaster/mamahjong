@@ -251,6 +251,10 @@ impl ApiError {
     pub fn is_stale_version(&self) -> bool {
         self.code == "game.stale_version"
     }
+
+    pub fn is_already_member(&self) -> bool {
+        self.code == "room.already_member"
+    }
 }
 
 impl Display for ApiError {

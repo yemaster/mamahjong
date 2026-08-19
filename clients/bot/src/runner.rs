@@ -29,6 +29,12 @@ const KAN_BASE_PAUSE: Duration = Duration::from_millis(500);
 const DEALING_TILE_STEP: Duration = Duration::from_millis(80);
 /// Base pause for dealing animation.
 const DEALING_BASE_PAUSE: Duration = Duration::from_millis(500);
+/// 四川换三张的三维飞出、换位、飞回动画；机器人等这段播完再回执。
+const SICHUAN_EXCHANGE_ANIMATION: Duration = Duration::from_millis(5_000);
+/// 四川单次胡牌的即时盖牌/亮胡张动画。
+const SICHUAN_WIN_ANIMATION: Duration = Duration::from_millis(1_000);
+/// 四川最终和牌结算只保留结算界面，没有重复点数动画。
+const SICHUAN_WIN_SETTLEMENT_UI: Duration = Duration::from_millis(500);
 /// Small pause for the asset-loading screen before reporting ready.
 const LOADING_PAUSE: Duration = Duration::from_secs(1);
 /// Delay between polls while the table is still dealing or still settling.
@@ -48,6 +54,8 @@ pub enum Variant {
     Sanma,
     /// 冲击麻将（四人固定）。
     Impact,
+    /// 四川麻将（四人固定）。
+    Sichuan,
 }
 
 impl Variant {
@@ -56,6 +64,7 @@ impl Variant {
             Self::Yonma => "riichi/yonma",
             Self::Sanma => "riichi/sanma",
             Self::Impact => "impact/standard",
+            Self::Sichuan => "sichuan/yonma",
         }
     }
 
@@ -64,17 +73,25 @@ impl Variant {
             Self::Yonma => "四麻",
             Self::Sanma => "三麻",
             Self::Impact => "冲击",
+            Self::Sichuan => "四川",
         }
     }
 
     pub fn tile_kinds(self) -> impl Iterator<Item = usize> {
-        (0..34).filter(move |kind| !matches!(self, Self::Sanma) || !(1..=7).contains(kind))
+        (0..34).filter(move |kind| match self {
+            Self::Sanma => !(1..=7).contains(kind),
+            Self::Sichuan => *kind < 27,
+            _ => true,
+        })
     }
 }
 
 pub fn detect_variant(view: &MatchView) -> Variant {
     if view.is_impact() {
         return Variant::Impact;
+    }
+    if view.is_sichuan() {
+        return Variant::Sichuan;
     }
     match view.players.len() {
         3 => Variant::Sanma,
@@ -116,7 +133,7 @@ impl RunReport {
             })
             .collect::<Vec<_>>()
             .join(" ");
-        if self.variant == Variant::Impact {
+        if matches!(self.variant, Variant::Impact | Variant::Sichuan) {
             format!(
                 "{}完成 · {}局 · {}条命令 · 副露{} · 和牌{} · {}",
                 self.variant.label(),
@@ -155,6 +172,9 @@ pub struct RunStats {
 pub fn display_initial_state(view: &MatchView) -> Result<(), String> {
     if view.is_impact() {
         return display_initial_state_impact(view);
+    }
+    if view.is_sichuan() {
+        return display_initial_state_sichuan(view);
     }
     let player = view.observer()?;
     let tiles = player
@@ -287,6 +307,72 @@ fn display_initial_state_impact(view: &MatchView) -> Result<(), String> {
     Ok(())
 }
 
+fn display_initial_state_sichuan(view: &MatchView) -> Result<(), String> {
+    let player = view.observer()?;
+    let tiles = player
+        .concealed_tiles
+        .as_deref()
+        .ok_or_else(|| "手牌不可见".to_owned())?;
+
+    let b = "│".dimmed();
+    let top = "┌────────────────────────────────────┐".dimmed();
+    let mid = "├────────────────────────────────────┤".dimmed();
+    let bot = "└────────────────────────────────────┘".dimmed();
+
+    println!();
+    println!("{}", top);
+    println!(
+        "{b}  {:^30}  {b}",
+        "🀫  四川麻将对局开始！  🀫".bright_yellow().bold()
+    );
+    println!("{b}  {:30}  {b}", "");
+    println!("{}", mid);
+    println!("{b}  {} {}", "对局:".dimmed(), view.id.cyan());
+    println!(
+        "{b}  {} 第{}局 · 庄家{}家 · {}点",
+        "轮次:".dimmed(),
+        view.hand_index + 1,
+        wind(view.progress.dealer),
+        player.points
+    );
+    if let Some(direction) = view.exchange_direction.as_deref() {
+        println!(
+            "{b}  {} {}",
+            "换三张:".dimmed(),
+            exchange_direction_name(direction).bright_magenta()
+        );
+    }
+    if let Some(suit) = player.que_suit.as_deref() {
+        println!(
+            "{b}  {} {}",
+            "定缺:".dimmed(),
+            que_suit_label(suit).bright_cyan()
+        );
+    }
+    print!("{b}  {} ", "手牌:".dimmed());
+    let mut sorted: Vec<_> = tiles.iter().collect();
+    sorted.sort_by_key(|tile| tile_sort_key(&tile.code));
+    for tile in &sorted {
+        print!("{} ", color_tile(&tile.code, false));
+    }
+    println!();
+    if !player.melds.is_empty() {
+        print!("{b}  {} ", "副露:".dimmed());
+        for meld in &player.melds {
+            for tile in &meld.tiles {
+                print!("{} ", color_tile(&tile.code, false));
+            }
+            print!("| ");
+        }
+        println!();
+    }
+    println!("{}", bot);
+    println!();
+    println!("{}", "▶ 自动打牌开始".bright_green().bold());
+    println!();
+    Ok(())
+}
+
 /// Auto-play loop — dispatches to the riichi or impact path based on the view.
 pub async fn auto_play(
     client: &ApiClient,
@@ -297,10 +383,10 @@ pub async fn auto_play(
     let view = client.match_view(match_id).await?;
     let variant = detect_variant(&view);
 
-    if variant == Variant::Impact {
-        auto_play_impact(client, match_id, config, stats).await
-    } else {
-        auto_play_riichi(client, match_id, variant, config, stats).await
+    match variant {
+        Variant::Impact => auto_play_impact(client, match_id, config, stats).await,
+        Variant::Sichuan => auto_play_sichuan(client, match_id, config, stats).await,
+        _ => auto_play_riichi(client, match_id, variant, config, stats).await,
     }
 }
 
@@ -698,6 +784,297 @@ async fn auto_play_impact(
     }
 }
 
+/// Sichuan (四川麻将) auto-play loop.
+///
+/// Every hand runs the strict multi-phase flow: assets → opening deal → 换三张
+/// (exchange three same-suit tiles) → exchange animation → 定缺 (pick the
+/// deficient suit) → play (血战到底 blood battle) → kan animation → settlement.
+async fn auto_play_sichuan(
+    client: &ApiClient,
+    match_id: &str,
+    config: &RunConfig,
+    stats: &mut RunStats,
+) -> Result<MatchResultView, RunError> {
+    let mut view = poll_view(client, match_id).await?;
+    let mut shown_settlement: Option<u32> = None;
+    let mut acked_opening: Option<u32> = None;
+    let mut acked_assets = false;
+    let mut acked_kan_id: Option<u64> = None;
+    let mut acked_win_id: Option<u64> = None;
+    let mut idle_polls: u32 = 0;
+    let mut consecutive_errors: u32 = 0;
+    loop {
+        stats.max_hand_index = stats.max_hand_index.max(view.hand_index);
+
+        if view.terminated_by_exit_vote {
+            println!();
+            println!("{} {}", "■".yellow(), "对局因退出投票提前结束".yellow());
+            return Err(RunError::State("对局被退出投票终止".to_owned()));
+        }
+
+        if view.terminated_by_asset_timeout {
+            println!();
+            println!(
+                "{} {}",
+                "■".yellow(),
+                "有玩家出现网络问题，对局已终止".yellow()
+            );
+            return Err(RunError::State("对局因玩家加载超时终止".to_owned()));
+        }
+
+        if view.needs_assets_ready() && !acked_assets {
+            acked_assets = true;
+            idle_polls = 0;
+            tokio::time::sleep(LOADING_PAUSE).await;
+            view =
+                send_with_retry(client, match_id, view.version, "game.assets_ready", None).await?;
+            continue;
+        }
+
+        if view.assets_loading() {
+            view = wait(client, match_id, &mut idle_polls, "载入").await?;
+            continue;
+        }
+
+        if stats.commands >= config.max_commands {
+            return Err(RunError::State(format!(
+                "超过最大命令数 {}，对局可能停滞",
+                config.max_commands
+            )));
+        }
+
+        if view.needs_exit_vote() {
+            println!(
+                "{} {}",
+                "?".bright_yellow().bold(),
+                "其他玩家发起了退出投票，机器人同意".yellow()
+            );
+            view = control(
+                client,
+                match_id,
+                &view,
+                "game.vote_exit",
+                json!({"agree": true}),
+            )
+            .await?;
+            continue;
+        }
+
+        // Kan animation handshake — every seat must ack before play resumes.
+        if let Some(kan) = view.unplayed_kan() {
+            if acked_kan_id != Some(kan.id) {
+                acked_kan_id = Some(kan.id);
+                idle_polls = 0;
+                tokio::time::sleep(kan_animation_duration(kan)).await;
+                view = control(
+                    client,
+                    match_id,
+                    &view,
+                    "sichuan.kan_animation_played",
+                    json!({"kan_id": kan.id}),
+                )
+                .await?;
+                continue;
+            }
+        }
+
+        if matches!(view.phase, MatchPhase::AwaitingExchangeAnimation)
+            && !view.acked_exchange_animation()
+        {
+            idle_polls = 0;
+            tokio::time::sleep(SICHUAN_EXCHANGE_ANIMATION).await;
+            view = control_no_payload(client, match_id, &view, "sichuan.exchange_animation_played")
+                .await?;
+            continue;
+        }
+
+        if matches!(view.phase, MatchPhase::AwaitingWinAnimation { .. }) {
+            if let Some(win) = view.last_win.as_ref() {
+                if acked_win_id != Some(win.id) {
+                    acked_win_id = Some(win.id);
+                    idle_polls = 0;
+                    tokio::time::sleep(SICHUAN_WIN_ANIMATION).await;
+                    view = control(
+                        client,
+                        match_id,
+                        &view,
+                        "sichuan.win_animation_played",
+                        json!({"win_id": win.id}),
+                    )
+                    .await?;
+                    continue;
+                }
+            }
+        }
+
+        // Settlement — same two-step handshake as riichi.
+        if let Some(settlement) = view.hand_settlement.clone() {
+            if shown_settlement != Some(view.hand_index) {
+                display_settlement_sichuan(&view, &settlement);
+                shown_settlement = Some(view.hand_index);
+            }
+            if view.unplayed_settlement().is_some() {
+                idle_polls = 0;
+                let duration = if settlement.winners.is_empty() {
+                    settlement_duration(&settlement, true)
+                } else {
+                    SICHUAN_WIN_SETTLEMENT_UI
+                };
+                tokio::time::sleep(duration).await;
+                view = control(
+                    client,
+                    match_id,
+                    &view,
+                    "game.settlement_played",
+                    json!({"hand_index": view.hand_index}),
+                )
+                .await?;
+                continue;
+            }
+            if view.unconfirmed_settlement().is_some() {
+                idle_polls = 0;
+                view = control(
+                    client,
+                    match_id,
+                    &view,
+                    "game.confirm_settlement",
+                    json!({"hand_index": view.hand_index}),
+                )
+                .await?;
+                continue;
+            }
+            if view.result.is_none() {
+                view = wait(client, match_id, &mut idle_polls, "结算").await?;
+                continue;
+            }
+        }
+
+        if let Some(result) = view.result.clone() {
+            return Ok(result);
+        }
+
+        // Opening ready — the 13-tile deal.
+        if view.needs_opening_ready() && acked_opening != Some(view.hand_index) {
+            acked_opening = Some(view.hand_index);
+            idle_polls = 0;
+            let tile_count = view
+                .observer()
+                .map(|p| {
+                    p.concealed_tiles
+                        .as_deref()
+                        .map(|tiles| tiles.len())
+                        .unwrap_or(13)
+                })
+                .unwrap_or(13);
+            tokio::time::sleep(dealing_duration(tile_count)).await;
+            view = control(
+                client,
+                match_id,
+                &view,
+                "game.ready_for_hand",
+                json!({"hand_index": view.hand_index}),
+            )
+            .await?;
+            continue;
+        }
+
+        if view.opening_in_progress() {
+            view = wait(client, match_id, &mut idle_polls, "发牌").await?;
+            continue;
+        }
+
+        // 换三张: submit three same-suit tiles.
+        if matches!(view.phase, MatchPhase::AwaitingExchange) {
+            if !view.submitted_exchange() {
+                idle_polls = 0;
+                tokio::time::sleep(THINKING_PAUSE).await;
+                let command =
+                    strategy::sichuan_exchange_command(&view).map_err(RunError::Strategy)?;
+                view = submit(client, match_id, view.version, &command, config, stats).await?;
+                continue;
+            }
+            view = wait(client, match_id, &mut idle_polls, "换三张").await?;
+            continue;
+        }
+
+        // 定缺: ack the exchange animation (if not yet), then pick the deficient suit.
+        // Do NOT wait for all seats to ack: the server already opened the 定缺 gate
+        // (possibly via the fallback timer), so blocking on exchange_animation_in_progress
+        // would deadlock when another seat timed out without acking.
+        if matches!(view.phase, MatchPhase::AwaitingDingQue) {
+            if !view.acked_exchange_animation() {
+                idle_polls = 0;
+                view = control_no_payload(
+                    client,
+                    match_id,
+                    &view,
+                    "sichuan.exchange_animation_played",
+                )
+                .await?;
+                continue;
+            }
+            if !view.submitted_dingque() {
+                idle_polls = 0;
+                tokio::time::sleep(THINKING_PAUSE).await;
+                let command =
+                    strategy::sichuan_dingque_command(&view).map_err(RunError::Strategy)?;
+                view = submit(client, match_id, view.version, &command, config, stats).await?;
+                continue;
+            }
+            view = wait(client, match_id, &mut idle_polls, "定缺").await?;
+            continue;
+        }
+
+        idle_polls = 0;
+        let phase_result = dispatch_sichuan_phase(client, match_id, &view, config, stats).await;
+        view = match phase_result {
+            Ok(v) => {
+                consecutive_errors = 0;
+                v
+            }
+            Err(RunError::Strategy(message)) => {
+                eprintln!(
+                    "{} {}",
+                    "⚠".yellow(),
+                    format!("策略错误: {message}").yellow()
+                );
+                match sichuan_safe_fallback(client, match_id, &view, config, stats).await {
+                    Ok(v) => {
+                        consecutive_errors = 0;
+                        v
+                    }
+                    Err(_) => {
+                        eprintln!(
+                            "{} {}",
+                            "⚠".yellow(),
+                            "备用操作也失败，刷新状态重试...".yellow()
+                        );
+                        consecutive_errors += 1;
+                        if consecutive_errors > MAX_CONSECUTIVE_ERRORS {
+                            return Err(RunError::State(format!(
+                                "连续{consecutive_errors}次错误，放弃重试"
+                            )));
+                        }
+                        tokio::time::sleep(RETRY_BACKOFF).await;
+                        poll_view(client, match_id).await?
+                    }
+                }
+            }
+            Err(error) if consecutive_errors < MAX_CONSECUTIVE_ERRORS => {
+                consecutive_errors += 1;
+                eprintln!(
+                    "{} {}",
+                    "⚠".yellow(),
+                    format!("操作失败 (第{consecutive_errors}次重试): {error}").yellow()
+                );
+                tokio::time::sleep(RETRY_BACKOFF).await;
+                poll_view(client, match_id).await?
+            }
+            Err(error) => return Err(error),
+        };
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Riichi turn execution
 // ---------------------------------------------------------------------------
@@ -761,6 +1138,35 @@ async fn execute_impact_turn(
     }
 }
 
+/// Sichuan turn execution: on tsumo rejection, fall back to the best discard.
+async fn execute_sichuan_turn(
+    client: &ApiClient,
+    match_id: &str,
+    view: MatchView,
+    command: BotCommand,
+    config: &RunConfig,
+    stats: &mut RunStats,
+) -> Result<MatchView, RunError> {
+    let version = view.version;
+    match submit(client, match_id, version, &command, config, stats).await {
+        Ok(view) => Ok(view),
+        Err(RunError::Api(error))
+            if error.is_invalid_command() && command.name == "sichuan.tsumo" =>
+        {
+            let current = poll_view(client, match_id).await?;
+            let fallback =
+                strategy::sichuan_fallback_discard(&current).map_err(RunError::Strategy)?;
+            submit(client, match_id, current.version, &fallback, config, stats).await
+        }
+        Err(RunError::Api(error)) if error.is_stale_version() => {
+            let current = poll_view(client, match_id).await?;
+            let command = strategy::sichuan_turn_command(&current).map_err(RunError::Strategy)?;
+            submit(client, match_id, current.version, &command, config, stats).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
@@ -817,6 +1223,45 @@ async fn control(
                 let current = poll_view(client, match_id).await?;
                 return Ok(client
                     .game_command(match_id, current.version, name, Some(payload))
+                    .await?);
+            }
+            Err(error) if error.is_invalid_command() => {
+                tokio::time::sleep(POLL_DELAY).await;
+                return poll_view(client, match_id).await;
+            }
+            Err(error) if attempt < MAX_RETRIES => {
+                attempt += 1;
+                eprintln!(
+                    "{} {}",
+                    "⚠".yellow(),
+                    format!("控制命令失败 (第{attempt}次重试): {error}").yellow()
+                );
+                tokio::time::sleep(RETRY_BACKOFF).await;
+            }
+            Err(error) => return Err(RunError::Api(error)),
+        }
+    }
+}
+
+/// Like `control`, but for commands that carry no payload field at all (the
+/// server rejects a `payload` key on unit-variant commands).
+async fn control_no_payload(
+    client: &ApiClient,
+    match_id: &str,
+    view: &MatchView,
+    name: &'static str,
+) -> Result<MatchView, RunError> {
+    let mut attempt = 0_u32;
+    loop {
+        match client
+            .game_command(match_id, view.version, name, None)
+            .await
+        {
+            Ok(view) => return Ok(view),
+            Err(error) if error.is_stale_version() => {
+                let current = poll_view(client, match_id).await?;
+                return Ok(client
+                    .game_command(match_id, current.version, name, None)
                     .await?);
             }
             Err(error) if error.is_invalid_command() => {
@@ -925,7 +1370,11 @@ async fn dispatch_riichi_phase(
             tokio::time::sleep(POLL_DELAY).await;
             poll_view(client, match_id).await
         }
-        MatchPhase::Ended { .. } => {
+        MatchPhase::Ended { .. }
+        | MatchPhase::AwaitingExchange
+        | MatchPhase::AwaitingExchangeAnimation
+        | MatchPhase::AwaitingWinAnimation { .. }
+        | MatchPhase::AwaitingDingQue => {
             tokio::time::sleep(POLL_DELAY).await;
             poll_view(client, match_id).await
         }
@@ -981,6 +1430,68 @@ async fn dispatch_impact_phase(
             tokio::time::sleep(POLL_DELAY).await;
             poll_view(client, match_id).await
         }
+        MatchPhase::Ended { .. }
+        | MatchPhase::AwaitingExchange
+        | MatchPhase::AwaitingExchangeAnimation
+        | MatchPhase::AwaitingWinAnimation { .. }
+        | MatchPhase::AwaitingDingQue => {
+            tokio::time::sleep(POLL_DELAY).await;
+            poll_view(client, match_id).await
+        }
+    }
+}
+
+/// Dispatch the Sichuan-game phase: turn action, reaction, or ended.  The
+/// exchange/dingque/kan-animation phases are handled by the outer loop.
+async fn dispatch_sichuan_phase(
+    client: &ApiClient,
+    match_id: &str,
+    view: &MatchView,
+    config: &RunConfig,
+    stats: &mut RunStats,
+) -> Result<MatchView, RunError> {
+    match view.phase {
+        MatchPhase::AwaitingTurnAction { seat } | MatchPhase::AwaitingDiscard { seat } => {
+            if seat != view.observer_seat {
+                tokio::time::sleep(POLL_DELAY).await;
+                poll_view(client, match_id).await
+            } else {
+                tokio::time::sleep(THINKING_PAUSE).await;
+                let command = strategy::sichuan_turn_command(view).map_err(RunError::Strategy)?;
+                execute_sichuan_turn(client, match_id, view.clone(), command, config, stats).await
+            }
+        }
+        MatchPhase::AwaitingResponses { .. } => {
+            if view.available_reactions.is_empty() {
+                tokio::time::sleep(POLL_DELAY).await;
+                poll_view(client, match_id).await
+            } else {
+                tokio::time::sleep(THINKING_PAUSE).await;
+                let command = strategy::sichuan_reaction_command(view)
+                    .map_err(RunError::Strategy)?
+                    .ok_or_else(|| RunError::State("响应窗口没有可执行动作".to_owned()))?;
+                match submit(client, match_id, view.version, &command, config, stats).await {
+                    Ok(view) => Ok(view),
+                    Err(RunError::Api(error)) if error.is_stale_version() => {
+                        let current = poll_view(client, match_id).await?;
+                        let command = strategy::sichuan_reaction_command(&current)
+                            .map_err(RunError::Strategy)?
+                            .ok_or_else(|| RunError::State("响应窗口没有可执行动作".to_owned()))?;
+                        submit(client, match_id, current.version, &command, config, stats).await
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+        }
+        MatchPhase::AwaitingKanAnimation { .. }
+        | MatchPhase::AwaitingExchange
+        | MatchPhase::AwaitingExchangeAnimation
+        | MatchPhase::AwaitingWinAnimation { .. }
+        | MatchPhase::AwaitingDingQue => {
+            // Handled by the outer loop (unplayed_kan / exchange / dingque).
+            tokio::time::sleep(POLL_DELAY).await;
+            poll_view(client, match_id).await
+        }
         MatchPhase::Ended { .. } => {
             tokio::time::sleep(POLL_DELAY).await;
             poll_view(client, match_id).await
@@ -1026,6 +1537,50 @@ async fn impact_safe_fallback(
     }
 }
 
+/// Safe fallback when the Sichuan strategy module fails: discard a deficient
+/// tile if any remain, otherwise the first tile; pass on a response window.
+async fn sichuan_safe_fallback(
+    client: &ApiClient,
+    match_id: &str,
+    view: &MatchView,
+    config: &RunConfig,
+    stats: &mut RunStats,
+) -> Result<MatchView, RunError> {
+    match view.phase {
+        MatchPhase::AwaitingTurnAction { .. } | MatchPhase::AwaitingDiscard { .. } => {
+            let player = view.observer().map_err(RunError::Strategy)?;
+            let tiles = player
+                .concealed_tiles
+                .as_deref()
+                .ok_or_else(|| RunError::Strategy("手牌不可见".to_owned()))?;
+            let que_suit = player.que_suit.as_deref().and_then(|suit| match suit {
+                "man" => Some(0_usize),
+                "pin" => Some(1),
+                "sou" => Some(2),
+                _ => None,
+            });
+            let tile_id = tiles
+                .iter()
+                .find(|tile| {
+                    que_suit.is_some_and(|que| strategy::suit_of_code(&tile.code) == Some(que))
+                })
+                .or_else(|| tiles.first())
+                .map(|tile| tile.id)
+                .ok_or_else(|| RunError::Strategy("没有可弃的牌".to_owned()))?;
+            let command = BotCommand {
+                name: "sichuan.discard",
+                description: format!("弃 {}（备用）", tile_id),
+                payload: Some(json!({"tile_id": tile_id})),
+            };
+            submit(client, match_id, view.version, &command, config, stats).await
+        }
+        MatchPhase::AwaitingResponses { .. } => {
+            send_with_retry(client, match_id, view.version, "sichuan.pass", None).await
+        }
+        _ => poll_view(client, match_id).await,
+    }
+}
+
 async fn submit(
     client: &ApiClient,
     match_id: &str,
@@ -1034,25 +1589,49 @@ async fn submit(
     config: &RunConfig,
     stats: &mut RunStats,
 ) -> Result<MatchView, RunError> {
-    let view = client
+    let view = match client
         .game_command(
             match_id,
             expected_version,
             command.name,
             command.payload.clone(),
         )
-        .await?;
+        .await
+    {
+        Ok(view) => view,
+        Err(error) if error.is_stale_version() => {
+            let current = poll_view(client, match_id).await?;
+            client
+                .game_command(
+                    match_id,
+                    current.version,
+                    command.name,
+                    command.payload.clone(),
+                )
+                .await?
+        }
+        Err(error) => return Err(RunError::Api(error)),
+    };
     stats.commands += 1;
     if command.name == "riichi.riichi_discard" {
         stats.riichi += 1;
     }
     if matches!(
         command.name,
-        "riichi.chi" | "riichi.pon" | "riichi.open_kan" | "impact.pon" | "impact.open_kan"
+        "riichi.chi"
+            | "riichi.pon"
+            | "riichi.open_kan"
+            | "impact.pon"
+            | "impact.open_kan"
+            | "sichuan.pon"
+            | "sichuan.open_kan"
     ) {
         stats.calls += 1;
     }
-    if matches!(command.name, "riichi.tsumo" | "riichi.ron" | "impact.tsumo") {
+    if matches!(
+        command.name,
+        "riichi.tsumo" | "riichi.ron" | "impact.tsumo" | "sichuan.tsumo" | "sichuan.ron"
+    ) {
         stats.wins += 1;
     }
     if !config.quiet {
@@ -1078,6 +1657,8 @@ fn round_label(view: &MatchView) -> String {
             wind(view.progress.dealer),
             view.dealer_streak.unwrap_or(0)
         )
+    } else if view.is_sichuan() {
+        format!("第{}局", view.hand_index + 1)
     } else {
         format!(
             "{}{}局",
@@ -1332,6 +1913,102 @@ fn display_settlement_impact(view: &MatchView, settlement: &HandSettlementView) 
     println!("{}", bar.dimmed());
 }
 
+fn display_settlement_sichuan(view: &MatchView, settlement: &HandSettlementView) {
+    let bar = "─".repeat(38);
+    println!();
+    println!("{}", bar.dimmed());
+    println!(
+        "  {} {}",
+        "本局结束".bright_yellow().bold(),
+        end_reason_name(&settlement.reason).yellow()
+    );
+
+    for winner in &settlement.winners {
+        let kind = if winner.is_tsumo.unwrap_or(false) {
+            "自摸"
+        } else if winner.chankan.unwrap_or(false) {
+            "抢杠"
+        } else {
+            "荣和"
+        };
+        print!(
+            "  {} {} {}番 {}点",
+            format!("{}家", wind(winner.seat)).bright_green().bold(),
+            kind.bright_magenta().bold(),
+            winner.han,
+            winner.points
+        );
+        if let Some(ref tile) = winner.winning_tile {
+            print!("  胡 {}", color_tile(&tile.code, false));
+        }
+        println!();
+        let yaku = winner
+            .yaku
+            .iter()
+            .map(|yaku| format!("{}({})", yaku.name, yaku.value))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !yaku.is_empty() {
+            println!("    {}", yaku.dimmed());
+        }
+    }
+
+    // 查花猪 / 查大叫 audit on an exhaustive draw.
+    if let Some(ref que) = settlement.que {
+        if !que.flower_pigs.is_empty() {
+            let names = que
+                .flower_pigs
+                .iter()
+                .map(|seat| format!("{}家", wind(*seat)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("  {} {}", "查花猪:".dimmed(), names.red());
+        }
+        if !que.tenpai.is_empty() {
+            let names = que
+                .tenpai
+                .iter()
+                .map(|seat| format!("{}家", wind(*seat)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("  {} {}", "查大叫:".dimmed(), names.green());
+        }
+        if !que.noten.is_empty() {
+            let names = que
+                .noten
+                .iter()
+                .map(|seat| format!("{}家", wind(*seat)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            println!("  {} {}", "未听牌:".dimmed(), names.dimmed());
+        }
+    }
+
+    print!("  {} ", "点数:".dimmed());
+    for player in &view.players {
+        let index = usize::from(player.seat);
+        let delta = settlement.point_deltas.get(index).copied().unwrap_or(0);
+        let after = settlement
+            .points_after
+            .get(index)
+            .copied()
+            .unwrap_or(player.points);
+        let delta_text = match delta.cmp(&0) {
+            std::cmp::Ordering::Greater => format!("+{delta}").bright_green().to_string(),
+            std::cmp::Ordering::Less => delta.to_string().bright_red().to_string(),
+            std::cmp::Ordering::Equal => "±0".dimmed().to_string(),
+        };
+        let marker = if player.seat == view.observer_seat {
+            "*"
+        } else {
+            ""
+        };
+        print!("{}{}家 {after} {delta_text}   ", marker, wind(player.seat));
+    }
+    println!();
+    println!("{}", bar.dimmed());
+}
+
 fn end_reason_name(value: &str) -> &str {
     match value {
         "tsumo" => "自摸",
@@ -1341,6 +2018,7 @@ fn end_reason_name(value: &str) -> &str {
         "four_winds" => "四风连打",
         "four_kans" => "四杠散了",
         "four_riichi" => "四家立直",
+        "three_winners" => "三家胡牌",
         other => other,
     }
 }
@@ -1366,6 +2044,24 @@ fn wind(seat: u8) -> &'static str {
         2 => "西",
         3 => "北",
         _ => "?",
+    }
+}
+
+fn exchange_direction_name(value: &str) -> &str {
+    match value {
+        "counter_clockwise" => "逆时针（下家）",
+        "clockwise" => "顺时针（上家）",
+        "opposite" => "对家",
+        other => other,
+    }
+}
+
+fn que_suit_label(value: &str) -> &str {
+    match value {
+        "man" => "万",
+        "pin" => "筒",
+        "sou" => "条",
+        other => other,
     }
 }
 

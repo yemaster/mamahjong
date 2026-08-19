@@ -147,9 +147,12 @@ pub fn reaction_command(view: &MatchView, variant: Variant) -> Result<Option<Bot
             ReactionOptionView::OpenKan { tile_ids } => {
                 kan_candidate(tile_ids, tiles, fixed_melds, &visible, variant)?
             }
-            // Impact-only reactions — not reachable from the riichi path, but
-            // the match arm has to be exhaustive.
-            ReactionOptionView::ImpactPon { .. } | ReactionOptionView::ImpactOpenKan => continue,
+            // Impact-only and Sichuan-only reactions — not reachable from the
+            // riichi path, but the match arm has to be exhaustive.
+            ReactionOptionView::ImpactPon { .. }
+            | ReactionOptionView::ImpactOpenKan
+            | ReactionOptionView::SichuanPon
+            | ReactionOptionView::SichuanOpenKan => continue,
         };
         candidates.push(candidate);
     }
@@ -617,45 +620,62 @@ fn regular_search_impact(
         counts[index] += from_hand;
     }
 
-    // Try forming a sequence (suited tiles only).
-    if index < 27 && index % 9 <= 6 {
-        for j2 in [false, true] {
-            for j3 in [false, true] {
-                let used = u8::from(j2) + u8::from(j3);
-                if used > jokers {
-                    continue;
-                }
-                if !j2 && counts[index + 1] == 0 {
-                    continue;
-                }
-                if !j3 && counts[index + 2] == 0 {
-                    continue;
-                }
-                if melds >= 4 {
-                    continue;
-                }
-                counts[index] -= 1;
-                if !j2 {
-                    counts[index + 1] -= 1;
-                }
-                if !j3 {
-                    counts[index + 2] -= 1;
-                }
-                regular_search_impact(
-                    counts,
-                    index,
-                    melds + 1,
-                    has_pair,
-                    incomplete,
-                    jokers - used,
-                    best,
-                );
-                counts[index] += 1;
-                if !j2 {
-                    counts[index + 1] += 1;
-                }
-                if !j3 {
-                    counts[index + 2] += 1;
+    // Try forming a sequence (suited tiles only).  `index` may be the first,
+    // second or third tile of the run: the engine update lets jokers fill the
+    // slot(s) below the lowest real tile, so `89m` + joker is the complete
+    // `789m` run rather than a broken gap wait.
+    if index < 27 {
+        let rank = index % 9;
+        for offset in 0..=2_usize {
+            // `index` sits `offset` tiles into the run; a run can't start below
+            // the bottom of its suit.
+            if rank < offset {
+                continue;
+            }
+            let base = index - rank;
+            let start = index - offset;
+            if start + 2 >= base + 9 {
+                continue;
+            }
+            let others = [start + (offset + 1) % 3, start + (offset + 2) % 3];
+            for joker_first in [false, true] {
+                for joker_second in [false, true] {
+                    let used = u8::from(joker_first) + u8::from(joker_second);
+                    if used > jokers {
+                        continue;
+                    }
+                    if !joker_first && counts[others[0]] == 0 {
+                        continue;
+                    }
+                    if !joker_second && counts[others[1]] == 0 {
+                        continue;
+                    }
+                    if melds >= 4 {
+                        continue;
+                    }
+                    counts[index] -= 1;
+                    if !joker_first {
+                        counts[others[0]] -= 1;
+                    }
+                    if !joker_second {
+                        counts[others[1]] -= 1;
+                    }
+                    regular_search_impact(
+                        counts,
+                        index,
+                        melds + 1,
+                        has_pair,
+                        incomplete,
+                        jokers - used,
+                        best,
+                    );
+                    counts[index] += 1;
+                    if !joker_first {
+                        counts[others[0]] += 1;
+                    }
+                    if !joker_second {
+                        counts[others[1]] += 1;
+                    }
                 }
             }
         }
@@ -843,6 +863,374 @@ fn split_jokers(
     )
     .map_err(|_| "财神数量溢出".to_owned())?;
     Ok((*counts, joker_count))
+}
+
+// ---------------------------------------------------------------------------
+// Sichuan (四川麻将) strategy
+// ---------------------------------------------------------------------------
+
+/// A suit index: `0` = man, `1` = pin, `2` = sou.  Sichuan plays with 27
+/// suited kinds only, so honors never appear.
+fn suit_of_kind(kind: usize) -> Option<usize> {
+    (kind < 27).then_some(kind / 9)
+}
+
+/// Suit index for a tile code (`"5m"` → `0`, `"9s"` → `2`, `"1z"` → `None`).
+pub fn suit_of_code(code: &str) -> Option<usize> {
+    let bytes = code.as_bytes();
+    if bytes.len() != 2 {
+        return None;
+    }
+    match bytes[1] {
+        b'm' => Some(0),
+        b'p' => Some(1),
+        b's' => Some(2),
+        _ => None,
+    }
+}
+
+/// Maps the wire dingque suit name (`"man"`/`"pin"`/`"sou"`) to a suit index.
+fn que_suit_from_str(suit: &str) -> Option<usize> {
+    match suit {
+        "man" => Some(0),
+        "pin" => Some(1),
+        "sou" => Some(2),
+        _ => None,
+    }
+}
+
+/// Shanten for a Sichuan hand: standard 4 melds + pair, or seven pairs.  There
+/// are no honors (so no thirteen orphans) and no jokers.
+pub fn sichuan_shanten(counts: &[u8; TILE_KIND_COUNT], fixed_melds: u8) -> i8 {
+    let regular = regular_shanten(counts, fixed_melds);
+    if fixed_melds > 0 {
+        return regular;
+    }
+    regular.min(seven_pairs_shanten(counts))
+}
+
+/// Generate the best turn action for Sichuan mahjong.
+///
+/// Priority: 自摸 > 暗杠 > 加杠 > 打牌.  A kan is always instant rain points
+/// plus a replacement draw; a concealed kan cannot be robbed, so both are taken
+/// before a plain discard.
+pub fn sichuan_turn_command(view: &MatchView) -> Result<BotCommand, String> {
+    let player = view.observer()?;
+    let tiles = player
+        .concealed_tiles
+        .as_deref()
+        .ok_or_else(|| "观察者手牌不可见".to_owned())?;
+    let fixed_melds = u8::try_from(player.melds.len()).map_err(|_| "副露数量溢出")?;
+    let que_suit = player.que_suit.as_deref().and_then(que_suit_from_str);
+
+    if view.turn_actions.can_tsumo {
+        return Ok(BotCommand {
+            name: "sichuan.tsumo",
+            payload: None,
+            description: "自摸".to_owned(),
+        });
+    }
+
+    if let Some(ref kan_codes) = view.turn_actions.sichuan_concealed_kan_tile_codes {
+        if let Some(code) = kan_codes.first() {
+            return Ok(BotCommand {
+                name: "sichuan.concealed_kan",
+                payload: Some(json!({"tile_code": code})),
+                description: format!("暗杠 {code}"),
+            });
+        }
+    }
+
+    if let Some(ref meld_ids) = view.turn_actions.sichuan_added_kan_meld_ids {
+        if let Some(meld_id) = meld_ids.first() {
+            return Ok(BotCommand {
+                name: "sichuan.added_kan",
+                payload: Some(json!({"meld_id": meld_id})),
+                description: format!("加杠 {meld_id}"),
+            });
+        }
+    }
+
+    let visible = visible_counts(view)?;
+    let decision = sichuan_best_discard(tiles, fixed_melds, que_suit, &visible)?;
+    Ok(BotCommand {
+        name: "sichuan.discard",
+        payload: Some(json!({"tile_id": decision.tile_id})),
+        description: format!(
+            "打 {}（{}向听，受入{}枚/{}种）",
+            decision.tile_code, decision.shanten, decision.ukeire, decision.effective_kinds
+        ),
+    })
+}
+
+/// Sichuan fallback: when tsumo is rejected, discard the best tile.
+pub fn sichuan_fallback_discard(view: &MatchView) -> Result<BotCommand, String> {
+    let player = view.observer()?;
+    let tiles = player
+        .concealed_tiles
+        .as_deref()
+        .ok_or_else(|| "观察者手牌不可见".to_owned())?;
+    let fixed_melds = u8::try_from(player.melds.len()).map_err(|_| "副露数量溢出")?;
+    let que_suit = player.que_suit.as_deref().and_then(que_suit_from_str);
+    let visible = visible_counts(view)?;
+    let decision = sichuan_best_discard(tiles, fixed_melds, que_suit, &visible)?;
+    Ok(BotCommand {
+        name: "sichuan.discard",
+        payload: Some(json!({"tile_id": decision.tile_id})),
+        description: format!(
+            "打 {}（{}向听，受入{}枚/{}种）",
+            decision.tile_code, decision.shanten, decision.ukeire, decision.effective_kinds
+        ),
+    })
+}
+
+/// Generate the best reaction for Sichuan mahjong.
+///
+/// Ron always wins; open kan is always taken (instant rain points, cannot be
+/// robbed); pon only fires when it advances shanten.
+pub fn sichuan_reaction_command(view: &MatchView) -> Result<Option<BotCommand>, String> {
+    if view
+        .available_reactions
+        .iter()
+        .any(|reaction| matches!(reaction, ReactionOptionView::Ron))
+    {
+        return Ok(Some(BotCommand {
+            name: "sichuan.ron",
+            payload: None,
+            description: "荣和".to_owned(),
+        }));
+    }
+
+    if view
+        .available_reactions
+        .iter()
+        .any(|reaction| matches!(reaction, ReactionOptionView::SichuanOpenKan))
+    {
+        return Ok(Some(BotCommand {
+            name: "sichuan.open_kan",
+            payload: None,
+            description: "明杠".to_owned(),
+        }));
+    }
+
+    if view
+        .available_reactions
+        .iter()
+        .any(|reaction| matches!(reaction, ReactionOptionView::SichuanPon))
+    {
+        let player = view.observer()?;
+        let tiles = player
+            .concealed_tiles
+            .as_deref()
+            .ok_or_else(|| "观察者手牌不可见".to_owned())?;
+        let counts = tile_counts(tiles)?;
+        let fixed_melds = u8::try_from(player.melds.len()).map_err(|_| "副露数量溢出")?;
+        let baseline = sichuan_shanten(&counts, fixed_melds);
+        if let Some(kind) = last_discard_kind(view) {
+            let mut after = counts;
+            let remove = after[kind].min(2);
+            after[kind] = after[kind].saturating_sub(remove);
+            let after_pon = sichuan_shanten(&after, fixed_melds + 1);
+            if after_pon < baseline {
+                return Ok(Some(BotCommand {
+                    name: "sichuan.pon",
+                    payload: None,
+                    description: format!(
+                        "碰 {}（{}向听 → {}向听）",
+                        kind_name(kind),
+                        baseline,
+                        after_pon
+                    ),
+                }));
+            }
+        }
+    }
+
+    Ok(Some(BotCommand {
+        name: "sichuan.pass",
+        payload: None,
+        description: "过".to_owned(),
+    }))
+}
+
+/// Best discard for Sichuan: clears the deficient (定缺) suit first, then
+/// minimises shanten and maximises acceptance over the remaining suits.
+pub fn sichuan_best_discard(
+    tiles: &[TileView],
+    fixed_melds: u8,
+    que_suit: Option<usize>,
+    visible: &[u8; TILE_KIND_COUNT],
+) -> Result<DiscardDecision, String> {
+    if tiles.is_empty() {
+        return Err("手牌为空".to_owned());
+    }
+    let counts = tile_counts(tiles)?;
+
+    // 缺门牌必须先打：规则拒绝在还持有缺门牌时打出其它花色。
+    if let Some(que) = que_suit {
+        if let Some(tile) = tiles
+            .iter()
+            .find(|tile| suit_of_code(&tile.code) == Some(que))
+        {
+            let kind = tile_kind(&tile.code)?;
+            let mut after = counts;
+            after[kind] = after[kind].saturating_sub(1);
+            return Ok(DiscardDecision {
+                tile_id: tile.id,
+                tile_code: tile.code.clone(),
+                shanten: sichuan_shanten(&after, fixed_melds),
+                ukeire: 0,
+                effective_kinds: 0,
+            });
+        }
+    }
+
+    let mut candidates = Vec::with_capacity(tiles.len());
+    for tile in tiles {
+        let kind = tile_kind(&tile.code)?;
+        let mut after = counts;
+        after[kind] = after[kind]
+            .checked_sub(1)
+            .ok_or_else(|| "牌张计数不一致".to_owned())?;
+        let base_shanten = sichuan_shanten(&after, fixed_melds);
+        let (ukeire, effective_kinds) =
+            sichuan_acceptance(&after, fixed_melds, base_shanten, que_suit, visible);
+        candidates.push((
+            DiscardDecision {
+                tile_id: tile.id,
+                tile_code: tile.code.clone(),
+                shanten: base_shanten,
+                ukeire,
+                effective_kinds,
+            },
+            connection_score(&counts, kind),
+            is_red(&tile.code),
+            kind,
+        ));
+    }
+    candidates.sort_by(compare_discards);
+    candidates
+        .into_iter()
+        .next()
+        .map(|candidate| candidate.0)
+        .ok_or_else(|| "没有可打出的牌".to_owned())
+}
+
+/// Pick the three tiles to exchange (换三张).
+///
+/// The deficient suit is the one with the fewest tiles.  Give away three of its
+/// tiles when it holds at least three — they are dead weight once 定缺 lands.
+/// Otherwise give away the strongest suit's three most isolated tiles.
+pub fn sichuan_exchange_command(view: &MatchView) -> Result<BotCommand, String> {
+    let player = view.observer()?;
+    let tiles = player
+        .concealed_tiles
+        .as_deref()
+        .ok_or_else(|| "观察者手牌不可见".to_owned())?;
+    let counts = tile_counts(tiles)?;
+    let suit_counts = sichuan_suit_counts(tiles);
+    let que = argmin(&suit_counts);
+    let exchange_suit = if suit_counts[que] >= 3 {
+        que
+    } else {
+        argmax(&suit_counts)
+    };
+    let ids = pick_exchange_tiles(tiles, exchange_suit, &counts);
+    Ok(BotCommand {
+        name: "sichuan.exchange",
+        payload: Some(json!({"tile_ids": ids})),
+        description: format!("换三张（{}）", SICHUAN_SUIT_LABELS[exchange_suit]),
+    })
+}
+
+/// Pick the deficient suit (定缺) — the suit with the fewest tiles.
+pub fn sichuan_dingque_command(view: &MatchView) -> Result<BotCommand, String> {
+    let player = view.observer()?;
+    let tiles = player
+        .concealed_tiles
+        .as_deref()
+        .ok_or_else(|| "观察者手牌不可见".to_owned())?;
+    let suit_counts = sichuan_suit_counts(tiles);
+    let que = argmin(&suit_counts);
+    Ok(BotCommand {
+        name: "sichuan.ding_que",
+        payload: Some(json!({"suit": SICHUAN_SUIT_NAMES[que]})),
+        description: format!("定缺 {}", SICHUAN_SUIT_LABELS[que]),
+    })
+}
+
+const SICHUAN_SUIT_NAMES: [&str; 3] = ["man", "pin", "sou"];
+const SICHUAN_SUIT_LABELS: [&str; 3] = ["万", "筒", "条"];
+
+fn sichuan_suit_counts(tiles: &[TileView]) -> [u8; 3] {
+    let mut counts = [0_u8; 3];
+    for tile in tiles {
+        if let Some(suit) = suit_of_code(&tile.code) {
+            counts[suit] = counts[suit].saturating_add(1);
+        }
+    }
+    counts
+}
+
+fn argmin(counts: &[u8; 3]) -> usize {
+    (0..3).min_by_key(|&index| counts[index]).unwrap_or(0)
+}
+
+fn argmax(counts: &[u8; 3]) -> usize {
+    (0..3).max_by_key(|&index| counts[index]).unwrap_or(0)
+}
+
+/// Select three distinct tile ids of `suit`, preferring the most isolated tiles
+/// (lowest connection score) so the exchange breaks as few future runs as
+/// possible.  Caller guarantees the suit holds at least three tiles.
+fn pick_exchange_tiles(
+    tiles: &[TileView],
+    suit: usize,
+    counts: &[u8; TILE_KIND_COUNT],
+) -> [u16; 3] {
+    let mut in_suit: Vec<&TileView> = tiles
+        .iter()
+        .filter(|tile| suit_of_code(&tile.code) == Some(suit))
+        .collect();
+    in_suit.sort_by(|left, right| {
+        let left_kind = tile_kind(&left.code).unwrap_or(0);
+        let right_kind = tile_kind(&right.code).unwrap_or(0);
+        connection_score(counts, left_kind)
+            .cmp(&connection_score(counts, right_kind))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    [in_suit[0].id, in_suit[1].id, in_suit[2].id]
+}
+
+/// Count tiles that, if drawn, reduce Sichuan shanten by ≥1.  Que-suit tiles can
+/// never complete a winning hand, so they never count toward acceptance.
+fn sichuan_acceptance(
+    counts: &[u8; TILE_KIND_COUNT],
+    fixed_melds: u8,
+    base_shanten: i8,
+    que_suit: Option<usize>,
+    visible: &[u8; TILE_KIND_COUNT],
+) -> (u16, u8) {
+    let mut total = 0_u16;
+    let mut kinds = 0_u8;
+    for kind in 0..27 {
+        if que_suit.is_some_and(|que| suit_of_kind(kind) == Some(que)) {
+            continue;
+        }
+        if counts[kind] >= 4 {
+            continue;
+        }
+        let mut improved = *counts;
+        improved[kind] += 1;
+        if sichuan_shanten(&improved, fixed_melds) < base_shanten {
+            let remaining = 4_u8.saturating_sub(visible[kind]);
+            if remaining > 0 {
+                total += u16::from(remaining);
+                kinds += 1;
+            }
+        }
+    }
+    (total, kinds)
 }
 
 // ---------------------------------------------------------------------------
@@ -1207,7 +1595,8 @@ fn compare_calls(left: &CallCandidate, right: &CallCandidate) -> Ordering {
 mod tests {
     use super::{
         TILE_KIND_COUNT, best_discard, impact_seven_pairs_shanten, impact_shanten, shanten,
-        thirteen_orphans_shanten_with_jokers, tile_counts, tile_kind,
+        sichuan_best_discard, sichuan_shanten, suit_of_code, thirteen_orphans_shanten_with_jokers,
+        tile_counts, tile_kind,
     };
     use crate::model::TileView;
     use crate::runner::Variant;
@@ -1322,6 +1711,38 @@ mod tests {
         let counts = counts("123m11z"); // 2 tiles left + 1 meld = 5 tiles
         let shanten = impact_shanten(&counts, 0, 1);
         assert!(shanten >= 0);
+    }
+
+    #[test]
+    fn joker_starts_a_run_below_the_lowest_real_tile() {
+        // 89m + 1 joker must form the complete 789m run: 3 melds + 55z pair +
+        // 789m = a winning hand.  Before the engine update the joker could only
+        // fill the second/third slot, so 89m stayed a broken gap wait.
+        let counts = counts("123m456p789s89m55z");
+        assert_eq!(impact_shanten(&counts, 1, 0), -1);
+    }
+
+    // -- sichuan shanten tests --
+
+    #[test]
+    fn sichuan_recognizes_winning_and_seven_pairs() {
+        // 4 melds + pair.
+        assert_eq!(sichuan_shanten(&counts("123m456m789m123p55s"), 0), -1);
+        // Seven pairs.
+        assert_eq!(sichuan_shanten(&counts("1122m3344p5566s77m"), 0), -1);
+    }
+
+    #[test]
+    fn sichuan_discards_que_suit_first() {
+        // 定缺 万 (man): the hand still holds 万 tiles, so the discard must be a
+        // 万 tile even though dropping a 筒/条 tile would advance the hand.
+        let tiles = tiles("123m456p789s55m");
+        let mut visible = [0_u8; TILE_KIND_COUNT];
+        for tile in &tiles {
+            visible[tile_kind(&tile.code).expect("kind")] += 1;
+        }
+        let decision = sichuan_best_discard(&tiles, 0, Some(0), &visible).expect("decision");
+        assert_eq!(suit_of_code(&decision.tile_code), Some(0));
     }
 
     fn shape_shanten(codes: &str) -> i8 {

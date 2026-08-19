@@ -250,6 +250,10 @@ async fn join_room_direct(
             );
             room
         }
+        Err(error) if error.is_already_member() => {
+            println!("  {} {}", "✓".green(), "已在房间中".green());
+            room_info
+        }
         Err(error) => {
             return Err(format!("加入失败: {error}").into());
         }
@@ -286,9 +290,22 @@ async fn wait_for_game(
     let mut stdin_lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
     let mut dots: u8 = 0;
 
+    // In headless/auto mode stdin is at EOF, so `next_line()` resolves with
+    // `Ok(None)` immediately every iteration.  Without guarding against that,
+    // the select below would spin on the always-ready stdin branch and never
+    // poll the room.  Once stdin reports EOF (or a read error), stop watching
+    // it and just poll the room on the sleep timer.
+    let stdin_closed = std::sync::atomic::AtomicBool::new(false);
+
     loop {
         tokio::select! {
-            stdin_result = stdin_lines.next_line() => {
+            stdin_result = async {
+                if stdin_closed.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::future::pending::<std::io::Result<Option<String>>>().await
+                } else {
+                    stdin_lines.next_line().await
+                }
+            } => {
                 match stdin_result {
                     Ok(Some(line)) if line.trim().eq_ignore_ascii_case("c") => {
                         println!();
@@ -300,7 +317,10 @@ async fn wait_for_game(
                         println!();
                         return Ok(None);
                     }
-                    Err(e) => return Err(Box::new(e)),
+                    Ok(None) | Err(_) => {
+                        // EOF or read error: disable the cancel-input feature.
+                        stdin_closed.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                     _ => {
                         // Redraw the waiting prompt after stray input
                         print!("\r\x1b[K{}", "  等待游戏开始".dimmed());
@@ -379,7 +399,8 @@ fn parse_args() -> Result<(BotConfig, Option<Variant>), String> {
                     Some("yonma") => Some(Variant::Yonma),
                     Some("sanma") => Some(Variant::Sanma),
                     Some("impact") => Some(Variant::Impact),
-                    _ => return Err("--variant 只接受 yonma / sanma / impact".to_owned()),
+                    Some("sichuan") => Some(Variant::Sichuan),
+                    _ => return Err("--variant 只接受 yonma / sanma / impact / sichuan".to_owned()),
                 };
             }
             "--username" | "-u" => {
@@ -406,7 +427,7 @@ fn parse_args() -> Result<(BotConfig, Option<Variant>), String> {
                     "  --server URL          服务器地址 (默认: {})",
                     DEFAULT_SERVER_URL
                 );
-                println!("  --variant TYPE        游戏变体 (yonma/sanma/impact)");
+                println!("  --variant TYPE        游戏变体 (yonma/sanma/impact/sichuan)");
                 println!("  -u, --username NAME   自动登录用户名");
                 println!("  -p, --password PASS   自动登录密码");
                 println!("  -r, --room ID         自动加入房间号");

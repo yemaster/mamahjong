@@ -48,19 +48,15 @@ echo -e "${BLUE}● 房间号: ${ROOM_ID}${NC}"
 echo -e "${BLUE}● 机器人: ${BOT1_USER}, ${BOT2_USER}, ${BOT3_USER}${NC}"
 echo ""
 
-# 检查是否已构建机器人
-if [ ! -f "target/release/mamahjong-bot" ] && [ ! -f "target/debug/mamahjong-bot" ]; then
-    echo -e "${YELLOW}正在构建机器人...${NC}"
-    cargo build --release -p mamahjong-bot
-    echo ""
-fi
+# 总是重新构建机器人（cargo 增量编译，源码未变时几乎瞬时完成）。
+# 旧逻辑只在「两个二进制都不存在」时才构建，源码更新后仍会复用陈旧的
+# release 二进制，导致机器人拿不到新的 phase 变体（如川麻的
+# awaiting_exchange / awaiting_dingque）而在开局即反序列化失败。
+echo -e "${YELLOW}正在构建机器人...${NC}"
+cargo build --release -p mamahjong-bot
+echo ""
 
-# 确定使用哪个二进制文件
-if [ -f "target/release/mamahjong-bot" ]; then
-    BOT_BIN="target/release/mamahjong-bot"
-else
-    BOT_BIN="target/debug/mamahjong-bot"
-fi
+BOT_BIN="target/release/mamahjong-bot"
 
 echo -e "${GREEN}使用二进制: ${BOT_BIN}${NC}"
 echo ""

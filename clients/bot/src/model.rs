@@ -66,12 +66,12 @@ pub struct StartMatchResponse {
     pub match_id: String,
 }
 
-/// The match-view wire format is shared by riichi and impact — `variant_kind`
-/// tells the client which optional fields to read.
+/// The match-view wire format is shared by riichi, impact and sichuan —
+/// `variant_kind` tells the client which optional fields to read.
 #[derive(Clone, Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct MatchView {
-    /// `"riichi"` or `"impact"`.
+    /// `"riichi"`, `"impact"` or `"sichuan"`.
     #[serde(default)]
     pub variant_kind: String,
     pub id: String,
@@ -102,6 +102,27 @@ pub struct MatchView {
     /// Impact: kan-point movement that may need an animation ack.
     #[serde(default)]
     pub last_kan: Option<KanPointsView>,
+    /// Sichuan: immediate win event that must be acknowledged before play resumes.
+    #[serde(default)]
+    pub last_win: Option<WinView>,
+    /// Sichuan: the effective rule snapshot (button labels / help text).
+    #[serde(default)]
+    pub sichuan_rules: Option<serde_json::Value>,
+    /// Sichuan: exchange direction (`clockwise` / `counter_clockwise`).
+    #[serde(default)]
+    pub exchange_direction: Option<String>,
+    /// Sichuan: the dealer seat that determined the exchange direction.
+    #[serde(default)]
+    pub break_seat: Option<u8>,
+    /// Sichuan: seats that submitted their three exchange tiles.
+    #[serde(default)]
+    pub exchange_submitted_seats: Option<Vec<u8>>,
+    /// Sichuan: seats that finished the exchange animation.
+    #[serde(default)]
+    pub exchange_animation_played_seats: Option<Vec<u8>>,
+    /// Sichuan: seats that submitted their dingque suit.
+    #[serde(default)]
+    pub dingque_submitted_seats: Option<Vec<u8>>,
     pub players: Vec<MatchPlayerView>,
     #[serde(default)]
     pub available_reactions: Vec<ReactionOptionView>,
@@ -133,6 +154,8 @@ impl MatchView {
     pub const VARIANT_RIICHI: &'static str = "riichi";
     #[allow(dead_code)]
     pub const VARIANT_IMPACT: &'static str = "impact";
+    #[allow(dead_code)]
+    pub const VARIANT_SICHUAN: &'static str = "sichuan";
 
     pub fn observer(&self) -> Result<&MatchPlayerView, String> {
         self.players
@@ -143,6 +166,10 @@ impl MatchView {
 
     pub fn is_impact(&self) -> bool {
         self.variant_kind == Self::VARIANT_IMPACT
+    }
+
+    pub fn is_sichuan(&self) -> bool {
+        self.variant_kind == Self::VARIANT_SICHUAN
     }
 
     /// The tile code that means "joker" in this match, or `None` for riichi.
@@ -172,9 +199,10 @@ impl MatchView {
 
     /// The pending kan animation this seat has not yet acknowledged.
     ///
-    /// Impact mahjong only — every kan (and first-round-repeat) pauses the table
-    /// until every seat sends `impact.kan_animation_played`.  The server
-    /// auto-advances past it on a timeout, but the bot should ack promptly.
+    /// Impact and Sichuan — every kan (and first-round-repeat) pauses the table
+    /// until every seat sends `impact.kan_animation_played` /
+    /// `sichuan.kan_animation_played`.  The server auto-advances past it on a
+    /// timeout, but the bot should ack promptly.
     pub fn unplayed_kan(&self) -> Option<&KanPointsView> {
         self.last_kan.as_ref()
     }
@@ -207,6 +235,27 @@ impl MatchView {
                     .is_none_or(Option::is_none)
         })
     }
+
+    /// Sichuan: whether this seat has already submitted its exchange tiles.
+    pub fn submitted_exchange(&self) -> bool {
+        self.exchange_submitted_seats
+            .as_ref()
+            .is_some_and(|seats| seats.contains(&self.observer_seat))
+    }
+
+    /// Sichuan: whether this seat has already acked the exchange animation.
+    pub fn acked_exchange_animation(&self) -> bool {
+        self.exchange_animation_played_seats
+            .as_ref()
+            .is_some_and(|seats| seats.contains(&self.observer_seat))
+    }
+
+    /// Sichuan: whether this seat has already submitted its dingque suit.
+    pub fn submitted_dingque(&self) -> bool {
+        self.dingque_submitted_seats
+            .as_ref()
+            .is_some_and(|seats| seats.contains(&self.observer_seat))
+    }
 }
 
 /// Legal turn actions the server computed for the observer.
@@ -235,6 +284,12 @@ pub struct TurnActionsView {
     /// Impact: the player may declare an indicator concealed kan (kan points only).
     #[serde(default)]
     pub impact_indicator_concealed_kan: Option<bool>,
+    /// Sichuan: tile codes eligible for concealed kan.
+    #[serde(default)]
+    pub sichuan_concealed_kan_tile_codes: Option<Vec<String>>,
+    /// Sichuan: meld ids eligible for added kan.
+    #[serde(default)]
+    pub sichuan_added_kan_meld_ids: Option<Vec<u16>>,
 }
 
 /// Impact: one discard → wait list pair produced by the server engine.
@@ -296,6 +351,27 @@ pub struct HandSettlementView {
     /// Impact: this hand doesn't count (exhaustive draw).
     #[serde(default)]
     pub void_hand: Option<bool>,
+    /// Sichuan: the dingque audit (查花猪/查大叫) run on an exhaustive draw.
+    #[serde(default)]
+    pub que: Option<SichuanQueView>,
+}
+
+/// Sichuan: the dingque audit summary from an exhaustive-draw settlement.
+#[derive(Clone, Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct SichuanQueView {
+    /// Seats still holding all three suits (花猪 — pay everyone).
+    #[serde(default)]
+    pub flower_pigs: Vec<u8>,
+    /// Seats that were tenpai at the draw (大叫).
+    #[serde(default)]
+    pub tenpai: Vec<u8>,
+    /// Seats that were noten at the draw.
+    #[serde(default)]
+    pub noten: Vec<u8>,
+    /// Net point movement from the dingque audit.
+    #[serde(default)]
+    pub deltas: Vec<i32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -309,6 +385,18 @@ pub struct WinnerSettlementView {
     pub points: u32,
     pub dealer: bool,
     pub yaku: Vec<YakuView>,
+    /// Sichuan: whether this winner drew the tile themselves (自摸).
+    #[serde(default)]
+    pub is_tsumo: Option<bool>,
+    /// Sichuan: the winner robbed an added kan (抢杠).
+    #[serde(default)]
+    pub chankan: Option<bool>,
+    /// Sichuan: the seat that paid this ron.
+    #[serde(default)]
+    pub payer: Option<u8>,
+    /// Sichuan: the winning tile code.
+    #[serde(default)]
+    pub winning_tile: Option<TileView>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -339,11 +427,35 @@ pub struct ProgressView {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MatchPhase {
-    AwaitingTurnAction { seat: u8 },
-    AwaitingDiscard { seat: u8 },
-    AwaitingResponses { trigger_seat: u8 },
-    AwaitingKanAnimation { seat: u8 },
-    Ended { reason: EndReason },
+    AwaitingTurnAction {
+        seat: u8,
+    },
+    AwaitingDiscard {
+        seat: u8,
+    },
+    AwaitingResponses {
+        trigger_seat: u8,
+    },
+    AwaitingKanAnimation {
+        seat: u8,
+    },
+    AwaitingWinAnimation {
+        seat: u8,
+    },
+    /// Sichuan: hand dealt, everyone picks three same-suit tiles to exchange.
+    AwaitingExchange,
+    AwaitingExchangeAnimation,
+    /// Sichuan: everyone picks their deficient suit before play begins.
+    #[serde(rename = "awaiting_dingque")]
+    AwaitingDingQue,
+    Ended {
+        reason: EndReason,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct WinView {
+    pub id: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -356,6 +468,11 @@ pub enum EndReason {
     FourRiichi,
     Tsumo,
     Ron,
+    /// Sichuan: a third winner ended the hand.
+    ThreeWinners,
+    /// Catch-all so an unfamiliar end reason never breaks the whole frame.
+    #[serde(other)]
+    Other,
 }
 
 /// Reactions available to the observer, from either riichi or impact tables.
@@ -387,6 +504,13 @@ pub enum ReactionOptionView {
     /// Impact open kan: the engine picks the three hand tiles.
     #[serde(alias = "impact_open_kan")]
     ImpactOpenKan,
+    // -- sichuan --
+    /// Sichuan pon: the engine picks the two hand tiles.
+    #[serde(alias = "sichuan_pon")]
+    SichuanPon,
+    /// Sichuan open kan: the engine picks the three hand tiles.
+    #[serde(alias = "sichuan_open_kan")]
+    SichuanOpenKan,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -413,6 +537,15 @@ pub struct MatchPlayerView {
     /// Impact: consecutive honor/joker discards (11 triggers all-in).
     #[serde(default)]
     pub honor_streak: Option<u32>,
+    /// Sichuan: the deficient suit (`man`/`pin`/`sou`), chosen at dingque.
+    #[serde(default)]
+    pub que_suit: Option<String>,
+    /// Sichuan: this seat already won and left the table (blood battle).
+    #[serde(default)]
+    pub won: Option<bool>,
+    /// Sichuan: the tile this seat won on, revealed once they leave.
+    #[serde(default)]
+    pub winning_tile: Option<TileView>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
