@@ -1977,6 +1977,52 @@ a { color: var(--pink-dark); text-decoration: none; }
   box-shadow: 4px 4px 0 rgba(78, 49, 58, 0.2);
 }
 
+.game-lobby__keypad {
+  display: grid;
+  margin-top: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.game-lobby__keypad-key {
+  display: grid;
+  height: 56px;
+  place-items: center;
+  border: 2px solid #6d5359;
+  border-radius: 0;
+  background: #f3e7dc;
+  box-shadow: 3px 3px 0 rgba(78, 49, 58, 0.28);
+  color: #241d1f;
+  font-family: var(--font-game);
+  font-size: 28px;
+  font-weight: 900;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.game-lobby__keypad-key:hover {
+  background: #efd8d5;
+  transform: translateY(-1px);
+}
+
+.game-lobby__keypad-key:active {
+  box-shadow: 1px 1px 0 rgba(78, 49, 58, 0.28);
+  transform: translate(2px, 2px);
+}
+
+.game-lobby__keypad-key:focus-visible {
+  outline: 3px solid rgba(141, 70, 88, 0.8);
+  outline-offset: 2px;
+}
+
+.game-lobby__keypad-key--action {
+  color: #8d4658;
+  font-size: 24px;
+  letter-spacing: 0.12em;
+}
+
 .game-lobby__join-actions {
   display: grid;
   min-height: 76px;
@@ -2579,44 +2625,24 @@ a { color: var(--pink-dark); text-decoration: none; }
   text-shadow: 0 2px 5px rgba(25, 16, 20, 0.5);
 }
 
-.room-screen__header > div {
-  display: flex;
-  align-items: baseline;
-  gap: 18px;
-}
-
 .room-screen__header h1 {
   margin: 0 0 9px;
-  font-size: 46px;
+  font-size: 44px;
   font-weight: 900;
   /* 这里装的是「立直麻将 · 四人南 · 自定义规则」，比一句房间名长，字距收窄别撑破一行。 */
   letter-spacing: 0.08em;
   white-space: nowrap;
 }
 
-.room-screen__eyebrow {
-  /* 房间名建房时最多能填 40 个字，超了截断，别把后面的规则名挤出去。 */
-  max-width: 12em;
-  margin-bottom: 13px;
-  padding: 3px 9px 4px;
-  border: 1px solid rgba(255, 248, 242, 0.78);
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 900;
-  letter-spacing: 0.14em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .room-screen__number {
   display: flex;
-  min-width: 218px;
-  min-height: 52px;
+  min-width: 252px;
+  min-height: 62px;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 16px;
   margin-bottom: 12px;
-  padding: 7px 16px 8px;
+  padding: 9px 18px 10px;
   border: 3px solid #2d2528;
   background: rgba(244, 233, 226, 0.94);
   box-shadow: 5px 5px 0 rgba(34, 24, 29, 0.72);
@@ -2625,14 +2651,14 @@ a { color: var(--pink-dark); text-decoration: none; }
 }
 
 .room-screen__number small {
-  font-size: 13px;
+  font-size: 24px;
   font-weight: 900;
   letter-spacing: 0.12em;
 }
 
 .room-screen__number strong {
   font-family: var(--font-game);
-  font-size: 28px;
+  font-size: 34px;
   font-weight: 900;
   letter-spacing: 0.13em;
   line-height: 1;
@@ -2713,15 +2739,15 @@ a { color: var(--pink-dark); text-decoration: none; }
   left: 15px;
   z-index: 5;
   display: grid;
-  width: 44px;
-  height: 48px;
+  width: 54px;
+  height: 58px;
   place-items: center;
   border: 3px solid #2d2528;
   background: #8d4658;
   box-shadow: 4px 4px 0 #2d2528;
   color: #f8ebe0;
   font-family: var(--font-game);
-  font-size: 26px;
+  font-size: 32px;
   font-weight: 900;
 }
 
@@ -2735,7 +2761,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   background: #d6ad68;
   box-shadow: 3px 3px 0 #2d2528;
   color: #2b2023;
-  font-size: 13px;
+  font-size: 24px;
   font-weight: 900;
   letter-spacing: 0.12em;
 }
@@ -2751,7 +2777,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   box-shadow: 4px 4px 0 #2d2528;
   color: #fff3e8;
   font-family: var(--font-game);
-  font-size: 16px;
+  font-size: 24px;
   font-weight: 900;
   letter-spacing: 0.12em;
   transform: rotate(-2deg);
@@ -2795,7 +2821,7 @@ a { color: var(--pink-dark); text-decoration: none; }
 .room-player-card__info strong {
   overflow: hidden;
   color: #231b1e;
-  font-size: 26px;
+  font-size: 32px;
   font-weight: 900;
   letter-spacing: 0.1em;
   text-overflow: ellipsis;
@@ -2807,7 +2833,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   overflow: hidden;
   color: #6d5258;
   font-family: var(--font-game);
-  font-size: 12px;
+  font-size: 24px;
   font-weight: 700;
   letter-spacing: 0.03em;
   text-overflow: ellipsis;
@@ -2840,14 +2866,14 @@ a { color: var(--pink-dark); text-decoration: none; }
   left: 50%;
   z-index: 2;
   display: grid;
-  width: 70px;
-  height: 76px;
+  width: 84px;
+  height: 90px;
   place-items: center;
   border: 3px solid rgba(52, 41, 45, 0.48);
   background: rgba(245, 235, 229, 0.38);
   color: rgba(52, 41, 45, 0.52);
   font-family: var(--font-game);
-  font-size: 34px;
+  font-size: 42px;
   font-weight: 900;
   transform: translate(-50%, -50%) rotate(-3deg);
 }
@@ -2858,7 +2884,7 @@ a { color: var(--pink-dark); text-decoration: none; }
 
 .room-screen__footer {
   display: flex;
-  min-height: 55px;
+  min-height: 64px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
@@ -2868,7 +2894,7 @@ a { color: var(--pink-dark); text-decoration: none; }
 .room-screen__message {
   min-width: 180px;
   color: #ffe1e4;
-  font-size: 13px;
+  font-size: 24px;
   font-weight: 700;
   text-shadow: 0 1px 3px rgba(35, 20, 26, 0.65);
 }
@@ -2883,14 +2909,14 @@ a { color: var(--pink-dark); text-decoration: none; }
 .room-screen__action,
 .room-screen__error button {
   min-width: 126px;
-  height: 48px;
-  padding: 0 21px;
+  height: 56px;
+  padding: 0 24px;
   border: 3px solid #2d2528;
   background: #e8d8d0;
   box-shadow: 4px 5px 0 rgba(38, 27, 32, 0.74);
   color: #211a1d;
   font-family: var(--font-game);
-  font-size: 18px;
+  font-size: 24px;
   font-weight: 900;
   letter-spacing: 0.14em;
   transition: transform 150ms ease, box-shadow 150ms ease;
@@ -2927,6 +2953,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   gap: 18px;
   background: #efe4df;
   color: #5e424d;
+  font-size: 28px;
   text-align: center;
 }
 

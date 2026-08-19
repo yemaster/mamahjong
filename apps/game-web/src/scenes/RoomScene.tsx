@@ -186,15 +186,12 @@ export default function RoomScene({ roomId }: RoomSceneProps) {
 
       <div className="room-screen__content">
         <header className="room-screen__header">
-          <div>
-            {/*
-              大字原来写房间名，可房间名多半是默认的「好友房间」，占着最大的字号
-              什么也没说。挪到上面那个小标签里，大字腾给这桌打的是什么——种类、
-              人数长度（冲击麻将则是模式）、规则名，进房的人不用去翻建房设置。
-            */}
-            <span className="room-screen__eyebrow">{data.name}</span>
-            <h1>{roomRuleTitle(data)}</h1>
-          </div>
+          {/*
+            大字不写房间名——房间名多半是默认的「好友房间」，占着最大的字号
+            什么也没说。大字留给这桌打的是什么——种类、人数长度（冲击麻将
+            则是模式）、规则名，进房的人不用去翻建房设置。
+          */}
+          <h1>{roomRuleTitle(data)}</h1>
           <span className="room-screen__number">
             <small>房间号</small>
             {/* 房间号要发给朋友，留一处可以选中复制。 */}

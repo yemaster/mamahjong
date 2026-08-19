@@ -25,6 +25,7 @@ import {
   useAuthStore,
 } from "../stores/authStore";
 import { CreateRoomPanel } from "./lobby/CreateRoomPanel";
+import { RoomIdKeypad } from "./lobby/RoomIdKeypad";
 
 type Menu = "main" | "ranked" | "friends" | "join" | "create";
 
@@ -367,6 +368,7 @@ function LobbyMenu({
           placeholder="六位房间号"
           autoFocus
         />
+        <RoomIdKeypad value={roomId} onChange={onRoomIdChange} />
       </div>
       <footer className="game-lobby__join-actions">
         <LobbyBackButton onClick={() => onMenuChange("friends")} />
