@@ -78,6 +78,7 @@ describe("GameTable runtime 生命周期", () => {
       [2, 5],
       [],
       [],
+      null,
     );
     expect(mocks.updateRuntimeTablecloth).toHaveBeenCalledWith(
       runtime,
@@ -101,6 +102,7 @@ describe("GameTable runtime 生命周期", () => {
       [2, 5],
       [],
       [],
+      null,
     );
   });
 

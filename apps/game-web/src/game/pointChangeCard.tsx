@@ -63,10 +63,12 @@ export function PointChangeCard({
   const { appearAt, riseAt, countAt } = cardBeats(index);
 
   useEffect(() => {
+    let cancelAnimation: (() => void) | null = null;
+    setPointsBumping(false);
     if (delta === 0) {
       setDeltaPhase("done");
       setDisplayPoints(after);
-      return;
+      return () => undefined;
     }
 
     setDisplayPoints(before);
@@ -76,7 +78,7 @@ export function PointChangeCard({
     const countTimer = window.setTimeout(() => {
       setDeltaPhase("done");
       setPointsBumping(true);
-      animatePoints(before, after, setDisplayPoints, () =>
+      cancelAnimation = animatePoints(before, after, setDisplayPoints, () =>
         setPointsBumping(false),
       );
     }, countAt);
@@ -84,6 +86,7 @@ export function PointChangeCard({
     return () => {
       window.clearTimeout(riseTimer);
       window.clearTimeout(countTimer);
+      cancelAnimation?.();
     };
   }, [before, after, delta, riseAt, countAt]);
 
@@ -141,17 +144,24 @@ export function animatePoints(
   to: number,
   setValue: (v: number) => void,
   onDone: () => void,
-) {
+): () => void {
   const startTime = performance.now();
+  let cancelled = false;
+  let frame: number | null = null;
   const animate = (now: number) => {
+    if (cancelled) return;
     const progress = Math.min(1, (now - startTime) / DELTA_COUNT_MS);
     const eased = 1 - Math.pow(1 - progress, 3);
     setValue(Math.round(from + (to - from) * eased));
     if (progress < 1) {
-      requestAnimationFrame(animate);
+      frame = requestAnimationFrame(animate);
     } else {
       onDone();
     }
   };
-  requestAnimationFrame(animate);
+  frame = requestAnimationFrame(animate);
+  return () => {
+    cancelled = true;
+    if (frame != null) cancelAnimationFrame(frame);
+  };
 }

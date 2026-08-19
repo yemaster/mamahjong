@@ -70,6 +70,41 @@ export function playerIsHoldingDrawnTile(
 }
 
 /**
+ * 四川胡牌家盖牌后，服务端会隐藏 `drawn_tile_id`。自摸判定必须优先读胡牌记录，
+ * 不能再只比较胡张 id 与摸牌 id，否则主视角的自摸牌也会被当成牌背盖住。
+ */
+export function playerSichuanWinIsTsumo(
+  view: MatchView,
+  player: MatchPlayerView,
+): boolean {
+  if (player.win_is_tsumo != null) return player.win_is_tsumo;
+  if (view.last_win?.seat === player.seat) return view.last_win.is_tsumo;
+  return (
+    player.winning_tile != null &&
+    player.winning_tile.id === player.drawn_tile_id
+  );
+}
+
+/**
+ * 四川麻将开局时庄家已经拿满 14 张，第 14 张虽被引擎记作 drawn 供自摸判定，
+ * 视觉上仍属于发牌动画，不应再从牌山补播一次普通摸牌。
+ */
+export function isSichuanOpeningDealerDraw(
+  view: MatchView,
+  player: MatchPlayerView,
+): boolean {
+  return (
+    view.variant_kind === "sichuan" &&
+    player.seat === view.progress.dealer &&
+    player.concealed_tile_count >= 14 &&
+    player.drawn_tile_id != null &&
+    player.melds.length === 0 &&
+    (view.completed_rinshan_draws ?? 0) === 0 &&
+    view.players.every((candidate) => candidate.discards.length === 0)
+  );
+}
+
+/**
  * Index of the tile a 自摸 winner just drew, so it can be flipped up on its
  * own before the rest of the hand falls open.
  */
@@ -94,9 +129,13 @@ export function settlementCoveringSeats(view: MatchView): number[] {
   const settlement = view.hand_settlement;
   if (!settlement) return [];
   const winnerSeats = settlement.winners.map((winner) => winner.seat);
-  const others = view.players
+  let others = view.players
     .map((player) => player.seat)
     .filter((seat) => !winnerSeats.includes(seat));
+  /* 四川麻将流局查大叫：听牌的照常摊牌，只有未听的才盖。 */
+  if (view.variant_kind === "sichuan" && settlement.que) {
+    others = others.filter((seat) => !settlement.que!.tenpai.includes(seat));
+  }
   if (settlement.reason === "ron") {
     return settlement.from_seat != null &&
       others.includes(settlement.from_seat)

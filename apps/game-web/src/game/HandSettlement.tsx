@@ -12,6 +12,11 @@ interface HandSettlementProps {
   locallyConfirmed: boolean;
   onConfirm: () => void;
   /**
+   * 可选的结算页播放完成回执。四川胡牌结算不再播放点数动画，但番种/分数
+   * 仍会逐步展示；必须等这段页面动画结束后才告诉服务端可以开确认倒计时。
+   */
+  onPlayed?: () => void;
+  /**
    * 最后一位的按钮文字，默认是「确定 {读秒}」。
    *
    * 牌谱重演没有对手要等、也没有读秒，写「收起」——按下去只是把面板收掉。
@@ -28,6 +33,7 @@ export function HandSettlement({
   secondsRemaining,
   locallyConfirmed,
   onConfirm,
+  onPlayed,
   confirmLabel,
 }: HandSettlementProps) {
   const settlement = view.hand_settlement;
@@ -36,9 +42,25 @@ export function HandSettlement({
   const selfConfirmed =
     locallyConfirmed || settlement.confirmed_seats.includes(view.observer_seat);
 
-  /* 流局 never opens a board — the hands reveal one by one on the table and
-     the point animation follows straight after. */
-  if (!showPanel || settlement.winners.length === 0) return null;
+  const isSichuan = view.variant_kind === "sichuan";
+  const isDraw = settlement.winners.length === 0;
+
+  /* 四川麻将流局：展示花猪 / 听牌 / 不听的结算面板。 */
+  if (isSichuan && isDraw && showPanel && settlement.que) {
+    return (
+      <DrawScreen
+        view={view}
+        confirmReady={confirmReady}
+        secondsRemaining={secondsRemaining}
+        selfConfirmed={selfConfirmed}
+        onConfirm={onConfirm}
+        confirmLabel={confirmLabel}
+      />
+    );
+  }
+
+  /* 非四川流局不弹面板——牌河摊开后直接进点数动画。 */
+  if (!showPanel || isDraw) return null;
 
   return (
     <WinScreen
@@ -47,6 +69,7 @@ export function HandSettlement({
       secondsRemaining={secondsRemaining}
       selfConfirmed={selfConfirmed}
       onConfirm={onConfirm}
+      onPlayed={onPlayed}
       confirmLabel={confirmLabel}
     />
   );
@@ -60,6 +83,7 @@ function WinScreen({
   secondsRemaining,
   selfConfirmed,
   onConfirm,
+  onPlayed,
   confirmLabel,
 }: {
   view: MatchView;
@@ -67,27 +91,33 @@ function WinScreen({
   secondsRemaining: number;
   selfConfirmed: boolean;
   onConfirm: () => void;
+  onPlayed?: () => void;
   confirmLabel?: string;
 }) {
   const settlement = view.hand_settlement!;
   const winners = settlement.winners;
   const [active, setActive] = useState(0);
   const [boardReady, setBoardReady] = useState(false);
+  const index = Math.min(active, winners.length - 1);
+  const winner = winners[index];
+  const player = view.players.find((entry) => entry.seat === winner?.seat);
+  const isLast = index >= winners.length - 1;
 
-  /* 每换一个和了者就重置。 */
-  const onBoardReady = useCallback(() => setBoardReady(true), []);
+  /* 每换一个和了者就重置。只有最后一位的页面播完，才向服务端报告整段
+     结算已播放；否则服务端可能提前开确认窗口，用户确认后直接跳过最后一位。 */
+  const onBoardReady = useCallback(() => {
+    setBoardReady(true);
+    if (isLast) onPlayed?.();
+  }, [isLast, onPlayed]);
 
   useEffect(() => {
     setBoardReady(false);
   }, [active]);
 
-  const index = Math.min(active, winners.length - 1);
-  const winner = winners[index];
-  const player = view.players.find((entry) => entry.seat === winner?.seat);
   if (!winner || !player) return null;
-
-  const isLast = index >= winners.length - 1;
-  const canConfirm = boardReady && confirmReady;
+  /* 多家胡时「下一位」不应等待服务端确认窗；否则最后一位永远无法播完，
+     也就永远不会发出整段结算完成回执。最后一位才需要等确认窗。 */
+  const canConfirm = boardReady && (!isLast || confirmReady);
 
   return (
     <section className="win-screen" aria-label="和了结算">
@@ -107,7 +137,7 @@ function WinScreen({
         </div>
       )}
 
-      {boardReady && confirmReady && (
+      {canConfirm && (
         <button
           className="win-screen__confirm"
           type="button"
@@ -143,7 +173,9 @@ function WinBoard({
   onReady: () => void;
 }) {
   const settlement = view.hand_settlement!;
-  const isTsumo = settlement.reason === "tsumo";
+  const sichuan = view.variant_kind === "sichuan";
+  /* 四川麻将每家单独记自摸/荣和；其余两家整局只有一种，直接看 reason。 */
+  const isTsumo = winner.is_tsumo ?? settlement.reason === "tsumo";
   const impact = view.variant_kind === "impact";
   const allIn = impact ? (settlement.all_in ?? null) : null;
   const doraIndicators = view.dora_indicators ?? [];
@@ -175,8 +207,8 @@ function WinBoard({
         await delay(250);
       }
       if (cancelled) return;
-      // 全部番种亮完 → 冲击麻将直接跳点数，立直麻将先亮番符
-      setPhase(impact ? "score" : "tally");
+      // 全部番种亮完 → 冲击麻将直接跳点数，立直麻将先亮番符；四川麻将没有符也直跳
+      setPhase(impact || sichuan ? "score" : "tally");
     };
 
     run();
@@ -227,11 +259,14 @@ function WinBoard({
   useEffect(() => {
     if (phase !== "done") return;
     onReady();
-  }, [phase, onReady]);
+  }, [onReady, phase]);
 
   // Winning tile: tsumo → the drawn tile; ron → the dealt-in player's last discard.
+  // 四川麻将由每家单独记 `winner.winning_tile`。
   let winningTile: TileView | null = null;
-  if (isTsumo) {
+  if (sichuan) {
+    winningTile = winner.winning_tile ?? null;
+  } else if (isTsumo) {
     winningTile =
       (player.concealed_tiles ?? []).find(
         (tile) => tile.id === player.drawn_tile_id,
@@ -348,6 +383,11 @@ function WinBoard({
               {winner.yakuman_multiplier > 0 ? (
                 /* 有役满番种就只写「役满」，倍数统一进横幅大字。 */
                 <b className="is-han">役满</b>
+              ) : sichuan ? (
+                <>
+                  <b className="is-han">{winner.han}</b>
+                  <i>番</i>
+                </>
               ) : (
                 <>
                   <b className="is-han">{winner.han}</b>
@@ -366,7 +406,7 @@ function WinBoard({
                 <>
                   <div className="win-board__points">
                     <b>{winner.points.toLocaleString("en-US")}</b>
-                    <i>点</i>
+                    <i>{sichuan ? "分" : "点"}</i>
                   </div>
                   {limitLabel && <div className="win-board__limit">{limitLabel}</div>}
                 </>
@@ -414,5 +454,95 @@ function WinTile({ tile, dora, jokerCode }: { tile: TileView; dora: TileView[]; 
     <span className={`wtile${isDoraTile(tile.code, dora) ? " is-dora" : ""}${isJoker ? " is-joker" : ""}`}>
       <img src={tileAssetPath(tile.code, "jp")} alt="" />
     </span>
+  );
+}
+
+/* ─────────────────────────── 流局（四川） ─────────────────────────── */
+
+function DrawScreen({
+  view,
+  confirmReady,
+  secondsRemaining,
+  selfConfirmed,
+  onConfirm,
+  confirmLabel,
+}: {
+  view: MatchView;
+  confirmReady: boolean;
+  secondsRemaining: number;
+  selfConfirmed: boolean;
+  onConfirm: () => void;
+  confirmLabel?: string;
+}) {
+  const settlement = view.hand_settlement!;
+  const que = settlement.que;
+  if (!que) return null;
+
+  const [showDeltas, setShowDeltas] = useState(false);
+  const canConfirm = showDeltas && confirmReady;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShowDeltas(true), 600);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  return (
+    <section className="win-screen" aria-label="流局结算">
+      <div className="win-board">
+        <div className="win-board__indicators" style={{ justifyContent: "center" }}>
+          <span className="win-board__reason">荒牌流局</span>
+        </div>
+        <div className="win-board__yaku" style={{ gap: "12px" }}>
+          {(que.flower_pigs ?? []).map((seat) => {
+            const player = view.players.find((p) => p.seat === seat);
+            return (
+              <div key={`pig-${seat}`} className="win-yaku is-revealed">
+                <span className="win-yaku__name">{player?.nickname ?? seat} · 花猪</span>
+                <span className="win-yaku__value">
+                  <b>{(que.deltas[seat] ?? 0).toLocaleString("en-US")}</b>
+                  <i>分</i>
+                </span>
+              </div>
+            );
+          })}
+          {(que.tenpai ?? []).map((seat) => {
+            const player = view.players.find((p) => p.seat === seat);
+            return (
+              <div key={`tenpai-${seat}`} className="win-yaku is-revealed">
+                <span className="win-yaku__name">{player?.nickname ?? seat} · 听牌</span>
+                <span className="win-yaku__value">
+                  <b>{(que.deltas[seat] ?? 0).toLocaleString("en-US")}</b>
+                  <i>分</i>
+                </span>
+              </div>
+            );
+          })}
+          {(que.noten ?? [])
+            .filter((seat) => !(que.flower_pigs ?? []).includes(seat))
+            .map((seat) => {
+              const player = view.players.find((p) => p.seat === seat);
+              return (
+                <div key={`noten-${seat}`} className="win-yaku is-revealed">
+                  <span className="win-yaku__name">{player?.nickname ?? seat} · 未听</span>
+                  <span className="win-yaku__value">
+                    <b>{(que.deltas[seat] ?? 0).toLocaleString("en-US")}</b>
+                    <i>分</i>
+                  </span>
+                </div>
+              );
+            })}
+        </div>
+      </div>
+      {canConfirm && (
+        <button
+          className="win-screen__confirm"
+          type="button"
+          disabled={selfConfirmed}
+          onClick={onConfirm}
+        >
+          {selfConfirmed ? "已确定" : (confirmLabel ?? `确定 ${secondsRemaining}`)}
+        </button>
+      )}
+    </section>
   );
 }

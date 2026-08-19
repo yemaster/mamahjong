@@ -8,6 +8,7 @@ import type { RoomView } from "./types";
 export const MAHJONG_FAMILY_LABELS: Record<string, string> = {
   riichi: "立直麻将",
   impact: "冲击麻将",
+  sichuan: "四川麻将",
 };
 
 /** 冲击麻将的模式名。 */
@@ -46,6 +47,12 @@ export function roomRuleTitle(room: RoomView): string {
       mode ? (IMPACT_MODE_LABELS[mode] ?? mode) : null,
       room.rule_name === "标准规则" ? null : room.rule_name,
     ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  if (room.variant_kind === "sichuan") {
+    return [family, room.rule_name === "标准规则" ? null : room.rule_name]
       .filter(Boolean)
       .join(" · ");
   }

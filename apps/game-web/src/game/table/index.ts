@@ -12,6 +12,8 @@
  */
 export { GameTable } from "./GameTable";
 export type { GameTableHandle } from "./GameTable";
+export type { ExchangeSnapshot } from "./exchange";
+export { exchangeRecipient, EXCHANGE_CINEMATIC_MS } from "./exchange";
 export type {
   TableCameraConfig,
   TableRuntime,
@@ -55,6 +57,7 @@ export {
   discardGridPosition,
   discardNaturalRotation,
   doraWallTileIndex,
+  exchangeStackPosition,
   handPosition,
   meldTilePosition,
   nukiRiverPosition,
@@ -73,10 +76,12 @@ export {
   completedImpactRinshanDraws,
   countCompletedKans,
   isJokerTile,
+  isSichuanOpeningDealerDraw,
   meldDisplayTiles,
   playerCompletedKan,
   playerExtractedNorth,
   playerIsHoldingDrawnTile,
+  playerSichuanWinIsTsumo,
   playerReceivedDraw,
   resolveRinshanDrawNumber,
   riverDiscardEntries,

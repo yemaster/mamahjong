@@ -12,6 +12,7 @@ import {
   updateLastDiscard,
 } from "./discards";
 import { addTableDice, DICE_SETTLE_MS, DORA_FLIP_DELAY_MS } from "./dice";
+import { updateExchange, type ExchangeSnapshot } from "./exchange";
 import {
   addHand,
   HAND_COLLAPSE_MS,
@@ -28,7 +29,10 @@ import {
   resolveRinshanDrawNumber,
 } from "./handView";
 import { addMelds } from "./melds";
-import { handPosition, tableRelativeSeat } from "./geometry";
+import {
+  handPosition,
+  tableRelativeSeat,
+} from "./geometry";
 import { addSelfDraw } from "./selfMotion";
 import { addTableSurface } from "./tableSurface";
 import {
@@ -41,12 +45,14 @@ import {
   impactWallTiles,
   openingWallTakeoffSchedule,
   riichiWallTiles,
+  sichuanWallTiles,
   type WallTileSpec,
 } from "./wall";
 import {
   impactWallLayout,
   riichiWallLayout,
   sanmaWallLayout,
+  sichuanWallLayout,
   type WallLayout,
 } from "./wallLayout";
 
@@ -180,6 +186,8 @@ export function renderTable(
   dice: [number, number],
   settlementRevealSeats: number[],
   settlementWinningTileSeats: number[] = [],
+  exchangeSnapshot: ExchangeSnapshot | null = null,
+  sichuanWinRevealSeats: number[] = [],
 ): void {
   runtime.latestView = view;
   const openingKey = `${view.id}:${view.hand_index}`;
@@ -191,9 +199,14 @@ export function renderTable(
     runtime.tileGeometryWidthRatio = runtime.tileWidthRatio;
   }
   const previousView = runtime.previousView;
-  if (previousView && previousView.hand_index !== view.hand_index) {
+  if (
+    previousView &&
+    (previousView.hand_index !== view.hand_index || previousView.id !== view.id)
+  ) {
     runtime.pendingRinshanDraws.clear();
     runtime.discardFlights.clear();
+    /* 新一局：上一局谁盖倒过手牌不再作数。 */
+    runtime.coveredWonSeats.clear();
   }
   updateHandCutGaps(runtime, view, previousView);
   updateLastDiscard(runtime, view, previousView);
@@ -218,16 +231,19 @@ export function renderTable(
     view.players.length,
   );
   const impact = view.variant_kind === "impact";
-  const wall = impact
-    ? impactWallLayout(view.progress.dealer, view.observer_seat, dice)
-    : view.players.length === 3
-      ? sanmaWallLayout(
-          view.progress.dealer,
-          view.observer_seat,
-          dice,
-          view.sanma_north_rule,
-        )
-      : riichiWallLayout(dealerRelative, dice);
+  const sichuan = view.variant_kind === "sichuan";
+  const wall = sichuan
+    ? sichuanWallLayout(view.progress.dealer, view.observer_seat, dice)
+    : impact
+      ? impactWallLayout(view.progress.dealer, view.observer_seat, dice)
+      : view.players.length === 3
+        ? sanmaWallLayout(
+            view.progress.dealer,
+            view.observer_seat,
+            dice,
+            view.sanma_north_rule,
+          )
+        : riichiWallLayout(dealerRelative, dice);
   const completedKanCount = countCompletedKans(view);
   const completedNukiCount = view.players.reduce(
     (count, player) => count + (player.nuki_tiles?.length ?? 0),
@@ -277,7 +293,7 @@ export function renderTable(
       ? wall.drawableCount
       : Math.min(
           wall.drawableCount,
-          view.remaining_live_draws + (impact ? 0 : 14),
+          view.remaining_live_draws + (impact || sichuan ? 0 : 14),
         );
   const consumedTileCount =
     wall.drawableCount - visibleWallTiles - completedRinshanDraws;
@@ -289,22 +305,24 @@ export function renderTable(
     openingPhase === "dice"
       ? performance.now() + DICE_SETTLE_MS + DORA_FLIP_DELAY_MS
       : null;
-  const wallTiles = impact
-    ? impactWallTiles(
-        wall,
-        visibleWallTiles,
-        completedRinshanDraws,
-        view.joker_indicator,
-        doraFlipAt,
-      )
-    : riichiWallTiles(
-        wall,
-        view.remaining_live_draws,
-        view.dora_indicators ?? [],
-        completedRinshanDraws,
-        openingPhase === "dice" || openingPhase === "deal",
-        doraFlipAt,
-      );
+  const wallTiles = sichuan
+    ? sichuanWallTiles(wall, visibleWallTiles, completedRinshanDraws)
+    : impact
+      ? impactWallTiles(
+          wall,
+          visibleWallTiles,
+          completedRinshanDraws,
+          view.joker_indicator,
+          doraFlipAt,
+        )
+      : riichiWallTiles(
+          wall,
+          view.remaining_live_draws,
+          view.dora_indicators ?? [],
+          completedRinshanDraws,
+          openingPhase === "dice" || openingPhase === "deal",
+          doraFlipAt,
+        );
   syncWallLayers(
     runtime,
     wall,
@@ -323,6 +341,20 @@ export function renderTable(
   );
   updateOpeningWallTakeoffs(runtime, view, wall, openingPhase, openingKey);
 
+  /*
+   * 换牌演出必须在开局阶段的早退分支之前同步一次。上一局结束时，新的牌局通常
+   * 先进入 `dice/deal`，而旧实现只在下面的普通牌桌同步路径调用 updateExchange，
+   * 这会让上一局飞出的三张模型继续挂在场景树上，直到新局进入 play 才被清掉。
+   * 这里让换牌模块先看见新局/新阶段，立即执行 cleanupExchange；正常 play 阶段
+   * 也由同一次调用负责启动或推进新的演出。
+   */
+  const exchangeOwnsSelfHand = updateExchange(
+    runtime,
+    view,
+    openingPhase,
+    exchangeSnapshot,
+  );
+
   if (openingPhase === "dice") {
     updateLayer(runtime, "dice", signature([openingKey, dice]), () => {
       addTableDice(runtime, dice);
@@ -334,6 +366,34 @@ export function renderTable(
     return;
   }
   updateLayer(runtime, "dice", `hidden:${openingKey}`, () => {});
+
+  /* 四川麻将荣和：胡张在放炮家的牌河里标红。结算后有 `payer`；对局进行中谁家
+     荣和就当场标——放炮家没有专门字段，按胡张 id 去各家牌河里找。 */
+  const sichuanRonInfo =
+    view.variant_kind === "sichuan"
+      ? view.hand_settlement
+        ? view.hand_settlement.winners
+            .filter((w) => !w.is_tsumo && w.payer != null && w.winning_tile != null)
+            .map((w) => ({ payerSeat: w.payer!, tileId: w.winning_tile!.id }))
+        : view.players.flatMap((winner) => {
+            const winningTile = winner.winning_tile;
+            const isTsumo =
+              winningTile != null && winningTile.id === winner.drawn_tile_id;
+            if (
+              winner.won !== true ||
+              winningTile == null ||
+              isTsumo
+            ) {
+              return [];
+            }
+            const payer = view.players.find((candidate) =>
+              candidate.discards.some((discard) => discard.tile.id === winningTile.id),
+            );
+            return payer
+              ? [{ payerSeat: payer.seat, tileId: winningTile.id }]
+              : [];
+          })
+      : [];
 
   for (const player of view.players) {
     const previousPlayer = previousView?.players.find(
@@ -365,19 +425,28 @@ export function renderTable(
       player,
       settlementRevealSeats,
       settlementWinningTileSeats,
+      sichuanWinRevealSeats,
     );
     const handLayer = runtime.layers.get(`hand:${player.seat}`);
-    if (handLayer?.signature !== nextHandKey) {
-      const syncedInPlace = syncHiddenOpponentHand(
-        runtime,
-        view,
-        player,
-        previousPlayer,
-        openingPhase,
-        wall,
-        consumedTileCount,
-        rinshanDrawNumber,
-      );
+    /* 换牌演出期间主视角手牌归 exchange 管，这里不做常规同步，免得互相重建。 */
+    const exchangeManaged =
+      exchangeOwnsSelfHand && player.seat === view.observer_seat;
+    /* 旧牌桌测试/录制器构造的 runtime 可能没有四川专属集合。 */
+    const forceHandRebuild =
+      runtime.forceHandRebuildSeats?.has(player.seat) ?? false;
+    if (!exchangeManaged && (forceHandRebuild || handLayer?.signature !== nextHandKey)) {
+      const syncedInPlace = forceHandRebuild
+        ? false
+        : syncHiddenOpponentHand(
+            runtime,
+            view,
+            player,
+            previousPlayer,
+            openingPhase,
+            wall,
+            consumedTileCount,
+            rinshanDrawNumber,
+          );
       if (syncedInPlace && handLayer) {
         handLayer.signature = nextHandKey;
       } else {
@@ -390,18 +459,29 @@ export function renderTable(
             openingPhase,
             settlementRevealSeats,
             settlementWinningTileSeats,
+            sichuanWinRevealSeats,
             wall,
             consumedTileCount,
             rinshanDrawNumber,
           );
         });
       }
+      runtime.forceHandRebuildSeats?.delete(player.seat);
     }
     if (settlementRevealSeats.includes(player.seat)) {
       runtime.revealedSettlementSeats.add(player.seat);
     }
     if (settlementWinningTileSeats.includes(player.seat)) {
       runtime.revealedWinningTileSeats.add(player.seat);
+    }
+    /* 血战到底：对局中胡牌当场盖倒，记下这一家，重建时不重放倒牌动画。 */
+    if (
+      view.variant_kind === "sichuan" &&
+      player.won === true &&
+      view.hand_settlement == null &&
+      sichuanWinRevealSeats.includes(player.seat)
+    ) {
+      runtime.coveredWonSeats.add(player.seat);
     }
     if (openingPhase === "play" || openingPhase === "waiting") {
       syncDiscardLayers(
@@ -410,6 +490,7 @@ export function renderTable(
         player,
         previousPlayer,
         openingPhase,
+        sichuanRonInfo,
       );
     } else {
       clearDiscardLayers(runtime, player.seat, openingKey);
@@ -513,6 +594,7 @@ function handKey(
   player: MatchPlayerView,
   settlementRevealSeats: number[],
   settlementWinningTileSeats: number[],
+  sichuanWinRevealSeats: number[] = [],
 ): string {
   return signature([
     dimensionsKey(runtime),
@@ -523,10 +605,15 @@ function handKey(
     player.concealed_tiles,
     player.drawn_tile_id,
     playerIsHoldingDrawnTile(view, player.seat),
+    /* 血战到底一家胡了牌就当场盖倒，别等终局；这两个字段一变就得重排这一手。 */
+    player.won,
+    player.winning_tile,
+    player.win_is_tsumo,
     view.phase.kind === "ended",
     view.hand_settlement,
     settlementRevealSeats.includes(player.seat),
     settlementWinningTileSeats.includes(player.seat),
+    sichuanWinRevealSeats.includes(player.seat),
     runtime.revealAllHands,
     runtime.handCutGaps.get(player.seat),
     view.dora_indicators,
@@ -542,6 +629,7 @@ function discardTileKey(
   originalIndex: number,
   sideways: boolean,
   riverIndex: number,
+  winning: boolean,
 ): string {
   return signature([
     dimensionsKey(runtime),
@@ -552,6 +640,7 @@ function discardTileKey(
     originalIndex,
     sideways,
     riverIndex,
+    winning,
     runtime.dimTsumogiri,
     view.dora_indicators,
     view.joker_code,
@@ -564,10 +653,16 @@ function syncDiscardLayers(
   player: MatchPlayerView,
   previousPlayer: MatchPlayerView | undefined,
   openingPhase: OpeningPhase,
+  sichuanRonInfo: readonly { payerSeat: number; tileId: number }[] = [],
 ): void {
   const visible = new Set<string>();
   riverDiscardEntries(player.discards).forEach((entry, riverIndex) => {
     const key = `discard:${player.seat}:${entry.discard.tile.id}`;
+    const winning = sichuanRonInfo.some(
+      (info) =>
+        info.payerSeat === player.seat &&
+        info.tileId === entry.discard.tile.id,
+    );
     visible.add(key);
     updateLayer(
       runtime,
@@ -580,6 +675,7 @@ function syncDiscardLayers(
         entry.originalIndex,
         entry.sideways,
         riverIndex,
+        winning,
       ),
       () =>
         addDiscardTile(
@@ -592,6 +688,7 @@ function syncDiscardLayers(
           entry.originalIndex,
           entry.sideways,
           riverIndex,
+          sichuanRonInfo,
         ),
     );
   });
@@ -754,8 +851,12 @@ function syncWallLayers(
   }
 }
 
-/** 只替换一个发生变化的视觉层；同一 JS 帧内完成挂载和撤换，不暴露空场景。 */
-function updateLayer(
+/**
+ * 只替换一个发生变化的视觉层；同一 JS 帧内完成挂载和撤换，不暴露空场景。
+ *
+ * 导出给 `exchange` 复用：换三张演出要按自己的签名起用/撤掉主视角手牌层。
+ */
+export function updateLayer(
   runtime: TableRuntime,
   key: string,
   nextSignature: string,

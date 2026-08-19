@@ -6,6 +6,7 @@ import {
   DEFAULT_TILE_SCALE,
   TILE_WIDTH_RATIO,
 } from "./constants";
+import type { ExchangeSnapshot } from "./exchange";
 import {
   createRuntime,
   destroyRuntime,
@@ -27,6 +28,8 @@ interface GameTableProps {
   settlementRevealSeats?: number[];
   /** Seats whose 自摸 tile is flipped up ahead of the rest of the hand. */
   settlementWinningTileSeats?: number[];
+  /** 四川血战中，点数动画后允许哪一家进入盖牌/亮胡张动画。 */
+  sichuanWinRevealSeats?: number[];
   onRendererError?: () => void;
   /** 牌谱重演的铳牌提示：这些牌种在桌上染红。对局中不传。 */
   dangerTileCodes?: string[];
@@ -40,6 +43,13 @@ interface GameTableProps {
   tileScale?: number;
   tileWidthRatio?: number;
   tableclothPath?: string;
+  /**
+   * 四川换三张：提交那一刻抓下的换前手牌快照。`null` 表示还没提交，
+   * 演出模块照着它播飞出/换位/飞入。
+   */
+  exchangeSnapshot?: ExchangeSnapshot | null;
+  /** 四川换三张：整段换牌动画播完时回调，用于向服务端报告回执。 */
+  onExchangeAnimationDone?: () => void;
 }
 
 /**
@@ -56,6 +66,7 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
     onTileDiscard,
     settlementRevealSeats = [],
     settlementWinningTileSeats = [],
+    sichuanWinRevealSeats = [],
     onRendererError,
     dangerTileCodes,
     revealAllHands = false,
@@ -65,6 +76,8 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
     tileScale = DEFAULT_TILE_SCALE,
     tileWidthRatio = TILE_WIDTH_RATIO,
     tableclothPath = DEFAULT_TABLECLOTH_ASSET,
+    exchangeSnapshot = null,
+    onExchangeAnimationDone,
   }: GameTableProps,
   ref,
 ) {
@@ -82,12 +95,15 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
   const revealAllHandsRef = useRef(revealAllHands);
   const dimTsumogiriRef = useRef(dimTsumogiri);
   const instantDrawRef = useRef(instantDraw);
+  const exchangeDoneRef = useRef(onExchangeAnimationDone);
   const latestRenderRef = useRef({
     view,
     openingPhase,
     dice,
     settlementRevealSeats,
     settlementWinningTileSeats,
+    sichuanWinRevealSeats,
+    exchangeSnapshot,
   });
 
   discardRef.current = onTileDiscard;
@@ -100,12 +116,15 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
   revealAllHandsRef.current = revealAllHands;
   dimTsumogiriRef.current = dimTsumogiri;
   instantDrawRef.current = instantDraw;
+  exchangeDoneRef.current = onExchangeAnimationDone;
   latestRenderRef.current = {
     view,
     openingPhase,
     dice,
     settlementRevealSeats,
     settlementWinningTileSeats,
+    sichuanWinRevealSeats,
+    exchangeSnapshot,
   };
 
   useImperativeHandle(
@@ -143,6 +162,8 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
         runtime.tileWidthRatio = tileWidthRatioRef.current;
         runtime.resize();
         runtimeRef.current = runtime;
+        /* 换三张动画播完的回执走 React 注入的回调，这里始终读最新一份。 */
+        runtime.onExchangeDone = () => exchangeDoneRef.current?.();
         /* 上下文恢复或局部动画定时器触发时，按最新视图做一次增量同步。 */
         runtime.rebuild = () => {
           runtime.openingKey = null;
@@ -151,14 +172,28 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
           runtime.dimTsumogiri = dimTsumogiriRef.current;
           runtime.instantDraw = instantDrawRef.current;
           const current = latestRenderRef.current;
-          renderTable(
-            runtime,
-            current.view,
-            current.openingPhase,
-            current.dice,
-            current.settlementRevealSeats,
-            current.settlementWinningTileSeats,
-          );
+          if (current.sichuanWinRevealSeats.length > 0) {
+            renderTable(
+              runtime,
+              current.view,
+              current.openingPhase,
+              current.dice,
+              current.settlementRevealSeats,
+              current.settlementWinningTileSeats,
+              current.exchangeSnapshot,
+              current.sichuanWinRevealSeats,
+            );
+          } else {
+            renderTable(
+              runtime,
+              current.view,
+              current.openingPhase,
+              current.dice,
+              current.settlementRevealSeats,
+              current.settlementWinningTileSeats,
+              current.exchangeSnapshot,
+            );
+          }
           setTableTileHighlight(runtime, focusedTileCodeRef.current);
           setTableDangerTiles(runtime, dangerTileCodesRef.current ?? []);
         };
@@ -240,14 +275,28 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
         currentRuntime.revealAllHands = revealAllHandsRef.current;
         currentRuntime.dimTsumogiri = dimTsumogiriRef.current;
         currentRuntime.instantDraw = instantDrawRef.current;
-        renderTable(
-          currentRuntime,
-          current.view,
-          current.openingPhase,
-          current.dice,
-          current.settlementRevealSeats,
-          current.settlementWinningTileSeats,
-        );
+        if (current.sichuanWinRevealSeats.length > 0) {
+          renderTable(
+            currentRuntime,
+            current.view,
+            current.openingPhase,
+            current.dice,
+            current.settlementRevealSeats,
+            current.settlementWinningTileSeats,
+            current.exchangeSnapshot,
+            current.sichuanWinRevealSeats,
+          );
+        } else {
+          renderTable(
+            currentRuntime,
+            current.view,
+            current.openingPhase,
+            current.dice,
+            current.settlementRevealSeats,
+            current.settlementWinningTileSeats,
+            current.exchangeSnapshot,
+          );
+        }
       });
     }
   }, [
@@ -264,6 +313,8 @@ export const GameTable = forwardRef<GameTableHandle, GameTableProps>(function Ga
     tileWidthRatio,
     settlementRevealSeats.join(","),
     settlementWinningTileSeats.join(","),
+    sichuanWinRevealSeats.join(","),
+    exchangeSnapshot,
   ]);
 
   return (

@@ -38,6 +38,8 @@ import {
 import {
   canLocalPlayerDiscard,
   DEFAULT_TABLECLOTH_ASSET,
+  type ExchangeSnapshot,
+  EXCHANGE_CINEMATIC_MS,
   GameTable,
   type GameTableHandle,
   settlementCoveringSeats,
@@ -58,6 +60,7 @@ import {
 } from "../game/callBanners";
 import {
   CALL_BANNER_MS,
+  EXCHANGE_INCOMING_SETTLE_MS,
   POINTS_REVEAL_MS,
   SETTLEMENT_COUNTDOWN_MS,
   SETTLEMENT_REVEAL_BUDGET_MS,
@@ -72,9 +75,11 @@ import { ExitVotePanel } from "../game/ExitVotePanel";
 import { MatchHud } from "../game/MatchHud";
 import { HandSettlement } from "../game/HandSettlement";
 import { KanPointOverlay } from "../game/KanPointOverlay";
+import { SichuanWinOverlay } from "../game/SichuanWinOverlay";
 import { PointChangeOverlay } from "../game/PointChangeOverlay";
 import { MatchAssistControls } from "../game/MatchAssistControls";
 import { PlayerHand2D } from "../game/PlayerHand2D";
+import { SichuanPhaseOverlay } from "../game/SichuanPhase";
 import { applyViewPatch } from "../game/viewPatch";
 import {
   advanceTileCode,
@@ -106,6 +111,7 @@ import type {
   GameCommandName,
   KanPointsView,
   MatchView,
+  SichuanWinView,
   VoiceKind,
   WaitingTileView,
 } from "../types";
@@ -205,6 +211,33 @@ export default function GameScene({ matchId }: GameSceneProps) {
   const [chiSelectingVersion, setChiSelectingVersion] = useState<number | null>(
     null,
   );
+  /*
+   * 四川换三张：提交那一刻抓下的换前快照、以及本地动画播完的标记。选牌在二维
+   * 面板里完成，点「换牌」才把快照定格——第四家交牌时服务端当场就换好了牌，
+   * 视图里已是换后的手牌，桌上那段飞出/换位/飞入的演出得照着快照来。
+   */
+  const [exchangeSnapshot, setExchangeSnapshot] =
+    useState<ExchangeSnapshot | null>(null);
+  const exchangePreHandSnapshot = useRef<ExchangeSnapshot | null>(null);
+  const [exchangeAnimDone, setExchangeAnimDone] = useState(false);
+  const [exchangeIncomingTileIds, setExchangeIncomingTileIds] = useState<number[]>(
+    [],
+  );
+  const exchangeHiddenTileIds = useMemo(() => {
+    if (!exchangeSnapshot || !matchView) return [];
+    const preHandIds = new Set(exchangeSnapshot.hand.map((tile) => tile.id));
+    const observer = matchView.players.find(
+      (player) => player.seat === matchView.observer_seat,
+    );
+    const incomingIds = (observer?.concealed_tiles ?? [])
+      .filter((tile) => !preHandIds.has(tile.id))
+      .map((tile) => tile.id);
+    return [...exchangeSnapshot.outgoingIds, ...incomingIds];
+  }, [exchangeSnapshot, matchView]);
+  const exchangeHandKey = useRef<string | null>(null);
+  /* 回执只发一次的幂等闸、以及演出卡壳时的兜底计时器。 */
+  const exchangeAckSent = useRef(false);
+  const exchangeSafetyTimer = useRef<number | null>(null);
   const [assistSettings, setAssistSettings] = useState(() =>
     loadMatchAssistSettings(userId),
   );
@@ -254,6 +287,80 @@ export default function GameScene({ matchId }: GameSceneProps) {
     assistSettingsHandKey.current = handKey;
     setAssistSettings(resetPerHandMatchAssistSettings);
   }, [matchId, matchView?.hand_index, matchView?.id]);
+
+  /* 换入牌只在动画交接后的这一帧抬起一次。若一直保留这些 id，后续每次
+     出牌造成手牌 DOM 重排时，CSS 类会重新挂载，三张牌就会反复插入。 */
+  useEffect(() => {
+    if (exchangeIncomingTileIds.length === 0) return;
+    const timer = window.setTimeout(
+      () => setExchangeIncomingTileIds([]),
+      EXCHANGE_INCOMING_SETTLE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [exchangeIncomingTileIds]);
+
+  /* 换三张的本地状态同样一局一清，上一局的快照/回执闸不能带进新一局。 */
+  useEffect(() => {
+    if (!matchView || matchView.id !== matchId) return;
+    const handKey = `${matchView.id}:${matchView.hand_index}`;
+    if (exchangeHandKey.current === handKey) return;
+    exchangeHandKey.current = handKey;
+    setExchangeSnapshot(null);
+    exchangePreHandSnapshot.current = null;
+    setExchangeAnimDone(false);
+    setExchangeIncomingTileIds([]);
+    exchangeAckSent.current = false;
+    if (exchangeSafetyTimer.current != null) {
+      window.clearTimeout(exchangeSafetyTimer.current);
+      exchangeSafetyTimer.current = null;
+    }
+  }, [matchId, matchView?.hand_index, matchView?.id]);
+
+  /* 在换牌窗口刚打开时保存换前手牌。超时自动换牌或断线重连时，服务端只下发
+     交出的牌号，客户端仍能按同一份换前快照完成三维演出。 */
+  useEffect(() => {
+    if (
+      !matchView ||
+      matchView.variant_kind !== "sichuan" ||
+      matchView.phase.kind !== "awaiting_exchange" ||
+      exchangePreHandSnapshot.current != null
+    ) {
+      return;
+    }
+    const observer = matchView.players.find(
+      (player) => player.seat === matchView.observer_seat,
+    );
+    if (!observer?.concealed_tiles) return;
+    exchangePreHandSnapshot.current = {
+      handKey: `${matchView.id}:${matchView.hand_index}`,
+      hand: sortHandForDisplay(observer.concealed_tiles, null).map((tile) => ({
+        id: tile.id,
+        code: tile.code,
+      })),
+      outgoingIds: [],
+    };
+  }, [matchView]);
+
+  /* 代打/超时的玩家没有经过二维确认，收到服务端保存的三张交牌后也要播完整换牌。 */
+  useEffect(() => {
+    if (
+      !matchView ||
+      matchView.variant_kind !== "sichuan" ||
+      (matchView.phase.kind !== "awaiting_exchange_animation" &&
+        matchView.phase.kind !== "awaiting_dingque") ||
+      exchangeSnapshot != null
+    ) {
+      return;
+    }
+    const preHand = exchangePreHandSnapshot.current;
+    const outgoingIds = matchView.exchange_outgoing_tile_ids;
+    if (!preHand || outgoingIds?.length !== 3) return;
+    setExchangeSnapshot({
+      handKey: `${matchView.id}:${matchView.hand_index}`,
+      hand: preHand.hand,
+      outgoingIds: [...outgoingIds],
+    });
+  }, [exchangeSnapshot, matchView]);
 
   /* 指令被拒时把服务端给的原因摆到桌上，几秒后收走。 */
   const showNotice = useCallback((message: string) => {
@@ -507,21 +614,21 @@ export default function GameScene({ matchId }: GameSceneProps) {
     ) => {
       bannerSequence.current += 1;
       const id = `${kind}-${seat ?? "table"}-${bannerSequence.current}`;
-      bannerTimers.current.push(
-        window.setTimeout(() => {
-          setCallBanners((current) => [
-            ...current,
-            { id, kind, seat, label, waits, holdMs: hold ? lifetime : undefined },
-          ]);
-          bannerTimers.current.push(
-            window.setTimeout(() => {
-              setCallBanners((current) =>
-                current.filter((banner) => banner.id !== id),
-              );
-            }, lifetime),
-          );
-        }, delay),
-      );
+      const show = () => {
+        setCallBanners((current) => [
+          ...current,
+          { id, kind, seat, label, waits, holdMs: hold ? lifetime : undefined },
+        ]);
+        bannerTimers.current.push(
+          window.setTimeout(() => {
+            setCallBanners((current) =>
+              current.filter((banner) => banner.id !== id),
+            );
+          }, lifetime),
+        );
+      };
+      if (delay <= 0) show();
+      else bannerTimers.current.push(window.setTimeout(show, delay));
     },
     [],
   );
@@ -614,9 +721,9 @@ export default function GameScene({ matchId }: GameSceneProps) {
     });
   }, [onCommand]);
 
-  /* Starts the point animation, the last thing the client plays on its own.
-     点棒滚完就报告播完，之后等服务端下发确认窗口。 */
-  const startPointsPhase = useCallback(() => {
+  /* 启动点数动画。普通结算在点数滚完后报告播完；四川“已有胡家后流局”
+     还要继续展示胡牌结算页，因此由最后一页负责回执。 */
+  const beginPointsPhase = useCallback((reportPlayed: boolean) => {
     const view = useGameStore.getState().matchView;
     if (!view?.hand_settlement || pointsPhaseStarted.current) {
       return;
@@ -626,10 +733,24 @@ export default function GameScene({ matchId }: GameSceneProps) {
     setSettlementConfirmReady(false);
     setSettlementPointsPhase(true);
     setPointsConfirmed(false);
-    settlementPointTimers.current.push(
-      window.setTimeout(() => sendSettlementPlayed(), POINTS_REVEAL_MS),
-    );
+    if (reportPlayed) {
+      settlementPointTimers.current.push(
+        window.setTimeout(() => sendSettlementPlayed(), POINTS_REVEAL_MS),
+      );
+    }
   }, [sendSettlementPlayed]);
+
+  const startPointsPhase = useCallback(
+    () => beginPointsPhase(true),
+    [beginPointsPhase],
+  );
+
+  /* 四川“已有胡家后流局”：点数结束后还要逐页展示胡家，不能在点数阶段结束时
+     就报告整段结算完成；最后一位胡家页面播完后再由 HandSettlement 回执。 */
+  const startPointsBeforeWinnerSettlement = useCallback(
+    () => beginPointsPhase(false),
+    [beginPointsPhase],
+  );
 
   const settlementKey = matchView?.hand_settlement
     ? `${matchView.id}:${matchView.hand_index}:${matchView.hand_settlement.reason}`
@@ -693,13 +814,29 @@ export default function GameScene({ matchId }: GameSceneProps) {
 
     const settlement = matchView.hand_settlement;
     const winnerSeats = settlement.winners.map((w) => w.seat);
-    const isDraw = winnerSeats.length === 0;
-    const isTsumo = settlement.reason === "tsumo";
+    const isSichuan = matchView.variant_kind === "sichuan";
+    const isDraw = settlement.reason === "exhaustive_draw";
+
+    /* 四川和牌时的语音、胡牌动画已经在每次胡牌事件到达时完成。最终结算只
+       保留胡牌结算界面，不重复播点数/胡牌动画；等结算页自身的番种/分数展示
+       播完后再把回执交给后端，由服务端开启统一确认倒计时。 */
+    if (isSichuan && !isDraw) {
+      setSettlementPanelVisible(true);
+      return () => {
+        settlementPointTimers.current.forEach(window.clearTimeout);
+        settlementPointTimers.current = [];
+      };
+    }
+
     const timers: number[] = [];
     const revealSeat = (seat: number) =>
       setSettlementRevealSeats((current) =>
         current.includes(seat) ? current : [...current, seat],
       );
+    /* 四川麻将每家单独记自摸/荣和；其余两家整局只有一种，直接看 reason。 */
+    const winnerIsTsumo = (seat: number) =>
+      settlement.winners.find((winner) => winner.seat === seat)?.is_tsumo ??
+      settlement.reason === "tsumo";
 
     if (isDraw) {
       /* 流局 opens the hands from the dealer round, half a second apart: tenpai
@@ -715,7 +852,11 @@ export default function GameScene({ matchId }: GameSceneProps) {
         false,
         drawReasonLabel(settlement.reason),
       );
-      const order = drawRevealOrder(matchView);
+      const order = drawRevealOrder(matchView).filter(
+        (seat) =>
+          !isSichuan ||
+          !matchView.players.find((player) => player.seat === seat)?.won,
+      );
       const firstAt = 900;
       const stepMs = 500;
       /* 四家摊完之后留一拍，再进点数动画。摊牌阶段
@@ -725,12 +866,19 @@ export default function GameScene({ matchId }: GameSceneProps) {
         SETTLEMENT_REVEAL_BUDGET_MS,
       );
       const isImpactDraw = matchView.variant_kind === "impact";
+      /* 四川麻将听牌家记在 `que.tenpai`，立直记在 `tenpai_seats`。 */
+      const tenpaiSeats = isSichuan
+        ? (settlement.que?.tenpai ?? [])
+        : settlement.tenpai_seats;
       order.forEach((seat, index) => {
         const at = firstAt + index * stepMs;
         timers.push(window.setTimeout(() => revealSeat(seat), at));
         /* 冲击麻将荒牌流局不区分听/不听，直接摊牌进点数。 */
         if (!isImpactDraw) {
-          const tenpai = settlement.tenpai_seats.includes(seat);
+          const tenpai = tenpaiSeats.includes(seat);
+          /* 花猪（手牌含三门）单独点名，和普通未听区分开。 */
+          const pig =
+            isSichuan && (settlement.que?.flower_pigs ?? []).includes(seat);
           /* 听牌者旁边直接摆出听的牌，不听的就挂个「不听」；两者都留到
              点数动画开始才收走，方便一眼看完全场。 */
           const waits = tenpai
@@ -738,17 +886,48 @@ export default function GameScene({ matchId }: GameSceneProps) {
                 ?.waiting_tiles ?? [])
             : undefined;
           const shownAt = at + 160;
-          pushBanner(
-            tenpai ? "tenpai" : "noten",
-            seat,
-            shownAt,
-            Math.max(600, pointsAt - shownAt),
-            waits,
-            true,
-          );
+          if (pig) {
+            pushBanner(
+              "noten",
+              seat,
+              shownAt,
+              Math.max(600, pointsAt - shownAt),
+              undefined,
+              true,
+              "花猪",
+            );
+          } else {
+            pushBanner(
+              tenpai ? "tenpai" : "noten",
+              seat,
+              shownAt,
+              Math.max(600, pointsAt - shownAt),
+              waits,
+              true,
+            );
+          }
         }
       });
-      timers.push(window.setTimeout(() => startPointsPhase(), pointsAt));
+      /* 四川流局：听牌结果展示后立即进入点数动画；没有胡牌结算页需要用户逐页确认，
+         点数动画报告完成后由客户端自动确认并开始下一局；本局已有胡家时，点数动画
+         结束后再依次展示胡家结算页。 */
+      timers.push(
+        window.setTimeout(() => {
+          const hasSichuanWinners = isSichuan && winnerSeats.length > 0;
+          if (hasSichuanWinners) {
+            startPointsBeforeWinnerSettlement();
+            timers.push(
+              window.setTimeout(() => {
+                setSettlementPointsPhase(false);
+                setSettlementLocallyConfirmed(false);
+                setSettlementPanelVisible(true);
+              }, POINTS_REVEAL_MS),
+            );
+          } else {
+            startPointsPhase();
+          }
+        }, pointsAt),
+      );
       return () => {
         timers.forEach(window.clearTimeout);
         settlementPointTimers.current.forEach(window.clearTimeout);
@@ -757,33 +936,30 @@ export default function GameScene({ matchId }: GameSceneProps) {
     }
 
     // 自摸 / 荣和: shout the call beside the winner, lay the hand out, then
-    // turn over whoever has to cover.
-    winnerSeats.forEach((seat, index) => {
-      pushBanner(isTsumo ? "tsumo" : "ron", seat, index * 240, 1600);
-      shout(seat, isTsumo ? "tsumo" : "ron", index * 240);
-    });
-
-    let handRevealAt = 300;
-    if (isTsumo) {
-      /* 自摸先把那张牌从高处砸到桌上，等那一下的灰扬起来，手牌才跟着瘫下去。 */
-      winnerSeats.forEach((seat, index) => {
+    // turn over whoever has to cover. 血战到底多家胡时逐家来。
+    let at = 300;
+    winnerSeats.forEach((seat) => {
+      const tsumo = winnerIsTsumo(seat);
+      /* 四川麻将已经在每次胡牌的即时点数动画前播报；结算页不再重复喊。 */
+      if (!isSichuan) {
+        pushBanner(tsumo ? "tsumo" : "ron", seat, Math.max(0, at - 300), 1600);
+        shout(seat, tsumo ? "tsumo" : "ron", Math.max(0, at - 300));
+      }
+      if (tsumo) {
+        /* 自摸先把那张牌从高处砸到桌上，等那一下的灰扬起来，手牌才跟着瘫下去。 */
         timers.push(
           window.setTimeout(() => {
             setSettlementWinningTileSeats((current) =>
               current.includes(seat) ? current : [...current, seat],
             );
-          }, handRevealAt + index * 240),
+          }, at),
         );
-      });
-      handRevealAt += TSUMO_THROW_MS + 200;
-    }
-
-    winnerSeats.forEach((seat, index) => {
-      timers.push(
-        window.setTimeout(() => revealSeat(seat), handRevealAt + index * 320),
-      );
+        at += TSUMO_THROW_MS + 200;
+      }
+      timers.push(window.setTimeout(() => revealSeat(seat), at));
+      at += 320;
     });
-    const winnerRevealEnd = handRevealAt + winnerSeats.length * 320;
+    const winnerRevealEnd = at;
 
     // On 荣和 only the player who dealt in turns their tiles over, on 自摸
     // everyone else does.
@@ -859,8 +1035,24 @@ export default function GameScene({ matchId }: GameSceneProps) {
      直接跳到点数动画，免得倒计时都走完了他还没看见按钮。 */
   useEffect(() => {
     if (settlementConfirmRemainingMs == null) return;
+    if (
+      matchView?.variant_kind === "sichuan" &&
+      (matchView.hand_settlement?.winners.length ?? 0) === 0
+    ) {
+      // 四川流局没有胡牌结算页：听牌结果与点数动画结束后直接开下一局。
+      sendSettlementConfirm();
+      return;
+    }
+    if (
+      matchView?.variant_kind === "sichuan" &&
+      (matchView.hand_settlement?.winners.length ?? 0) > 0
+    ) {
+      // 流局点数动画后才显示胡家结算页；确认窗口由服务端统一开启。
+      setSettlementConfirmReady(true);
+      return;
+    }
     startPointsPhase();
-  }, [settlementConfirmRemainingMs, startPointsPhase]);
+  }, [matchView, sendSettlementConfirm, settlementConfirmRemainingMs, startPointsPhase]);
 
   useEffect(() => {
     if (!matchView?.result || matchView.hand_settlement) return;
@@ -988,6 +1180,13 @@ export default function GameScene({ matchId }: GameSceneProps) {
   const kanBaselineMatchId = useRef<string | null>(null);
   const kanOverlayHandIndex = useRef<number | null>(null);
   const [playingKan, setPlayingKan] = useState<KanPointsView | null>(null);
+  const [sichuanWin, setSichuanWin] = useState<SichuanWinView | null>(null);
+  const [sichuanWinRevealSeats, setSichuanWinRevealSeats] = useState<number[]>(
+    [],
+  );
+  const playedSichuanWinId = useRef<number | null>(null);
+  const sichuanWinAckSent = useRef(false);
+  const sichuanWinHandKey = useRef<string | null>(null);
   /*
    * 基线得在第一次拿到视图的时候就定下来，哪怕那会儿还没人杠过（`last_kan` 是
    * 空的）。以前是等 `last_kan` 有值才记号，于是整场第一次杠撞上「还没有基线」
@@ -1025,20 +1224,89 @@ export default function GameScene({ matchId }: GameSceneProps) {
     setPlayingKan(lastKan);
   }, [lastKan]);
   const onKanPointsFinished = useCallback(() => {
-    // 冲击麻将：动画播完后通知服务端，等四家都报告才摸岭上牌。
-    if (
-      matchView?.variant_kind === "impact" &&
-      playingKan != null &&
-      playingKan.kind !== "chankan"
-    ) {
-      onCommand("impact.kan_animation_played", { kan_id: playingKan.id });
+    if (playingKan != null) {
+      if (
+        matchView?.variant_kind === "impact" &&
+        playingKan.kind !== "chankan"
+      ) {
+        // 冲击麻将：动画播完后通知服务端，等四家都报告才摸岭上牌。
+        onCommand("impact.kan_animation_played", { kan_id: playingKan.id });
+      } else if (matchView?.variant_kind === "sichuan") {
+        onCommand("sichuan.kan_animation_played", { kan_id: playingKan.id });
+      }
     }
     setPlayingKan(null);
   }, [matchView?.variant_kind, onCommand, playingKan]);
 
+  /* 四川胡牌：事件先锁住整桌，点数滚完再放行牌桌盖牌/亮胡张，最后向后端回执。 */
   useEffect(() => {
-    /* 杠点浮层还在播，托管的自动打牌也得等——挡人不挡自己说不通。 */
-    if (!matchView || openingPhase !== "play" || playingKan) return;
+    if (!matchView || matchView.variant_kind !== "sichuan") return;
+    const event = matchView.last_win;
+    if (!event) return;
+    if (playedSichuanWinId.current == null) {
+      playedSichuanWinId.current =
+        matchView.phase.kind === "awaiting_win_animation" ? event.id - 1 : event.id;
+    }
+    if (
+      matchView.phase.kind !== "awaiting_win_animation" ||
+      event.id <= (playedSichuanWinId.current ?? 0)
+    ) {
+      return;
+    }
+    playedSichuanWinId.current = event.id;
+    sichuanWinAckSent.current = false;
+    setSichuanWinRevealSeats([]);
+    /* 胡牌事件到达即播报，点数动画挂载前完成横幅与语音触发。 */
+    pushBanner(event.is_tsumo ? "tsumo" : "ron", event.seat, 0, 1600);
+    shout(event.seat, event.is_tsumo ? "tsumo" : "ron");
+    setSichuanWin(event);
+  }, [matchView, pushBanner, shout]);
+
+  useEffect(() => {
+    if (!matchView || matchView.id !== matchId) return;
+    if (matchView.phase.kind === "awaiting_win_animation") return;
+    /* 进入下一阶段后保留盖牌状态，但不再把上一局事件当成新事件。 */
+    if (sichuanWin == null) return;
+    setSichuanWin(null);
+  }, [matchId, matchView, sichuanWin]);
+
+  useEffect(() => {
+    if (!matchView || matchView.id !== matchId) return;
+    const handKey = `${matchView.id}:${matchView.hand_index}`;
+    if (sichuanWinHandKey.current === handKey) return;
+    sichuanWinHandKey.current = handKey;
+    setSichuanWinRevealSeats([]);
+    /* 直接重连到等待胡牌动画时，上一 effect 已经拿到本次事件；不能在这里把它清掉。 */
+    const pendingWin =
+      matchView.phase.kind === "awaiting_win_animation" &&
+      matchView.last_win != null;
+    if (!pendingWin) {
+      setSichuanWin(null);
+      playedSichuanWinId.current = null;
+      sichuanWinAckSent.current = false;
+    }
+  }, [matchId, matchView?.hand_index, matchView?.id]);
+
+  const revealSichuanWin = useCallback(() => {
+    const event = useGameStore.getState().matchView?.last_win;
+    if (!event) return;
+    setSichuanWinRevealSeats((current) =>
+      current.includes(event.seat) ? current : [...current, event.seat],
+    );
+  }, []);
+
+  const finishSichuanWin = useCallback(() => {
+    if (sichuanWinAckSent.current) return;
+    const event = useGameStore.getState().matchView?.last_win;
+    if (!event) return;
+    sichuanWinAckSent.current = true;
+    onCommand("sichuan.win_animation_played", { win_id: event.id });
+    setSichuanWin(null);
+  }, [onCommand]);
+
+  useEffect(() => {
+    /* 点数/胡牌/杠点浮层还在播，托管的自动打牌也得等。 */
+    if (!matchView || openingPhase !== "play" || playingKan || sichuanWin) return;
     const command = automaticMatchCommand(matchView, assistSettings);
     if (!command) return;
     const key = `${matchView.id}:${matchView.hand_index}:${matchView.version}:${command.name}:${JSON.stringify(command.payload ?? null)}`;
@@ -1054,7 +1322,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
         automaticCommandKey.current = null;
       }
     };
-  }, [assistSettings, matchView, onCommand, openingPhase, playingKan]);
+  }, [assistSettings, matchView, onCommand, openingPhase, playingKan, sichuanWin]);
 
   useEffect(() => {
     if (
@@ -1082,14 +1350,157 @@ export default function GameScene({ matchId }: GameSceneProps) {
       onCommand(
         view.variant_kind === "impact"
           ? "impact.discard"
-          : isRiichi
-            ? "riichi.riichi_discard"
-            : "riichi.discard",
+          : view.variant_kind === "sichuan"
+            ? "sichuan.discard"
+            : isRiichi
+              ? "riichi.riichi_discard"
+              : "riichi.discard",
         { tile_id: tileId },
       );
     },
     [onCommand, riichiSelecting],
   );
+
+  /* ── 四川换三张 ─────────────────────── */
+  /*
+   * 回执只发一次：演出正常播完、刷新补发、兜底计时器到点，三条路都汇聚到这里，
+   * 用 ref 保证幂等，绝不多报。
+   */
+  const completeExchangeLocally = useCallback((view: MatchView | null) => {
+    if (!view) return;
+    if (exchangeSafetyTimer.current != null) {
+      window.clearTimeout(exchangeSafetyTimer.current);
+      exchangeSafetyTimer.current = null;
+    }
+    const preHandIds = new Set(
+      exchangePreHandSnapshot.current?.hand.map((tile) => tile.id) ?? [],
+    );
+    if (view?.variant_kind === "sichuan" && preHandIds.size > 0) {
+      const observer = view.players.find(
+        (player) => player.seat === view.observer_seat,
+      );
+      const incomingIds = (observer?.concealed_tiles ?? [])
+        .filter((tile) => !preHandIds.has(tile.id))
+        .map((tile) => tile.id);
+      setExchangeIncomingTileIds(incomingIds.slice(0, 3));
+    }
+    setExchangeAnimDone(true);
+    /* 快照用完即清：不清的话下一帧 updateExchange 会拿它把演出再起一遍。 */
+    setExchangeSnapshot(null);
+  }, []);
+
+  const sendExchangePlayed = useCallback(() => {
+    if (exchangeAckSent.current) return;
+    exchangeAckSent.current = true;
+    completeExchangeLocally(useGameStore.getState().matchView);
+    onCommand("sichuan.exchange_animation_played");
+  }, [completeExchangeLocally, onCommand]);
+
+  /* 提交换牌（二维选牌面板交上来的三张）：定格换前快照，桌上的演出照它播。 */
+  const confirmExchange = useCallback(
+    (tileIds: number[]) => {
+      const view = useGameStore.getState().matchView;
+      if (!view || view.phase.kind !== "awaiting_exchange") return;
+      if (tileIds.length !== 3) return;
+      const observer = view.players.find(
+        (player) => player.seat === view.observer_seat,
+      );
+      const hand = sortHandForDisplay(
+        observer?.concealed_tiles ?? [],
+        null,
+      ).map((tile) => ({ id: tile.id, code: tile.code }));
+      const snapshot = {
+        handKey: `${view.id}:${view.hand_index}`,
+        hand,
+        outgoingIds: [...tileIds],
+      };
+      exchangePreHandSnapshot.current = snapshot;
+      setExchangeSnapshot(snapshot);
+      onCommand("sichuan.exchange", { tile_ids: tileIds });
+    },
+    [onCommand],
+  );
+
+  /* 桌上整段换牌动画播完：报告服务端，同时本地放行定缺面板与二维手牌。 */
+  const handleExchangeAnimationDone = useCallback(() => {
+    sendExchangePlayed();
+  }, [sendExchangePlayed]);
+
+  /*
+   * 没有演出可播时（刷新直接落在定缺阶段、换牌超时被代打）立刻补回执，
+   * 免得卡住定缺；服务端自己也留了兜底时限。
+   */
+  useEffect(() => {
+    if (!matchView || matchView.variant_kind !== "sichuan") return;
+    if (
+      matchView.phase.kind !== "awaiting_exchange_animation" &&
+      matchView.phase.kind !== "awaiting_dingque"
+    ) {
+      return;
+    }
+    const serverReleased = (
+      matchView.exchange_animation_played_seats ?? []
+    ).includes(matchView.observer_seat);
+    /*
+     * 重连时可能已经错过了换前快照，因而没有可播的三维演出。此时不要把自己
+     * 永久留在动画闸门里，直接补回执；服务端阶段仍是唯一可信的定缺入口。
+     */
+    if (
+      matchView.phase.kind === "awaiting_exchange_animation" &&
+      exchangeSnapshot == null &&
+      !serverReleased
+    ) {
+      /* 超时自动换牌也会先进入这里：上一 effect 已经保存了换前三维快照，
+         但 React 还没来得及把服务端下发的 outgoing ids 组装成 snapshot。
+         不能在这个中间帧抢先回执，否则下一帧只能直接显示换后手牌，整段演出
+         会被跳过。等快照恢复 effect 在下一次渲染中接管；若确实没有快照，
+         再走下面的无演出兜底。 */
+      if (exchangePreHandSnapshot.current != null) return;
+      sendExchangePlayed();
+      return;
+    }
+    if (matchView.phase.kind !== "awaiting_dingque") return;
+    if (serverReleased) {
+      /* 后端动画超时会直接把所有座位放行；此时不能再等本地计时器。 */
+      exchangeAckSent.current = true;
+      if (exchangeSnapshot != null && !exchangeAnimDone) {
+        completeExchangeLocally(matchView);
+      }
+      return;
+    }
+    if (exchangeSnapshot != null) return; // 有演出，走演出/兜底两条路
+    sendExchangePlayed();
+  }, [
+    completeExchangeLocally,
+    exchangeAnimDone,
+    matchView,
+    exchangeSnapshot,
+    sendExchangePlayed,
+  ]);
+
+  /*
+   * 兜底：快照在（演出该播）但迟迟没收到播完回调时，进入定缺阶段后等够一段
+   * 就照样回执，绝不让定缺面板因为演出卡壳而一直不亮。正常情况演出自己先报，
+   * 这里不会触发。
+   */
+  useEffect(() => {
+    if (!matchView || matchView.variant_kind !== "sichuan") return;
+    if (matchView.phase.kind !== "awaiting_dingque") return;
+    if (exchangeSnapshot == null) return;
+    if (exchangeAckSent.current) return;
+    if (
+      (matchView.exchange_animation_played_seats ?? []).includes(
+        matchView.observer_seat,
+      )
+    ) {
+      return;
+    }
+    if (exchangeSafetyTimer.current != null) return;
+    exchangeSafetyTimer.current = window.setTimeout(() => {
+      exchangeSafetyTimer.current = null;
+      sendExchangePlayed();
+    }, EXCHANGE_CINEMATIC_MS + 1500);
+  }, [matchView, exchangeSnapshot, sendExchangePlayed]);
 
   /* ── 开发模式：改手牌 ─────────────────── */
   /*
@@ -1168,7 +1579,12 @@ export default function GameScene({ matchId }: GameSceneProps) {
     );
   }
 
-  const dice = openingDice(matchId, matchView.hand_index);
+  /* 四川换三张方向由后端真实骰子决定，开场模型也必须展示同一组点数。其余规则
+     暂时沿用既有的确定性开场骰子。 */
+  const dice =
+    matchView.variant_kind === "sichuan" && matchView.exchange_dice
+      ? matchView.exchange_dice
+      : openingDice(matchId, matchView.hand_index);
   const chiSelecting = chiSelectingVersion === matchView.version;
   const chiChoices = chiSelecting ? observerChiOptions(matchView) : [];
   /* 确认按钮只在服务端开了窗口之后出现，读的秒也是服务端下发的剩余时间。 */
@@ -1180,6 +1596,17 @@ export default function GameScene({ matchId }: GameSceneProps) {
       matchView.observer_seat,
     ) ??
       false);
+  const finalSichuanWinSettlement =
+    matchView.variant_kind === "sichuan" &&
+    matchView.hand_settlement != null &&
+    matchView.hand_settlement.winners.length > 0;
+  const sichuanExhaustiveDraw =
+    matchView.variant_kind === "sichuan" &&
+    matchView.hand_settlement?.reason === "exhaustive_draw";
+  /* 四川非流局结算直接显示胡牌页；“已有胡家后流局”必须先允许流局点数浮层。 */
+  const showSettlementPoints =
+    settlementPointsPhase &&
+    (!finalSichuanWinSettlement || sichuanExhaustiveDraw);
 
   return (
     <div className="match-screen">
@@ -1191,8 +1618,11 @@ export default function GameScene({ matchId }: GameSceneProps) {
         onTileDiscard={onTileDiscard}
         settlementRevealSeats={settlementRevealSeats}
         settlementWinningTileSeats={settlementWinningTileSeats}
+        sichuanWinRevealSeats={sichuanWinRevealSeats}
         cameraConfig={tableCameraConfig}
         tableclothPath={tableclothPath}
+        exchangeSnapshot={exchangeSnapshot}
+        onExchangeAnimationDone={handleExchangeAnimationDone}
         onRendererError={() =>
           setError("牌桌载入失败，请刷新后重试")
         }
@@ -1205,9 +1635,26 @@ export default function GameScene({ matchId }: GameSceneProps) {
           riichiSelecting={riichiSelecting}
           autoSort={assistSettings.autoSort}
           onFocusedTileChange={focusTableTile}
-          blocked={playingKan != null}
+          blocked={playingKan != null || sichuanWin != null}
+          exchangeAnimationDone={exchangeAnimDone}
+          exchangeLocallySubmitted={exchangeSnapshot != null}
+          exchangeHiddenTileIds={exchangeAnimDone ? [] : exchangeHiddenTileIds}
+          exchangeCollapseTileIds={
+            exchangeAnimDone ? [] : exchangeSnapshot?.outgoingIds ?? []
+          }
+          exchangeHandOverride={exchangeSnapshot?.hand ?? null}
+          exchangeIncomingTileIds={exchangeIncomingTileIds}
+          sichuanWinRevealSeats={sichuanWinRevealSeats}
         />
         <MatchHud view={matchView} />
+        <SichuanPhaseOverlay
+          view={matchView}
+          openingPhase={openingPhase}
+          onCommand={onCommand}
+          onConfirmExchange={confirmExchange}
+          exchangeLocallySubmitted={exchangeSnapshot != null}
+          exchangeAnimationDone={exchangeAnimDone}
+        />
         <MatchAssistControls
           settings={assistSettings}
           onChange={setAssistSettings}
@@ -1255,7 +1702,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
             setChiSelectingVersion(selecting ? matchView.version : null)
           }
           skipCalls={assistSettings.skipCalls}
-          blocked={playingKan != null}
+          blocked={playingKan != null || sichuanWin != null}
         />
         {chiSelecting && (
           <ChiOptionPicker
@@ -1276,9 +1723,23 @@ export default function GameScene({ matchId }: GameSceneProps) {
             onFinished={onKanPointsFinished}
           />
         )}
-        {settlementPointsPhase ? (
+        {sichuanWin && matchView.phase.kind === "awaiting_win_animation" && (
+          <SichuanWinOverlay
+            key={sichuanWin.id}
+            view={matchView}
+            win={sichuanWin}
+            onReveal={revealSichuanWin}
+            onFinished={finishSichuanWin}
+          />
+        )}
+        {showSettlementPoints ? (
           <PointChangeOverlay
             view={matchView}
+            pointDeltas={
+              sichuanExhaustiveDraw
+                ? matchView.hand_settlement?.que?.deltas
+                : undefined
+            }
             confirmReady={pointsConfirmReady}
             confirmed={pointsAlreadyConfirmed}
             secondsRemaining={pointsSeconds}
@@ -1287,11 +1748,22 @@ export default function GameScene({ matchId }: GameSceneProps) {
         ) : (
           <HandSettlement
             view={matchView}
-            showPanel={settlementPanelVisible}
+            showPanel={
+              settlementPanelVisible ||
+              (finalSichuanWinSettlement && !sichuanExhaustiveDraw)
+            }
             confirmReady={settlementConfirmReady}
             secondsRemaining={settlementSeconds}
             locallyConfirmed={settlementLocallyConfirmed}
-            onConfirm={startPointsPhase}
+            onPlayed={
+              finalSichuanWinSettlement ? sendSettlementPlayed : undefined
+            }
+            onConfirm={
+              matchView.variant_kind === "sichuan" &&
+              matchView.hand_settlement?.winners.length
+                ? sendSettlementConfirm
+                : startPointsPhase
+            }
           />
         )}
         <ChatMessages view={matchView} />

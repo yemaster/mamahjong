@@ -37,6 +37,8 @@ export const TOTAL_WALL_TILES = WALL_STACKS_PER_SIDE * 2 * 4;
 export const WALL_DISTANCE = 4.1;
 
 export const HAND_DISTANCE = 5.35;
+/** 暗手相邻两张牌之间的额外空隙；摸入牌的独立间隔由布局另外控制。 */
+export const HAND_TILE_GAP = 0.018;
 
 export const OPENING_DEAL_STEP_MS = 120;
 export const OPENING_DEAL_MOVE_MS = 180;

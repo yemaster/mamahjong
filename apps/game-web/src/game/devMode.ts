@@ -1,3 +1,4 @@
+import type { MahjongFamily } from "../types";
 import { normalizeTileCode, tileCodes } from "./tileAssets";
 
 /** 开发模式按键数量：轮到自己的暗手最多 14 张（13 张 + 刚摸的那张）。 */
@@ -22,15 +23,19 @@ export function isDevModeEnabled(): boolean {
  * 当前牌山（规则家族）里真实存在的牌码，改牌只在这份里循环。
  *
  * - 冲击麻将没有赤牌：跳过 0m/0p/0s。
+ * - 四川麻将只有三门数牌：跳过字牌和赤牌。
  * - 立直三麻没有 2m..8m，也没有赤 5m：跳过 2m..8m 和 0m。
  * - 立直四麻全量。
  */
 export function validTileCodes(
-  variantKind: "riichi" | "impact",
+  variantKind: MahjongFamily,
   sanma: boolean,
 ): string[] {
   if (variantKind === "impact") {
     return tileCodes.filter((code) => !code.startsWith("0"));
+  }
+  if (variantKind === "sichuan") {
+    return tileCodes.filter((code) => /^[1-9][mps]$/.test(code));
   }
   if (sanma) {
     return tileCodes.filter(

@@ -9,6 +9,9 @@ import {
   wallTileQuaternion,
   sanmaWallTileOrigin,
   sanmaWallTileQuaternion,
+  SICHUAN_STACKS_BY_SIDE,
+  sichuanWallTileOrigin,
+  sichuanWallTileQuaternion,
 } from "./geometry";
 import type { SanmaNorthRule } from "../../types";
 
@@ -190,6 +193,78 @@ export function impactWallLayout(
     drawableCount,
     deadSlots: [indicatorSlot, indicatorSlot + 1],
     revealedSlot: indicatorSlot,
+  };
+}
+
+/**
+ * 四川麻将（血战到底）的牌山布局。
+ *
+ * 这一家没有王牌、没有财神，108 张全都摸（见后端 `sichuan_game::wall`）。开门
+ * 位置由骰子定：庄家算 1、逆时针数到点数和那一家是割目家，它面前那道墙**右边**
+ * 留「较小那颗骰子」墩当牌山末尾，紧挨着左侧才是摸牌起点——和冲击麻将同一套
+ * 规则，所以这里也要收下庄家与本家座次、骰子来算开口。
+ *
+ * 摸牌方向和立直/冲击一致：沿牌墙顺时针、每面墙内从右往左，同一墩先上层后下层。
+ * 整条路是 割目家（左边非预留墩）→ 上家 → 对家 → 下家 → 割目家（右边预留墩）。
+ * 槽位就是物理位置「墩序号 * 2 + 层」，见 `sichuanWallTilePlacement`。杠张照旧
+ * 从末尾整墩往回取。
+ */
+export function sichuanWallLayout(
+  dealer: number,
+  observer: number,
+  dice: [number, number],
+): WallLayout {
+  const total = 108;
+  const diceSum = dice[0] + dice[1];
+  const smaller = Math.min(dice[0], dice[1]);
+  const dealerRelative = tableRelativeSeat(dealer, observer, WALL_SIDES);
+  /* 割目家：庄家算 1，逆时针数到点数和。 */
+  const breakSide = (dealerRelative + diceSum - 1) % WALL_SIDES;
+
+  /* 每面墙的槽位起始值：side 0..3 依次是自家、下家、对家、上家。 */
+  const baseBySide: number[] = [];
+  let running = 0;
+  for (const stacks of SICHUAN_STACKS_BY_SIDE) {
+    baseBySide.push(running);
+    running += stacks * 2;
+  }
+
+  const drawOrder: number[] = [];
+  /* 一面墙的若干墩加入摸牌序列——从右往左，先上层后下层。 */
+  const pushSide = (side: number, start: number, end: number) => {
+    const base = baseBySide[side]!;
+    for (let stack = end - 1; stack >= start; stack -= 1) {
+      drawOrder.push(base + stack * 2, base + stack * 2 + 1);
+    }
+  };
+
+  const breakStacks = SICHUAN_STACKS_BY_SIDE[breakSide]!;
+  const reserved = Math.min(smaller, breakStacks - 1);
+
+  /* 割目家：预留墩左边那些，从右往左，这是牌山开头。 */
+  pushSide(breakSide, 0, breakStacks - reserved);
+  /* 顺时针接下去：上家(+3) → 对家(+2) → 下家(+1)，各摸整面。 */
+  for (const step of [3, 2, 1]) {
+    const side = (breakSide + step) % WALL_SIDES;
+    pushSide(side, 0, SICHUAN_STACKS_BY_SIDE[side]!);
+  }
+  /* 割目家：右边预留的那几墩，从右往左，这是牌山末尾。 */
+  pushSide(breakSide, breakStacks - reserved, breakStacks);
+
+  const drawSlot = (order: number) =>
+    drawOrder[((order % total) + total) % total]!;
+  return {
+    drawSlot,
+    rinshanSlot: (completedDrawCount) =>
+      drawSlot(rinshanOrderIndex(total, completedDrawCount)),
+    rinshanOrderIndex: (completedDrawCount) =>
+      rinshanOrderIndex(total, completedDrawCount),
+    doraOrderIndex: () => -1,
+    origin: sichuanWallTileOrigin,
+    quaternion: sichuanWallTileQuaternion,
+    drawableCount: total,
+    deadSlots: [],
+    revealedSlot: null,
   };
 }
 

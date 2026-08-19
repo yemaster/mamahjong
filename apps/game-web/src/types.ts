@@ -192,8 +192,8 @@ export interface RuleSetCatalog extends ApiEnvelope {
   rule_sets: RuleSetDetail[];
 }
 
-/** 规则家族。设置面板与牌桌渲染都按它分支，配置字段两边完全不同。 */
-export type MahjongFamily = "riichi" | "impact";
+/** 规则家族。设置面板与牌桌渲染都按它分支，配置字段三边完全不同。 */
+export type MahjongFamily = "riichi" | "impact" | "sichuan";
 
 export interface RuleSetDetail {
   id: string;
@@ -211,8 +211,8 @@ export interface RulePreset {
   config: RuleConfig;
 }
 
-/** `family` 是判别字段：读之前先看它，别拿立直的字段去认冲击的配置。 */
-export type RuleConfig = RiichiRuleConfig | ImpactRuleConfig;
+/** `family` 是判别字段：读之前先看它，别拿立直的字段去认冲击或四川的配置。 */
+export type RuleConfig = RiichiRuleConfig | ImpactRuleConfig | SichuanRuleConfig;
 
 export type RiichiVariant = "yonma" | "sanma";
 export type MatchLength = "east_only" | "hanchan";
@@ -327,6 +327,21 @@ export interface ImpactAllInRules {
   blessing: boolean;
 }
 
+/**
+ * 四川麻将（血战到底）的规则配置。
+ *
+ * 只有思考秒数一项可调——番型、杠、流局、局数都是规则写死的。起始点数 0、
+ * 封顶 6 番（32000 分）也不在这里，跟着引擎走。
+ */
+export interface SichuanRuleConfig {
+  match_rules: {
+    thinking_time: {
+      base_seconds: number;
+      reserve_seconds: number;
+    };
+  };
+}
+
 /* ── Rooms ─────────────────────────────────────────────────── */
 
 export interface RoomList extends ApiEnvelope {
@@ -427,6 +442,28 @@ export interface MatchView extends ApiEnvelope {
   dealer_streak?: number;
   /** 本局用的整套冲击麻将规则，按钮文案与帮助页照它回显。 */
   impact_rules?: ImpactRuleConfig;
+  /** 四川麻将：本局用的整套规则（只有思考秒数）。 */
+  sichuan_rules?: SichuanRuleConfig;
+  /** 四川麻将：换三张的方向。 */
+  exchange_direction?: "counter_clockwise" | "clockwise" | "opposite";
+  /** 四川麻将：后端实际掷出的骰子，决定开门位置与换三张方向。 */
+  exchange_dice?: [number, number];
+  /** 四川麻将：割目家座位。 */
+  break_seat?: number;
+  /** 四川麻将：已经提交换三张的座位。 */
+  exchange_submitted_seats?: number[];
+  /** 四川麻将：观察者自己交出的三张牌，用于超时/断线后的动画重建。 */
+  exchange_outgoing_tile_ids?: number[];
+  /** 四川麻将：已经播完换三张动画的座位。 */
+  exchange_animation_played_seats?: number[];
+  /** 四川麻将：已经提交定缺的座位。 */
+  dingque_submitted_seats?: number[];
+  /** 四川麻将最近一次胡牌的即时动画事件。 */
+  last_win?: SichuanWinView;
+  /** 换牌/定缺阶段共用的截止时刻。 */
+  phase_deadline_ms?: number | null;
+  /** 四川换牌/定缺阶段剩余毫秒数，由服务端单调时钟计算。 */
+  phase_remaining_ms?: number | null;
   /** 最近一次杠点变动，播完即弃的浮层照它渲染。 */
   last_kan?: KanPointsView;
   players: MatchPlayerView[];
@@ -493,6 +530,30 @@ export interface HandSettlementView {
   kan_points_after?: number[];
   /** 荒牌：本局不算，同一个庄家直接重开。 */
   void_hand?: boolean;
+  /** 四川麻将：流局查花猪与查大叫的结果。 */
+  que?: SichuanQueView;
+}
+
+/** 四川麻将流局的查花猪 / 查大叫。 */
+export interface SichuanQueView {
+  /** 花猪（手牌含三门）的座位。 */
+  flower_pigs: number[];
+  /** 听牌的座位。 */
+  tenpai: number[];
+  /** 未听牌的座位。 */
+  noten: number[];
+  /** 各座位的点数变动。 */
+  deltas: number[];
+}
+
+export interface SichuanWinView {
+  id: number;
+  seat: number;
+  is_tsumo: boolean;
+  payer: number | null;
+  chankan: boolean;
+  winning_tile: TileView | null;
+  deltas: number[];
 }
 
 export interface WinnerSettlementView {
@@ -508,6 +569,14 @@ export interface WinnerSettlementView {
     value: number;
     yakuman: boolean;
   }[];
+  /** 四川麻将：这一家是自摸还是荣和。 */
+  is_tsumo?: boolean;
+  /** 四川麻将：是不是抢杠胡。 */
+  chankan?: boolean;
+  /** 四川麻将：荣和时放炮的座位。 */
+  payer?: number;
+  /** 四川麻将：胡的那张牌。 */
+  winning_tile?: TileView;
 }
 
 export interface ProgressView {
@@ -519,10 +588,14 @@ export interface ProgressView {
 }
 
 export type MatchPhase =
+  | { kind: "awaiting_exchange" }
+  | { kind: "awaiting_exchange_animation" }
+  | { kind: "awaiting_dingque" }
   | { kind: "awaiting_turn_action"; seat: number }
   | { kind: "awaiting_discard"; seat: number }
   | { kind: "awaiting_responses"; trigger_seat: number }
   | { kind: "awaiting_kan_animation"; seat: number }
+  | { kind: "awaiting_win_animation"; seat: number }
   | { kind: "ended"; reason: EndReason };
 
 export type EndReason =
@@ -532,7 +605,9 @@ export type EndReason =
   | "four_kans"
   | "four_riichi"
   | "tsumo"
-  | "ron";
+  | "ron"
+  /** 四川麻将：已有三家胡牌，本局结束。 */
+  | "three_winners";
 
 export interface MatchPlayerView {
   user_id: string;
@@ -561,6 +636,14 @@ export interface MatchPlayerView {
   honor_streak?: number;
   /** 立直音乐文件路径；没选就是空。 */
   riichi_music_path?: string | null;
+  /** 四川麻将：定缺的花色（man/pin/sou）；四家定缺完成前统一为空。 */
+  que_suit?: "man" | "pin" | "sou";
+  /** 四川麻将：这家已经胡牌、正盖牌继续血战到底。 */
+  won?: boolean;
+  /** 四川麻将：这家胡的那张牌，胡牌瞬间染浅红。 */
+  winning_tile?: TileView;
+  /** 四川麻将：这家是否自摸；胡后摸牌 id 会隐藏，不能靠牌号反推。 */
+  win_is_tsumo?: boolean;
 }
 
 export interface TileView {
@@ -605,7 +688,10 @@ export type ReactionOption =
   | { kind: "open_kan"; tile_ids: [number, number, number] }
   /** 冲击麻将的碰：凑数的两张由服务端挑，所以不带牌号。 */
   | { kind: "impact_pon"; indicator: boolean }
-  | { kind: "impact_open_kan" };
+  | { kind: "impact_open_kan" }
+  /** 四川麻将没有吃，碰和明杠都不带牌号。 */
+  | { kind: "sichuan_pon" }
+  | { kind: "sichuan_open_kan" };
 
 export interface TurnActions {
   can_tsumo: boolean;
@@ -622,6 +708,9 @@ export interface TurnActions {
   impact_added_kan_meld_ids?: number[];
   /** 手里三张财神指示牌，可以按暗杠结算杠点（牌型仍是刻子）。 */
   impact_indicator_concealed_kan?: boolean;
+  /** 四川麻将的暗杠：报牌码而不是牌号。 */
+  sichuan_concealed_kan_tile_codes?: string[];
+  sichuan_added_kan_meld_ids?: number[];
 }
 
 export interface DiscardWaitHint {
@@ -696,6 +785,19 @@ export type GameCommandName =
   | "impact.indicator_concealed_kan"
   | "impact.pass"
   | "impact.kan_animation_played"
+  | "sichuan.discard"
+  | "sichuan.tsumo"
+  | "sichuan.ron"
+  | "sichuan.pon"
+  | "sichuan.open_kan"
+  | "sichuan.concealed_kan"
+  | "sichuan.added_kan"
+  | "sichuan.pass"
+  | "sichuan.exchange"
+  | "sichuan.ding_que"
+  | "sichuan.exchange_animation_played"
+  | "sichuan.win_animation_played"
+  | "sichuan.kan_animation_played"
   | "game.request_exit_vote"
   | "game.vote_exit"
   | "game.assets_ready";

@@ -1,6 +1,7 @@
 import type * as THREE from "three";
 import type { MatchView } from "../../types";
 import type { OpeningPhase } from "../OpeningSequence";
+import type { ExchangeSnapshot, ExchangeState } from "./exchange";
 
 export interface TableCameraConfig {
   mode: "perspective" | "orthographic";
@@ -216,6 +217,8 @@ export interface TableRuntime {
   settlementHandKey: string | null;
   revealedSettlementSeats: Set<number>;
   revealedWinningTileSeats: Set<number>;
+  /** 四川血战到底：对局中已经盖倒过手牌的胡牌家，重建时不再重放倒牌动画。 */
+  coveredWonSeats: Set<number>;
   pointerHandlers: {
     move: (event: PointerEvent) => void;
     leave: () => void;
@@ -236,6 +239,24 @@ export interface TableRuntime {
    * 固定保留一秒后直接移动当前牌节点完成归拢，不重建手牌层。
    */
   handCutGaps: Map<number, HandCutGap>;
+  /**
+   * 四川麻将换三张的演出状态。`null` 表示不在换牌阶段（或演出已收束）。
+   * 飞出、换位、飞入由 `advanceExchange`（rAF 循环）推进，主视角手牌层由它代管。
+   */
+  exchange: ExchangeState | null;
+  /**
+   * 提交换牌那一刻抓下的快照。存在 runtime 上而不是随每次渲染传参，演出状态机
+   * 在 rAF 循环里随时读得到，不受 React 渲染时机影响。
+  */
+  exchangeSnapshot: ExchangeSnapshot | null;
+  /** 当前 runtime 快照所属的牌局，避免跨局复用 React 尚未清掉的旧状态。 */
+  exchangeSnapshotKey: string | null;
+  /** 已完成的换牌局标识；防止旧 React 快照回流时把同一段动画重新启动。 */
+  exchangeCompletedKey?: string | null;
+  /** 换牌临时牌离场后，下一次视图同步必须用权威牌背重建这些手牌层。 */
+  forceHandRebuildSeats: Set<number>;
+  /** 换三张动画播完的回调：由 GameTable 注入，用于向服务端报告回执。 */
+  onExchangeDone: (() => void) | null;
 }
 
 /** 手切牌在别家手上留下的空隙。 */

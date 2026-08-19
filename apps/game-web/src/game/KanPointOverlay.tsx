@@ -53,7 +53,8 @@ export function KanPointOverlay({
     () =>
       view.players.map((player, index) => {
         const delta = kan.deltas[player.seat] ?? 0;
-        const after = player.kan_points ?? 0;
+        // 四川麻将的杠点并入本局即时点账，没有单独的 kan_points 字段。
+        const after = player.kan_points ?? player.points;
         return {
           key: player.user_id,
           avatarPath: player.avatar_path,
@@ -127,7 +128,7 @@ export function KanPointOverlay({
   return (
     <div
       className={`match-point-change is-kan${leaving ? " is-leaving" : ""}`}
-      aria-label="杠点变动"
+      aria-label={view.variant_kind === "sichuan" ? "点数变动" : "杠点变动"}
       role="status"
     >
       <div className="match-point-change__banner">
@@ -147,7 +148,7 @@ export function KanPointOverlay({
             after={card.after}
             delta={card.delta}
             index={card.index}
-            caption="杠点"
+            caption={view.variant_kind === "sichuan" ? undefined : "杠点"}
           />
         ))}
       </div>

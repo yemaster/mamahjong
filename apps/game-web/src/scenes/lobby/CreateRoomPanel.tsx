@@ -16,6 +16,7 @@ import type {
   PlacementUma,
   RiichiRuleConfig,
   RuleConfig,
+  SichuanRuleConfig,
 } from "../../types";
 
 interface Props {
@@ -29,6 +30,16 @@ const CUSTOM_PRESET_ID = "custom";
 /** 配置是哪一家的，看有没有全交那一组就够了。 */
 function isImpactConfig(config: RuleConfig): config is ImpactRuleConfig {
   return "all_in" in config;
+}
+
+/** 立直麻将的配置里一定有 `variant`（三麻还是四麻）。 */
+function isRiichiConfig(config: RuleConfig): config is RiichiRuleConfig {
+  return "variant" in config;
+}
+
+/** 四川麻将只有 `match_rules.thinking_time`，没有立直的 `variant`、也没有冲击的 `all_in`。 */
+function isSichuanConfig(config: RuleConfig): config is SichuanRuleConfig {
+  return !("all_in" in config) && !("variant" in config);
 }
 
 export function impactRulesForMode(
@@ -87,9 +98,10 @@ export function CreateRoomPanel({ token, onBack }: Props) {
   const familyRuleSets = (catalog.data?.rule_sets ?? []).filter(
     (ruleSet) => mahjongFamilyOf(ruleSet.id) === family,
   );
-  // 底下两片设置只会有一片是非空的：拿到哪一片，就渲染哪一套面板。
-  const riichiRules = rules && !isImpactConfig(rules) ? rules : null;
+  // 底下三片设置只会有一片是非空的：拿到哪一片，就渲染哪一套面板。
+  const riichiRules = rules && isRiichiConfig(rules) ? rules : null;
   const impactRules = rules && isImpactConfig(rules) ? rules : null;
+  const sichuanRules = rules && isSichuanConfig(rules) ? rules : null;
 
   useEffect(() => {
     if (selectedRuleSet && !rules) {
@@ -138,7 +150,7 @@ export function CreateRoomPanel({ token, onBack }: Props) {
   ) => {
     markCustomRules();
     setRules((current) =>
-      current && !isImpactConfig(current)
+      current && isRiichiConfig(current)
         ? {
             ...current,
             [section]: Object.assign({}, current[section], patch),
@@ -175,7 +187,7 @@ export function CreateRoomPanel({ token, onBack }: Props) {
   const updateRedFive = (suit: "man" | "pin" | "sou", value: number) => {
     markCustomRules();
     setRules((current) =>
-      current && !isImpactConfig(current)
+      current && isRiichiConfig(current)
         ? {
             ...current,
             bonuses: {
@@ -186,6 +198,18 @@ export function CreateRoomPanel({ token, onBack }: Props) {
               },
             },
           }
+        : current,
+    );
+  };
+
+  const updateSichuanThinkingTime = (thinking_time: {
+    base_seconds: number;
+    reserve_seconds: number;
+  }) => {
+    markCustomRules();
+    setRules((current) =>
+      current && isSichuanConfig(current)
+        ? { ...current, match_rules: { thinking_time } }
         : current,
     );
   };
@@ -309,10 +333,11 @@ export function CreateRoomPanel({ token, onBack }: Props) {
         {/*
           冲击麻将只有 `impact/yonma` 一套、也没有流派，这两个下拉框摆出来就是
           一个只有一项、一个「标准 / 自定义」——点开只会让人以为还有别的选择。
-          这里按种类判断而不是按「只有一套 / 没有预设」判断：立直的三麻同样没有
-          预设，那边的下拉框得原样留着。
+          四川麻将同样只有 `sichuan/yonma` 一套，预设也只有「标准血战到底」、
+          跟默认值一字不差，下拉框同样省掉。这里按种类判断而不是按「只有一套 /
+          没有预设」判断：立直的三麻同样没有预设，那边的下拉框得原样留着。
         */}
-        {family === "impact" ? null : (
+        {family === "impact" || family === "sichuan" ? null : (
           <div className="lobby-create__basic-grid">
             <label className="lobby-create__field">
               <span>人数规则</span>
@@ -460,6 +485,13 @@ export function CreateRoomPanel({ token, onBack }: Props) {
             rules={impactRules}
             onChange={updateImpactSection}
             onModeChange={changeImpactMode}
+          />
+        ) : null}
+
+        {sichuanRules ? (
+          <SichuanRuleSettings
+            rules={sichuanRules}
+            onChange={updateSichuanThinkingTime}
           />
         ) : null}
 
@@ -807,6 +839,42 @@ function ImpactRuleSettings({
   );
 }
 
+/**
+ * 四川麻将的设置面板。
+ *
+ * 和冲击麻将一样只露出思考秒数：血战到底、杠、查花猪/查大叫都是规则写死的，
+ * 能调的只有思考秒数这一项。
+ */
+function SichuanRuleSettings({
+  rules,
+  onChange,
+}: {
+  rules: SichuanRuleConfig;
+  onChange: (thinking_time: {
+    base_seconds: number;
+    reserve_seconds: number;
+  }) => void;
+}) {
+  return (
+    <div className="lobby-create__basic-rules">
+      <RuleGroup title="对局设置" open>
+        <SettingRow label="思考秒数">
+          <Choice
+            value={thinkingTimeValue(rules)}
+            options={[
+              ["5+0", "5+0"],
+              ["5+20", "5+20"],
+              ["5+60", "5+60"],
+              ["15+60", "15+60"],
+            ]}
+            onChange={(value) => onChange(parseThinkingTime(value))}
+          />
+        </SettingRow>
+      </RuleGroup>
+    </div>
+  );
+}
+
 function RuleGroup({
   title,
   open,
@@ -930,10 +998,11 @@ function cloneRules(rules: RuleConfig): RuleConfig {
     base_seconds: 5,
     reserve_seconds: 20,
   };
-  // 下面两项是立直特有的；冲击麻将的对局设置只有思考秒数，补不出这些字段。
-  if (isImpactConfig(clone)) return clone;
-  clone.match_rules.return_points = clone.match_rules.initial_points;
-  clone.match_rules.first_place_required_points ??= 30_000;
+  // 下面两项是立直特有的；冲击麻将和四川麻将的对局设置只有思考秒数，补不出这些字段。
+  if (isRiichiConfig(clone)) {
+    clone.match_rules.return_points = clone.match_rules.initial_points;
+    clone.match_rules.first_place_required_points ??= 30_000;
+  }
   return clone;
 }
 
@@ -953,13 +1022,18 @@ function overridesOf(config: RuleConfig): Record<string, unknown> {
       all_in: config.all_in,
     };
   }
+  if (isRiichiConfig(config)) {
+    return {
+      match_rules: config.match_rules,
+      scoring: config.scoring,
+      calls: config.calls,
+      bonuses: config.bonuses,
+      abortive_draws: config.abortive_draws,
+      settlement: config.settlement,
+    };
+  }
   return {
-    match_rules: config.match_rules,
-    scoring: config.scoring,
-    calls: config.calls,
-    bonuses: config.bonuses,
-    abortive_draws: config.abortive_draws,
-    settlement: config.settlement,
+    match_rules: { thinking_time: config.match_rules.thinking_time },
   };
 }
 

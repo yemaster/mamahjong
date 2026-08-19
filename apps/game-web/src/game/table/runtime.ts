@@ -14,6 +14,7 @@ import {
   DEFAULT_TILE_SCALE,
   TILE_WIDTH_RATIO,
 } from "./constants";
+import { advanceExchange, cleanupExchange } from "./exchange";
 import {
   orthographicCameraBounds,
   tableCameraLayout,
@@ -134,6 +135,7 @@ export async function createRuntime(
     settlementHandKey: null,
     revealedSettlementSeats: new Set(),
     revealedWinningTileSeats: new Set(),
+    coveredWonSeats: new Set(),
     pointerHandlers: null,
     cameraOverride: cameraConfig ?? null,
     tileScale,
@@ -142,6 +144,12 @@ export async function createRuntime(
     contextLost: false,
     rebuild: () => {},
     handCutGaps: new Map(),
+    exchange: null,
+    exchangeSnapshot: null,
+    exchangeSnapshotKey: null,
+    exchangeCompletedKey: null,
+    forceHandRebuildSeats: new Set(),
+    onExchangeDone: null,
   };
 
   let renderedWidth = 0;
@@ -280,7 +288,9 @@ export async function createRuntime(
       runtime.transients.length > 0 ||
       runtime.impacts.length > 0 ||
       runtime.shake != null ||
-      runtime.diceRolls.length > 0;
+      runtime.diceRolls.length > 0 ||
+      /* 换三张演出在跑：段与段之间的停顿也要按帧推进，别掉到 30 FPS。 */
+      runtime.exchange != null;
     /* 主要动作维持 60 FPS；空闲时的扫光和标记动画用 30 FPS，显著减少常驻 GPU 占用。 */
     const frameInterval = 1000 / (fullRate ? 60 : 30);
     if (lastRenderedAt > 0 && now - lastRenderedAt < frameInterval - 1) {
@@ -288,6 +298,8 @@ export async function createRuntime(
       return;
     }
     lastRenderedAt = now;
+    /* 换三张演出按帧推进阶段（飞出→换位→飞入），不靠一次性定时器。 */
+    advanceExchange(runtime, now);
     for (const group of runtime.selectable) {
       const tileGroup = group.userData.tileGroup as THREE.Group | undefined;
       if (!tileGroup) continue;
@@ -606,6 +618,8 @@ function flushPendingLayerDisposals(runtime: TableRuntime): void {
 
 export function destroyRuntime(runtime: TableRuntime): void {
   runtime.disposed = true;
+  /* 换三张演出若还在半路，先收掉它的定时器，别让回调打在已销毁的桌上。 */
+  cleanupExchange(runtime);
   cancelAnimationFrame(runtime.frame);
   runtime.resizeObserver.disconnect();
   const canvas = runtime.renderer.domElement;

@@ -201,3 +201,42 @@ export function impactWallTiles(
   }
   return tiles;
 }
+
+/**
+ * 四川麻将的牌墙。
+ *
+ * 没有王牌、没有财神、没有明牌，整座山全是扣着的牌背，只按「还剩几张没摸」把
+ * 已经摸走的槽位从画面上撤掉。
+ */
+export function addSichuanWall(
+  runtime: TableRuntime,
+  layout: WallLayout,
+  remainingDraws: number,
+  completedKanCount: number,
+): void {
+  for (const tile of sichuanWallTiles(layout, remainingDraws, completedKanCount)) {
+    addWallTile(runtime, layout, tile.slot, tile.code, tile.flipAt);
+  }
+}
+
+/** 返回当前仍在桌上的四川麻将牌山槽位，供增量场景按槽复用。 */
+export function sichuanWallTiles(
+  layout: WallLayout,
+  remainingDraws: number,
+  completedKanCount: number,
+): WallTileSpec[] {
+  const consumedTileCount =
+    layout.drawableCount - remainingDraws - completedKanCount;
+  /* 杠张从末尾一墩一墩往回取，一墩之内先上层后下层，摸掉的不一定连着。 */
+  const takenByKan = new Set<number>();
+  for (let kan = 1; kan <= completedKanCount; kan += 1) {
+    takenByKan.add(layout.rinshanSlot(kan));
+  }
+  const tiles: WallTileSpec[] = [];
+  for (let index = consumedTileCount; index < layout.drawableCount; index += 1) {
+    const slot = layout.drawSlot(index);
+    if (takenByKan.has(slot)) continue;
+    tiles.push({ slot, code: null, flipAt: null });
+  }
+  return tiles;
+}

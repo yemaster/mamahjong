@@ -13,8 +13,11 @@ import {
   discardGridPosition,
   discardNaturalRotation,
   handPosition,
+  exchangeStackPosition,
+  exchangeRecipient,
   impactWallLayout,
   impactWallTiles,
+  isSichuanOpeningDealerDraw,
   meldDisplayTiles,
   meldTilePosition,
   nukiRiverPosition,
@@ -26,6 +29,7 @@ import {
   opponentHandLayout,
   orthographicCameraBounds,
   playerIsHoldingDrawnTile,
+  playerSichuanWinIsTsumo,
   playerCompletedKan,
   playerExtractedNorth,
   playerReceivedDraw,
@@ -65,7 +69,13 @@ import {
   cameraShakeOffset,
 } from "./impact";
 import type { TableImpact, TableRuntime } from "./types";
-import { OPENING_DEAL_STEP_MS } from "./constants";
+import {
+  HAND_TILE_GAP,
+  OPENING_DEAL_STEP_MS,
+  RIVER_TILE_LENGTH,
+  WALL_DISTANCE,
+  WALL_TILE_LENGTH,
+} from "./constants";
 
 describe("手牌理牌", () => {
   it("按万筒索字排序并把摸入牌留在末端", () => {
@@ -696,6 +706,48 @@ describe("杠后岭上摸牌", () => {
   });
 });
 
+describe("四川庄家开局第十四张", () => {
+  it("开局已有的第十四张不算普通摸牌，之后的摸牌仍正常播放", () => {
+    const players = tablePreviewView.players.map((player) => ({
+      ...player,
+      melds: [],
+      discards: [],
+    }));
+    const dealer = players[0]!;
+    dealer.concealed_tile_count = 14;
+    dealer.drawn_tile_id = dealer.concealed_tiles?.at(-1)?.id ?? null;
+    const openingView: MatchView = {
+      ...tablePreviewView,
+      variant_kind: "sichuan",
+      completed_rinshan_draws: 0,
+      progress: { ...tablePreviewView.progress, dealer: dealer.seat },
+      players,
+    };
+
+    expect(isSichuanOpeningDealerDraw(openingView, dealer)).toBe(true);
+
+    const afterFirstDiscard = structuredClone(openingView);
+    afterFirstDiscard.players[0]!.discards.push({
+      tile: { id: 9900, code: "1m" },
+      tsumogiri: false,
+      riichi_declared: false,
+      claimed_by: null,
+    });
+    expect(
+      isSichuanOpeningDealerDraw(
+        afterFirstDiscard,
+        afterFirstDiscard.players[0]!,
+      ),
+    ).toBe(false);
+
+    const rinshanView = structuredClone(openingView);
+    rinshanView.completed_rinshan_draws = 1;
+    expect(
+      isSichuanOpeningDealerDraw(rinshanView, rinshanView.players[0]!),
+    ).toBe(false);
+  });
+});
+
 describe("正方形牌桌对称布局", () => {
   it("桌上牌宽长比会同步改变牌河、手牌与牌山横向步距", () => {
     const widthRatio = 0.82;
@@ -707,7 +759,7 @@ describe("正方形牌桌对称布局", () => {
     expect(
       handPosition(0, 13, 1, false, 0, false, widthRatio, 1).x -
         handPosition(0, 13, 0, false, 0, false, widthRatio, 1).x,
-    ).toBeCloseTo(expectedWidth + 0.025);
+    ).toBeCloseTo(expectedWidth + HAND_TILE_GAP);
     /* 摸牌序号顺着摸牌方向走，也就是往左，所以步距是负的。 */
     expect(
       wallTileOrigin(2, widthRatio, 1).x -
@@ -973,6 +1025,20 @@ describe("摸牌间隔", () => {
   });
 });
 
+describe("四川自摸盖牌", () => {
+  it("摸牌 id 隐藏后仍按胡牌记录识别自摸牌", () => {
+    const view = structuredClone(tablePreviewView);
+    view.variant_kind = "sichuan";
+    const player = view.players[0]!;
+    player.won = true;
+    player.winning_tile = { id: 9001, code: "5p" };
+    player.drawn_tile_id = null;
+    player.win_is_tsumo = true;
+
+    expect(playerSichuanWinIsTsumo(view, player)).toBe(true);
+  });
+});
+
 describe("开局取牌顺序", () => {
   it("庄家从骰子确定的断点先取四枚，各家依序取牌", () => {
     expect(openingDealOrder(0, 2, 2, 4)).toBe(0);
@@ -1235,6 +1301,47 @@ describe("牌河排列", () => {
     expect(Math.max(...angles)).toBeLessThanOrEqual(5.5);
     expect(largeAngles.length).toBeGreaterThan(0);
     expect(largeAngles.length / angles.length).toBeLessThan(0.1);
+  });
+});
+
+describe("四川换三张落桌位置", () => {
+  it("顺逆时针沿四家整圈传递，对家才两两交换", () => {
+    expect(
+      [0, 1, 2, 3].map((seat) =>
+        exchangeRecipient(seat, "counter_clockwise"),
+      ),
+    ).toEqual([1, 2, 3, 0]);
+    expect(
+      [0, 1, 2, 3].map((seat) => exchangeRecipient(seat, "clockwise")),
+    ).toEqual([3, 0, 1, 2]);
+    expect(
+      [0, 1, 2, 3].map((seat) => exchangeRecipient(seat, "opposite")),
+    ).toEqual([2, 3, 0, 1]);
+  });
+
+  it("落在牌河外缘与牌山内缘之间，不占用牌河行", () => {
+    const position = exchangeStackPosition(0, 1);
+    const riverOuterEdge =
+      discardGridPosition(12).z + RIVER_TILE_LENGTH * 0.96 / 2;
+    const wallInnerEdge = WALL_DISTANCE - WALL_TILE_LENGTH * 0.96 / 2;
+
+    expect(position.z).toBeGreaterThan(riverOuterEdge);
+    expect(position.z).toBeLessThan(wallInnerEdge);
+    expect(position.z).toBeCloseTo((riverOuterEdge + wallInnerEdge) / 2);
+  });
+
+  it("四家只旋转同一个共享坐标，不分别添加 z 偏移", () => {
+    const self = exchangeStackPosition(0, 0);
+    const right = exchangeStackPosition(1, 0);
+    const opposite = exchangeStackPosition(2, 0);
+    const left = exchangeStackPosition(3, 0);
+
+    expect(right.x).toBeCloseTo(self.z);
+    expect(right.z).toBeCloseTo(-self.x);
+    expect(opposite.x).toBeCloseTo(-self.x);
+    expect(opposite.z).toBeCloseTo(-self.z);
+    expect(left.x).toBeCloseTo(-self.z);
+    expect(left.z).toBeCloseTo(self.x);
   });
 });
 

@@ -8,6 +8,13 @@ import { tileAssetPath } from "./tileAssets";
 const fallbackAvatar =
   `${import.meta.env.BASE_URL}assets/local-characters/mahjong-soul/ichihime/emotes/8.png`;
 
+/** 四川麻将的定缺门中文名，徽章只写一个字。 */
+const QUE_SUIT_LABELS: Record<string, string> = {
+  man: "万",
+  pin: "筒",
+  sou: "索",
+};
+
 /** 某一家的听牌提示：听哪些牌、这几种一共还剩几枚。 */
 export interface SeatWaitHint {
   waits: string[];
@@ -28,6 +35,8 @@ export function MatchHud({
   const activeSeat = turnSeat(view);
   // 冲击麻将没有宝牌、没有本场棒与场供棒，左上角只剩一张财神指示牌和连庄次数。
   const impact = view.variant_kind === "impact";
+  // 四川麻将连这些都没有：左上角什么都不摆。
+  const sichuan = view.variant_kind === "sichuan";
   const ownIsWaiting =
     activeSeat === view.observer_seat ||
     (view.phase.kind === "awaiting_responses" &&
@@ -49,7 +58,7 @@ export function MatchHud({
             </span>
           </div>
         </aside>
-      ) : (
+      ) : sichuan ? null : (
         <aside className="match-dora-panel" aria-label="宝牌与场供">
           <div className="match-dora-panel__tiles">
             <span>宝牌指示</span>
@@ -104,6 +113,11 @@ export function MatchHud({
               {riichi && (
                 <span className="match-player-panel__riichi-badge">
                   立直
+                </span>
+              )}
+              {player.que_suit && (
+                <span className="match-player-panel__que-badge">
+                  缺{QUE_SUIT_LABELS[player.que_suit]}
                 </span>
               )}
             </span>

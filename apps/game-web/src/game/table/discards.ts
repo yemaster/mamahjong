@@ -16,7 +16,7 @@ import {
 } from "./geometry";
 import { riverDiscardEntries, sortHandForDisplay } from "./handView";
 import { registerTableTile } from "./tileHighlight";
-import { dimTile, makeTile, markTileAsDora, rootTile } from "./tileMesh";
+import { dimTile, makeTile, markTileAsDora, markTileAsWinning, rootTile } from "./tileMesh";
 import type { TableRuntime } from "./types";
 
 /**
@@ -63,6 +63,7 @@ export function addDiscardTile(
   originalIndex: number,
   sideways: boolean,
   index: number,
+  sichuanRonInfo: readonly { payerSeat: number; tileId: number }[] = [],
 ): void {
   const now = performance.now();
   const relative = tableRelativeSeat(
@@ -98,6 +99,10 @@ export function addDiscardTile(
     isJokerTile(discard.tile.code, view.joker_code)
   ) {
     markTileAsDora(runtime, group);
+  }
+  /* 四川麻将荣和：放炮家牌河里被胡的那张染浅红。 */
+  if (sichuanRonInfo.some((info) => info.payerSeat === player.seat && info.tileId === discard.tile.id)) {
+    markTileAsWinning(group);
   }
   if (runtime.dimTsumogiri && discard.tsumogiri) {
     dimTile(group, TSUMOGIRI_DIM);

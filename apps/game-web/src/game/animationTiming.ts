@@ -31,6 +31,8 @@ export const SETTLEMENT_COUNTDOWN_MS = 5000;
  * 改 `PointChangeOverlay` 的节拍必须回头看这个数字够不够。
  */
 export const POINTS_REVEAL_MS = 2800;
+/** 换入牌交给二维手牌后的抬牌收束时长，动画只在换牌完成时播放一次。 */
+export const EXCHANGE_INCOMING_SETTLE_MS = 1050;
 /**
  * 确认窗口的倒计时。
  *

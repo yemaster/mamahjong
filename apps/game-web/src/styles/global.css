@@ -3222,8 +3222,8 @@ a { color: var(--pink-dark); text-decoration: none; }
 .match-player-panel img {
   position: relative;
   z-index: 2;
-  width: 54px;
-  height: 54px;
+  width: 64px;
+  height: 64px;
   flex: 0 0 auto;
   border: 2px solid #c7a96a;
   border-radius: 3px;
@@ -3250,8 +3250,8 @@ a { color: var(--pink-dark); text-decoration: none; }
 .match-player-panel__avatar-wrap {
   position: relative;
   display: block;
-  width: 54px;
-  height: 54px;
+  width: 64px;
+  height: 64px;
   flex: 0 0 auto;
 }
 
@@ -3283,6 +3283,29 @@ a { color: var(--pink-dark); text-decoration: none; }
   white-space: nowrap;
 }
 
+/* 四川麻将定缺徽章：头像右下角的大字，只写一个「缺X」。 */
+.match-player-panel__que-badge {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  z-index: 3;
+  display: grid;
+  min-width: 34px;
+  height: 24px;
+  padding: 0 6px;
+  place-items: center;
+  border: 1.5px solid #c8a04a;
+  border-radius: 3px;
+  background: #2b1a06;
+  box-shadow: 0 0 6px rgba(200, 160, 74, 0.7);
+  color: #ffe08a;
+  font-family: var(--font-game);
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 /*
  * 听牌提示卡（只有牌谱重演会出现）。
  *
@@ -3298,7 +3321,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   --tile-plate-lift: 4px;
   position: absolute;
   top: calc(100% + 6px);
-  left: 52px;
+  left: 62px;
   z-index: 4;
   display: flex;
   max-width: 260px;
@@ -3387,7 +3410,7 @@ a { color: var(--pink-dark); text-decoration: none; }
 .match-player-panel strong {
   overflow: hidden;
   width: 100%;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-overflow: ellipsis;
@@ -3926,6 +3949,240 @@ a { color: var(--pink-dark); text-decoration: none; }
   outline: none;
 }
 
+/*
+ * 换三张与定缺共用的容器：铺满牌桌、自身不吃鼠标，里面的面板各自恢复交互。
+ * 换牌方向的大字动画借喊牌横幅那套笔刷，直接挂在它下面。
+ */
+.match-sichuan-phase {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.match-sichuan-phase .match-chi-picker {
+  pointer-events: auto;
+}
+
+/* 换三张、定缺已交、等人时的提示，浮在牌桌正中。 */
+.match-sichuan-status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 14px 26px;
+  border: 2px solid rgba(205, 177, 114, 0.7);
+  background: rgba(15, 23, 36, 0.88);
+  color: #f2d18b;
+  font-family: var(--font-game);
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-indent: 0.08em;
+  white-space: nowrap;
+  clip-path: polygon(
+    9px 0,
+    100% 0,
+    100% calc(100% - 9px),
+    calc(100% - 9px) 100%,
+    0 100%,
+    0 9px
+  );
+  transform: translate(-50%, -50%);
+}
+
+/* 换三张选牌面板：铺在手牌区接住点击，牌格就是平时那排二维手牌。 */
+.match-sichuan-exchange {
+  pointer-events: auto;
+}
+
+.match-sichuan-exchange__bar {
+  position: absolute;
+  bottom: calc(
+    var(--match-hand-bottom) + var(--match-hand-tile-height) + 28px
+  );
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.match-sichuan-exchange__hint {
+  color: #f2d18b;
+  font-family: var(--font-game);
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-indent: 0.05em;
+  white-space: nowrap;
+}
+
+/* 选中上浮描红边；不够三张/异门/选满后其余牌压灰不可点。 */
+.match-hand-2d__tile.is-exchange-selected .match-hand-2d__body {
+  transform: translate3d(0, -18px, 0) scale(1.06);
+}
+
+.match-hand-2d__tile.is-exchange-selected .match-hand-2d__face {
+  box-shadow: inset 0 0 0 3px rgba(255, 107, 88, 0.95);
+}
+
+/* 换牌完成后二维手牌接手：换入的三张先抬起，停顿后平滑落回整排。 */
+.match-hand-2d__tile.is-exchange-incoming {
+  z-index: 3;
+}
+
+/* 三维模型离开二维槽位时保留布局宽度，避免整排手牌跳动。 */
+.match-hand-2d__tile.is-exchange-hidden {
+  visibility: hidden;
+}
+
+.match-hand-2d__tile.is-exchange-incoming .match-hand-2d__body {
+  animation: matchExchangeIncomingSettle 1.05s cubic-bezier(.2, .72, .2, 1)
+    forwards;
+}
+
+@keyframes matchExchangeIncomingSettle {
+  0%,
+  52% {
+    transform: translate3d(0, -26px, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.match-hand-2d__tile.is-exchange-blocked {
+  filter: grayscale(1) brightness(0.66);
+  opacity: 0.58;
+  pointer-events: none;
+}
+
+/* 定缺面板：画面正中大面板，三个56px大字按钮+确认按钮。 */
+.match-dingque-panel {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 13;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  padding: 42px 56px 38px;
+  border: 3px solid rgba(205, 177, 114, 0.8);
+  background: linear-gradient(135deg, rgba(15, 23, 36, 0.96), rgba(22, 31, 46, 0.96));
+  pointer-events: auto;
+  clip-path: polygon(
+    12px 0,
+    100% 0,
+    100% calc(100% - 12px),
+    calc(100% - 12px) 100%,
+    0 100%,
+    0 12px
+  );
+  transform: translate(-50%, -50%);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.match-dingque-panel__title {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  color: #f2d18b;
+  font-family: var(--font-game);
+  font-size: 32px;
+  font-weight: 900;
+  letter-spacing: 0.15em;
+  text-indent: 0.15em;
+}
+
+.match-dingque-panel__title em {
+  color: #f7b5a8;
+  font-family: var(--font-game);
+  font-size: 20px;
+  font-style: normal;
+  letter-spacing: 0.04em;
+}
+
+.match-dingque-panel__options {
+  display: flex;
+  gap: 24px;
+}
+
+.match-dingque-panel__suit {
+  width: 96px;
+  height: 96px;
+  padding: 0;
+  border: 3px solid rgba(201, 169, 110, 0.4);
+  background: rgba(30, 38, 52, 0.6);
+  color: #e5d4a8;
+  font-family: var(--font-game);
+  font-size: 56px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  transition: all 160ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  clip-path: polygon(
+    8px 0,
+    100% 0,
+    100% calc(100% - 8px),
+    calc(100% - 8px) 100%,
+    0 100%,
+    0 8px
+  );
+}
+
+.match-dingque-panel__suit:hover {
+  border-color: rgba(201, 169, 110, 0.7);
+  background: rgba(40, 48, 62, 0.8);
+  transform: translateY(-3px);
+}
+
+.match-dingque-panel__suit.is-selected {
+  border-color: rgba(255, 107, 88, 0.95);
+  background: rgba(255, 107, 88, 0.22);
+  color: #ffcfb8;
+  box-shadow: 0 0 18px rgba(255, 107, 88, 0.4);
+  transform: scale(1.08) translateY(-4px);
+}
+
+.match-dingque-panel__suit.is-selected:hover {
+  transform: scale(1.08) translateY(-4px);
+}
+
+/* 定缺门：手上还有缺门牌时，非缺门那几门灰掉不能打。 */
+.match-hand-2d__tile.is-que-blocked {
+  filter: grayscale(1) brightness(0.66);
+  opacity: 0.58;
+}
+
+/* 换三张选牌框里那行小字提示，紧跟标题。 */
+.match-chi-picker__hint {
+  flex: 0 0 auto;
+  color: rgba(242, 209, 139, 0.72);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* 挑中的牌抬起来描红边，没挑中的牌还压在原地，一眼分得清。 */
+.match-chi-picker__option.is-selected {
+  border-color: rgba(255, 107, 88, 0.95);
+  background: rgba(255, 107, 88, 0.18);
+  transform: translateY(-6px);
+}
+
+.match-chi-picker__option.is-selected:hover,
+.match-chi-picker__option.is-selected:focus-visible {
+  transform: translateY(-6px);
+}
+
+/* 选定某一门花色后，其余花色的牌变暗、不再响应。 */
+.match-chi-picker__option.is-blocked {
+  opacity: 0.32;
+  pointer-events: none;
+}
+
 .match-hand-2d {
   position: absolute;
   bottom: var(--match-hand-bottom);
@@ -4089,6 +4346,29 @@ a { color: var(--pink-dark); text-decoration: none; }
   pointer-events: none;
   transform: skewX(-8deg);
   animation: matchHandDoraShine 1.4s ease-out infinite;
+}
+
+/*
+ * 四川麻将血战到底的盖牌：牌背贴图就够，牌面底色补成牌背绿，免得四周露白边。
+ */
+.match-hand-2d__tile.is-back .match-hand-2d__face {
+  background: #396d49;
+}
+
+/* 自己胡的那张牌：盖住的手牌里唯一朝上的一张，整张染浅红。 */
+.match-hand-2d__tile.is-winning .match-hand-2d__face {
+  background: #f2b8b8;
+  box-shadow: inset 0 0 0 2px rgba(224, 92, 92, 0.82);
+}
+
+.match-hand-2d__tile.is-winning .match-hand-2d__face::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 3px;
+  background: rgba(235, 118, 118, 0.3);
+  pointer-events: none;
 }
 
 .match-hand-2d__tile:hover,

@@ -43,6 +43,7 @@ export function ActionPanel({
 }: ActionPanelProps) {
   const [dismissedVersion, setDismissedVersion] = useState<number | null>(null);
   const impact = view.variant_kind === "impact";
+  const sichuan = view.variant_kind === "sichuan";
   const allReactions = view.available_reactions ?? [];
   const reactions = skipCalls
     ? allReactions.filter((reaction) => reaction.kind === "ron")
@@ -58,17 +59,24 @@ export function ActionPanel({
     actions.impact_concealed_kan_tile_codes ?? [];
   const impactAddedKanMeldIds = actions.impact_added_kan_meld_ids ?? [];
   const impactIndicatorKan = actions.impact_indicator_concealed_kan ?? false;
+  const sichuanConcealedKanCodes =
+    actions.sichuan_concealed_kan_tile_codes ?? [];
+  const sichuanAddedKanMeldIds = actions.sichuan_added_kan_meld_ids ?? [];
   const hasTurnAction = impact
     ? actions.can_tsumo ||
       impactConcealedKanCodes.length > 0 ||
       impactAddedKanMeldIds.length > 0 ||
       impactIndicatorKan
-    : actions.can_tsumo ||
-      actions.riichi_discard_tile_ids.length > 0 ||
-      actions.concealed_kan_tile_ids.length > 0 ||
-      actions.added_kan_options.length > 0 ||
-      actions.nuki_tile_ids.length > 0 ||
-      actions.can_nine_terminals;
+    : sichuan
+      ? actions.can_tsumo ||
+        sichuanConcealedKanCodes.length > 0 ||
+        sichuanAddedKanMeldIds.length > 0
+      : actions.can_tsumo ||
+        actions.riichi_discard_tile_ids.length > 0 ||
+        actions.concealed_kan_tile_ids.length > 0 ||
+        actions.added_kan_options.length > 0 ||
+        actions.nuki_tile_ids.length > 0 ||
+        actions.can_nine_terminals;
 
   /* 方案框浮在手牌正上方，这一排按钮再留着只会两块板抢屏。 */
   if (
@@ -131,7 +139,42 @@ export function ActionPanel({
         </>
       )}
 
-      {!hasResponse && !impact && (
+      {!hasResponse && sichuan && (
+        <>
+          {actions.can_tsumo && (
+            <ActionButton
+              label="自摸"
+              tone="win"
+              onClick={() => onCommand("sichuan.tsumo")}
+            />
+          )}
+          {sichuanConcealedKanCodes.map((code) => (
+            <ActionButton
+              key={code}
+              label="暗杠"
+              tone="kan"
+              onClick={() =>
+                onCommand("sichuan.concealed_kan", { tile_code: code })
+              }
+            />
+          ))}
+          {sichuanAddedKanMeldIds.map((meldId) => (
+            <ActionButton
+              key={meldId}
+              label="加杠"
+              tone="kan"
+              onClick={() => onCommand("sichuan.added_kan", { meld_id: meldId })}
+            />
+          ))}
+          <ActionButton
+            label="取消"
+            tone="quiet"
+            onClick={() => setDismissedVersion(view.version)}
+          />
+        </>
+      )}
+
+      {!hasResponse && !impact && !sichuan && (
         <>
           {riichiSelecting ? (
             <ActionButton
@@ -261,7 +304,38 @@ export function ActionPanel({
         </>
       )}
 
-      {hasResponse && !impact && (
+      {hasResponse && sichuan && (
+        <>
+          {reactions.some((reaction) => reaction.kind === "ron") && (
+            <ActionButton
+              label="荣和"
+              tone="win"
+              onClick={() => onCommand("sichuan.ron")}
+            />
+          )}
+          {reactionOfKind(reactions, "sichuan_pon") && (
+            <ActionButton
+              label="碰"
+              tone="pon"
+              onClick={() => onCommand("sichuan.pon")}
+            />
+          )}
+          {reactionOfKind(reactions, "sichuan_open_kan") && (
+            <ActionButton
+              label="杠"
+              tone="kan"
+              onClick={() => onCommand("sichuan.open_kan")}
+            />
+          )}
+          <ActionButton
+            label="取消"
+            tone="quiet"
+            onClick={() => onCommand("sichuan.pass")}
+          />
+        </>
+      )}
+
+      {hasResponse && !impact && !sichuan && (
         <>
           {reactions.some((reaction) => reaction.kind === "ron") && (
             <ActionButton

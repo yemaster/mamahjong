@@ -176,6 +176,8 @@ export function makeTile(
   group.userData.tileDepth = depth;
   group.userData.tileWidth = width;
   group.userData.tileLength = length;
+  /* 对手暗手对象池只能复用真正的牌背牌坯，不能只凭朝向猜正反面。 */
+  group.userData.tileCode = normalized;
   group.userData.faceMesh = upper;
   group.userData.faceMaterial = isBack ? back : artwork;
   /* 牌面那块白底，点亮同种牌时染的是它，不是上面的图案。 */
@@ -358,6 +360,20 @@ export function markTileAsDora(
   /* 压在图案那一层之上，牌面上所有东西都会被它扫到。 */
   shine.position.y = depth / 2 + Math.max(0.007, depth * 0.028);
   body.add(shine);
+}
+
+/**
+ * 胡牌染浅红。
+ *
+ * 四川麻将胡牌/自摸时，胡的那张牌整张变浅红，一眼就能和其余扣着的牌分开。
+ * 染的是牌面白底（每张牌一份、不共享），图案照旧压在上面。
+ */
+export function markTileAsWinning(group: THREE.Group): void {
+  const plate = group.userData.facePlateMaterial as
+    | THREE.MeshBasicMaterial
+    | undefined;
+  if (!plate) return;
+  plate.color.setRGB(0.97, 0.72, 0.72);
 }
 
 export function tileBody(group: THREE.Group): THREE.Group {

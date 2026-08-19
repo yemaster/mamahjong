@@ -48,11 +48,13 @@ describe("三维牌几何缓存", () => {
 
   it("牌背和不同尺寸使用各自正确的几何体", () => {
     const runtime = geometryRuntime();
-    makeTile(runtime, "1m", 1);
-    makeTile(runtime, "back", 1);
+    const face = makeTile(runtime, "1m", 1);
+    const back = makeTile(runtime, "back", 1);
     makeTile(runtime, "1m", 0.56);
 
     expect(runtime.tileGeometries.size).toBe(3);
+    expect(face.userData.tileCode).toBe("1m");
+    expect(back.userData.tileCode).toBe("back");
     disposeTileGeometries(runtime);
   });
 

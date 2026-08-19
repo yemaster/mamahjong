@@ -2,6 +2,7 @@ import * as THREE from "three";
 import {
   DEFAULT_TILE_SCALE,
   HAND_DISTANCE,
+  HAND_TILE_GAP,
   MELD_DISTANCE,
   MELD_RIGHT_EDGE,
   MELD_TILE_LENGTH,
@@ -61,7 +62,7 @@ export function handPosition(
   const tileLength =
     (isSelf ? TILE_LENGTH : OPPONENT_TILE_LENGTH) * tileScale;
   const width = tileLength * widthRatio;
-  const step = width + 0.025 * tileScale;
+  const step = width + HAND_TILE_GAP * tileScale;
   const fixedRackSpan = 12 * step;
   const position = new THREE.Vector3(
     -fixedRackSpan / 2 + index * step + drawnGap * tileScale,
@@ -101,6 +102,35 @@ export function discardGridPosition(
     x: (column - 2.5) * (scaledWidth + RIVER_TILE_GAP),
     z: 1.72 + row * (scaledLength + RIVER_TILE_GAP),
   };
+}
+
+/**
+ * 换三张临时牌摞的桌面落点。
+ *
+ * 换牌牌摞不是牌河的一部分，不能取牌河第二、三行的平均值：那样会把三张牌
+ * 直接压进牌河里。它应该落在牌河最外缘与牌山最内缘之间的共享空带，四个座位
+ * 先按自家坐标计算，再用和牌河/手牌完全相同的座位旋转。这样交换阶段飞出的
+ * 牌与之后飞回手牌使用的是同一套世界坐标，不会在相对 1/2/3 家时产生 z 偏移。
+ */
+export function exchangeStackPosition(
+  relative: number,
+  index: number,
+  widthRatio = TILE_WIDTH_RATIO,
+  tileScale = DEFAULT_TILE_SCALE,
+): THREE.Vector3 {
+  const tileWidth = TILE_LENGTH * widthRatio * tileScale;
+  const tileDepth = TILE_LENGTH * TILE_DEPTH_RATIO * tileScale;
+  const riverOuterEdge =
+    discardGridPosition(12, widthRatio, tileScale, 3).z +
+    (RIVER_TILE_LENGTH * tileScale) / 2;
+  const wallInnerEdge = WALL_DISTANCE - (WALL_TILE_LENGTH * tileScale) / 2;
+  const position = new THREE.Vector3(
+    (index - 1) * tileWidth,
+    tileDepth / 2 + 0.09,
+    (riverOuterEdge + wallInnerEdge) / 2,
+  );
+  rotateAroundTable(position, relative);
+  return position;
 }
 
 /** 拔北从牌河第三行的第八格开始，之后继续向这家视角的右侧排。 */
@@ -305,6 +335,60 @@ export function impactWallTileOrigin(
 
 export function impactWallTileQuaternion(slot: number): THREE.Quaternion {
   return wallPlacementQuaternion(impactWallTilePlacement(slot));
+}
+
+/**
+ * 四川麻将的牌墙位置换算。
+ *
+ * 没有财神、没有王牌区，108 张全部可摸；物理上东西两面 14 墩、南北两面 13 墩。
+ * 摸牌顺序是现洗的平铺序列，`sichuanWallLayout` 里 `slot` 直接就是物理位置，
+ * 这里也不用管顺序——槽位 = 相对座次 * 墩数累计 + 墩号 * 2 + 层，墩号从这一家的
+ * 左手边数到右手边，同一墩里 0 是上层、1 是下层。相对座次 0=自家(屏幕下)
+ * 1=下家(右) 2=对家(上) 3=上家(左)，和 `rotateAroundTable` 对齐。
+ */
+export const SICHUAN_STACKS_BY_SIDE: number[] = [14, 13, 14, 13];
+
+function sichuanWallTilePlacement(slot: number): {
+  side: number;
+  stack: number;
+  layer: number;
+} {
+  const normalizedSlot = ((slot % 108) + 108) % 108;
+  const stackIndex = Math.floor(normalizedSlot / 2);
+  let side = 0;
+  let base = 0;
+  for (let candidate = 0; candidate < 4; candidate += 1) {
+    const count = SICHUAN_STACKS_BY_SIDE[candidate]!;
+    if (stackIndex < base + count) {
+      side = candidate;
+      break;
+    }
+    base += count;
+  }
+  return {
+    side,
+    stack: stackIndex - base,
+    layer: 1 - (normalizedSlot % 2),
+  };
+}
+
+export function sichuanWallTileOrigin(
+  slot: number,
+  widthRatio = TILE_WIDTH_RATIO,
+  tileScale = DEFAULT_TILE_SCALE,
+): THREE.Vector3 {
+  const placement = sichuanWallTilePlacement(slot);
+  /* 每面墙墩数不一样，各自按自己的墩数居中，墙才不会歪向一边。 */
+  return wallPlacementOrigin(
+    placement,
+    widthRatio,
+    tileScale,
+    (SICHUAN_STACKS_BY_SIDE[placement.side]! - 1) / 2,
+  );
+}
+
+export function sichuanWallTileQuaternion(slot: number): THREE.Quaternion {
+  return wallPlacementQuaternion(sichuanWallTilePlacement(slot));
 }
 
 /**

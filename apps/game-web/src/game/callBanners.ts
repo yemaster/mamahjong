@@ -60,6 +60,7 @@ const DRAW_REASON_LABELS: Record<EndReason, string> = {
   four_riichi: "四家立直",
   tsumo: "流局",
   ron: "流局",
+  three_winners: "三家胡牌",
 };
 
 export function drawReasonLabel(reason: EndReason): string {

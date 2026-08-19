@@ -7,22 +7,32 @@ import {
   useRef,
   useState,
 } from "react";
-import type { DiscardWaitHint, MatchView, WaitingTileView } from "../types";
+import type {
+  DiscardWaitHint,
+  MatchView,
+  TileView,
+  WaitingTileView,
+} from "../types";
 import type { OpeningPhase } from "./OpeningSequence";
+import { tileSuitCode } from "./PrePlayPanels";
 import {
   canLocalPlayerDiscard,
   DRAW_MOVE_MS,
   isJokerTile,
+  isSichuanOpeningDealerDraw,
   openingDealArrival,
   sortHandForDisplay,
   TILE_STAND_UP_MS,
 } from "./table";
-import { isDoraTile, tileAssetPath } from "./tileAssets";
+import { isDoraTile, tileAssetPath, tileBackAssetPath } from "./tileAssets";
 import { visibleTileCounts } from "./tileCounts";
 import { WaitingTilesPanel } from "./WaitingTilesPanel";
 
 /** 换局之后等开局动画接手的最长时限，超过就自己把手牌放出来。 */
 const HAND_START_GRACE_MS = 1500;
+
+/** 定缺门的三个花色码：`man`→`m`，`pin`→`p`，`sou`→`s`。 */
+const QUE_SUIT_SHORT: Record<string, string> = { man: "m", pin: "p", sou: "s" };
 
 interface PlayerHand2DProps {
   view: MatchView;
@@ -39,6 +49,23 @@ interface PlayerHand2DProps {
   onFocusedTileChange?: (code: string | null) => void;
   /** 有浮层正在播（例如冲击麻将的杠点），播完之前手牌一律点不动。 */
   blocked?: boolean;
+  /**
+   * 四川换三张动画本地已播完。服务端回执还没回来时，也照样把二维手牌放出来，
+   * 免得三维手牌撤了、二维还没接上，中间空一截。
+   */
+  exchangeAnimationDone?: boolean;
+  /** 本地仍有一段换牌演出在接管三维手牌时为真。 */
+  exchangeLocallySubmitted?: boolean;
+  /** 换牌动画期间正在牌桌外飞行的牌，二维槽位保留但暂时隐去，避免双影。 */
+  exchangeHiddenTileIds?: number[];
+  /** 主视角抽出的牌从二维列表中移除，使剩余手牌立即向左收拢。 */
+  exchangeCollapseTileIds?: number[];
+  /** 换牌动画期间固定展示换牌前快照，服务端提前下发新手牌也不抢跑。 */
+  exchangeHandOverride?: TileView[] | null;
+  /** 换牌完成后主视角换入的牌，二维接手时短暂抬高显示。 */
+  exchangeIncomingTileIds?: number[];
+  /** 四川胡牌点数动画结束后才切到三维盖牌/亮胡张。 */
+  sichuanWinRevealSeats?: number[];
 }
 
 export function PlayerHand2D({
@@ -51,6 +78,13 @@ export function PlayerHand2D({
   instantDraw = false,
   onFocusedTileChange,
   blocked = false,
+  exchangeAnimationDone = false,
+  exchangeLocallySubmitted = false,
+  exchangeHiddenTileIds = [],
+  exchangeCollapseTileIds = [],
+  exchangeHandOverride = null,
+  exchangeIncomingTileIds = [],
+  sichuanWinRevealSeats = [],
 }: PlayerHand2DProps) {
   const [pendingTileId, setPendingTileId] = useState<number | null>(null);
   const [touchSelectedTileId, setTouchSelectedTileId] =
@@ -82,15 +116,28 @@ export function PlayerHand2D({
   const player = view.players.find(
     (candidate) => candidate.seat === view.observer_seat,
   );
+  /* 动画完成后立即交回服务端手牌；即使快照清理和视图补丁不在同一帧，
+     也不能继续拿换前三张覆盖换后手牌。 */
+  const exchangeOverrideActive =
+    exchangeHandOverride != null && !exchangeAnimationDone;
+  const displayedConcealedTiles =
+    exchangeOverrideActive
+      ? exchangeHandOverride
+      : player?.concealed_tiles ?? [];
+  const pendingSichuanWinForSelf =
+    view.variant_kind === "sichuan" &&
+    view.phase.kind === "awaiting_win_animation" &&
+    view.phase.seat === view.observer_seat &&
+    !sichuanWinRevealSeats.includes(view.observer_seat);
   /* 手牌变了就把缓存清掉——不在自己回合就拿不到新听牌，旧数据等下次再算。 */
   const concealedTilesKey = useRef<string>("");
   const currentConcealedKey = useMemo(
     () =>
-      (player?.concealed_tiles ?? [])
+      displayedConcealedTiles
         .map((tile) => tile.id)
         .sort()
         .join(","),
-    [player?.concealed_tiles],
+    [displayedConcealedTiles],
   );
   if (currentConcealedKey !== concealedTilesKey.current) {
     concealedTilesKey.current = currentConcealedKey;
@@ -118,11 +165,16 @@ export function PlayerHand2D({
   const sortedTiles = useMemo(
     () =>
       sortHandForDisplay(
-        player?.concealed_tiles ?? [],
-        player?.drawn_tile_id ?? null,
+        displayedConcealedTiles,
+        !exchangeOverrideActive ? (player?.drawn_tile_id ?? null) : null,
         view.joker_code,
       ),
-    [player?.concealed_tiles, player?.drawn_tile_id, view.joker_code],
+    [
+      displayedConcealedTiles,
+      exchangeOverrideActive,
+      player?.drawn_tile_id,
+      view.joker_code,
+    ],
   );
 
   /*
@@ -152,7 +204,8 @@ export function PlayerHand2D({
   }
   if (handStartPending && openingPhase !== "play") setHandStartPending(false);
 
-  const drawnTileId = player?.drawn_tile_id ?? null;
+  const drawnTileId =
+    !exchangeOverrideActive ? (player?.drawn_tile_id ?? null) : null;
   if (lastDrawnTileId.current !== drawnTileId) {
     const previous = lastDrawnTileId.current;
     lastDrawnTileId.current = drawnTileId;
@@ -162,7 +215,8 @@ export function PlayerHand2D({
       previous !== undefined &&
       drawnTileId != null &&
       !handChanged &&
-      openingPhase === "play";
+      openingPhase === "play" &&
+      !(player && isSichuanOpeningDealerDraw(view, player));
     setLanding(flying ? { tileId: drawnTileId, draw: drawCount.current } : null);
   }
   const landingTileId = landing?.tileId ?? null;
@@ -184,8 +238,15 @@ export function PlayerHand2D({
    * 才有个准地方落——落点就是量这一格量出来的。整格摘掉的话既没处可量，补回来
    * 的那一下还得让整排牌重排一次。
    */
+  const exchangeCollapseSet = new Set(exchangeCollapseTileIds);
+  const exchangeVisibleTiles =
+    exchangeCollapseSet.size > 0 && exchangeOverrideActive
+    ? tiles.filter((tile) => !exchangeCollapseSet.has(tile.id))
+    : tiles;
   const visibleTiles =
-    openingPhase === "deal" ? tiles.slice(0, visibleDealCount) : tiles;
+    openingPhase === "deal"
+      ? exchangeVisibleTiles.slice(0, visibleDealCount)
+      : exchangeVisibleTiles;
   const visibleCounts = useMemo(() => visibleTileCounts(view), [view]);
   /* 被鼠标悬停、或者触屏第一下点起来的那张牌：上浮的就是它。 */
   const focusedTileId = hoveredTileId ?? touchSelectedTileId;
@@ -367,6 +428,15 @@ export function PlayerHand2D({
   if (
     !player ||
     view.phase.kind === "ended" ||
+    /* 血战到底自己胡了牌：那一手当场在三维桌上盖倒（自摸翻出胡张），二维手牌
+       收起来，别两头都亮。终局结算是另一条路（上面 ended 已拦）。 */
+    (player.won === true &&
+      (view.variant_kind !== "sichuan" || !pendingSichuanWinForSelf)) ||
+    /* 未确认时由换牌选牌面板展示二维手牌；确认后标准二维手牌始终保留，三维层
+       只接管飞出/飞入的牌。 */
+    (openingPhase === "play" &&
+      view.phase.kind === "awaiting_exchange" &&
+      !exchangeLocallySubmitted) ||
     openingPhase === "dice" ||
     handStartPending
   ) {
@@ -378,6 +448,15 @@ export function PlayerHand2D({
     !blocked &&
     canLocalPlayerDiscard(view) &&
     pendingTileId == null;
+  /* 定缺门：手上还有缺门牌时，只能先打缺门那门，其余门变灰（对齐后端 QueTilesRemaining）。 */
+  const queShort = player.que_suit
+    ? QUE_SUIT_SHORT[player.que_suit]
+    : undefined;
+  const holdingQue =
+    queShort != null &&
+    (player.concealed_tiles ?? []).some(
+      (tile) => tileSuitCode(tile.code) === queShort,
+    );
   /*
    * 听牌提示只有一块面板，浮在手牌正上方，按这个顺序抢：
    * 立直选牌 → 按住感叹号看自己现在听什么 → 摸到/点到某张牌时预览打出去的听牌。
@@ -525,14 +604,21 @@ export function PlayerHand2D({
         <strong className="match-hand-2d__furiten">振听</strong>
       )}
       {visibleTiles.map((tile) => {
-        const drawn = tile.id === player.drawn_tile_id;
+        const isBack = tile.code === "back";
+        const drawn = tile.id === drawnTileId;
         const dora = isDoraTile(tile.code, view.dora_indicators ?? []);
         /* 冲击麻将的财神：百搭牌，单独高亮一档，和宝牌的金边区分开。 */
         const joker = isJokerTile(tile.code, view.joker_code);
         const canDeclareRiichi =
           view.turn_actions.riichi_discard_tile_ids.includes(tile.id);
+        const tileBlockedByQue =
+          holdingQue &&
+          tile.code !== "back" &&
+          tileSuitCode(tile.code) !== queShort;
         const tileEnabled =
-          enabled && (!riichiSelecting || canDeclareRiichi);
+          enabled &&
+          (!riichiSelecting || canDeclareRiichi) &&
+          !tileBlockedByQue;
         return (
           <button
             key={tile.id}
@@ -545,8 +631,10 @@ export function PlayerHand2D({
             className={`tile-plate match-hand-2d__tile${
               drawn ? " is-drawn" : ""
             }${dora ? " is-dora" : ""}${joker ? " is-joker" : ""}${
-              openingPhase === "deal" ? " is-dealing" : ""
-            }${tile.id === landingTileId ? " is-landing" : ""}${
+              isBack ? " is-back" : ""
+            }${openingPhase === "deal" ? " is-dealing" : ""}${
+              tile.id === landingTileId ? " is-landing" : ""
+            }${
               riichiSelecting && canDeclareRiichi
                 ? " is-riichi-choice"
                 : ""
@@ -554,9 +642,17 @@ export function PlayerHand2D({
               riichiSelecting && !canDeclareRiichi
                 ? " is-riichi-blocked"
                 : ""
-            }${
+            }${tileBlockedByQue ? " is-que-blocked" : ""}${
               touchSelectedTileId === tile.id
                 ? " is-touch-selected"
+                : ""
+            }${
+              exchangeHiddenTileIds.includes(tile.id)
+                ? " is-exchange-hidden"
+                : ""
+            }${
+              exchangeIncomingTileIds.includes(tile.id)
+                ? " is-exchange-incoming"
                 : ""
             }${!tileEnabled ? " is-not-discardable" : ""}`}
             aria-disabled={!tileEnabled}
@@ -602,7 +698,14 @@ export function PlayerHand2D({
           >
             <span className="tile-plate__body match-hand-2d__body">
               <span className="tile-plate__face match-hand-2d__face">
-                <img src={tileAssetPath(tile.code, "jp")} alt="" />
+                <img
+                  src={
+                    isBack
+                      ? tileBackAssetPath()
+                      : tileAssetPath(tile.code, "jp")
+                  }
+                  alt=""
+                />
               </span>
             </span>
           </button>

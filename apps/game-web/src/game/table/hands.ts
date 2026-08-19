@@ -33,6 +33,7 @@ import {
 import {
   canLocalPlayerDiscard,
   playerIsHoldingDrawnTile,
+  playerSichuanWinIsTsumo,
   sortHandForDisplay,
   winningTileIndex,
 } from "./handView";
@@ -40,6 +41,7 @@ import { IMPACT_DUST_SPREAD, spawnTableImpact } from "./impact";
 import {
   makeTile,
   markTileAsDora,
+  markTileAsWinning,
   rootTile,
   tileBody,
   tileFaceMesh,
@@ -63,6 +65,7 @@ export function addHand(
   openingPhase: OpeningPhase,
   settlementRevealSeats: number[],
   settlementWinningTileSeats: number[],
+  sichuanWinRevealSeats: number[] = [],
   wall: WallLayout,
   consumedTileCount: number,
   rinshanDrawNumber: number | null,
@@ -81,8 +84,29 @@ export function addHand(
     (view.hand_settlement!.tenpai_seats.includes(player.seat) ||
       view.hand_settlement!.winners.some(
         (winner) => winner.seat === player.seat,
-      ));
-  if (isSelf && view.phase.kind !== "ended") {
+      ) ||
+      /* 四川麻将流局查大叫：听牌的照样摊牌，`tenpai_seats` 为空，听牌家记在
+         `que.tenpai` 里。 */
+      view.hand_settlement!.que?.tenpai.includes(player.seat));
+  /*
+   * 血战到底胡了不当场结束：这一家刚胡牌（还没进结算）就把手牌当场盖倒——
+   * 自摸翻出胡张染红，荣和整手盖住、胡张在牌河里标红。主视角也一样切到三维。
+   * 自摸 = 胡张就是刚摸的那张；荣和的胡张在牌河里，手里没有。
+   */
+  const pendingSichuanWinForPlayer =
+    view.variant_kind === "sichuan" &&
+    view.phase.kind === "awaiting_win_animation" &&
+    view.phase.seat === player.seat &&
+    !sichuanWinRevealSeats.includes(player.seat);
+  const wonMidGame =
+    player.won === true &&
+    !settling &&
+    (view.variant_kind !== "sichuan" || !pendingSichuanWinForPlayer);
+  const wonIsTsumo =
+    wonMidGame &&
+    player.winning_tile != null &&
+    playerSichuanWinIsTsumo(view, player);
+  if (isSelf && view.phase.kind !== "ended" && !wonMidGame) {
     return;
   }
   const selfTilesKnown =
@@ -109,16 +133,32 @@ export function addHand(
     player.drawn_tile_id,
     view.joker_code,
   );
+  /* 胡牌盖倒：自摸只有胡张是真牌（翻面染红），荣和整手都是牌背。 */
+  const wonCoverTiles = wonMidGame
+    ? (() => {
+        const winning = wonIsTsumo ? player.winning_tile : null;
+        const backCount = Math.max(
+          0,
+          player.concealed_tile_count - (winning ? 1 : 0),
+        );
+        const backs = Array.from({ length: backCount }, (_, index) => ({
+          id: -1 - index,
+          code: "back",
+        }));
+        return winning ? [...backs, winning] : backs;
+      })()
+    : null;
   /* A revealed hand still needs tiles on the felt: if the server has not sent
      the concealed tiles yet, keep the backs standing rather than blank out
      the whole hand. */
   const tiles =
-    (selfTilesKnown ||
+    wonCoverTiles ??
+    ((selfTilesKnown ||
       revealAll ||
       (settling && (revealed || winningTileShown) && spreadsOpen)) &&
     knownTiles.length > 0
       ? knownTiles
-      : hiddenTiles;
+      : hiddenTiles);
   /*
    * 对手暗手只做槽位变换：摸后 N 张仍画 N 张；手切后 N 张仍画 N 张，只额外
    * 留一个空槽。牌的真实数量在整段动画里始终不变。
@@ -147,25 +187,46 @@ export function addHand(
   const faceUp = (spreadsOpen || revealAll) && tiles === knownTiles;
   const length = isSelf ? TILE_LENGTH : OPPONENT_TILE_LENGTH;
   /* 自摸 flips the drawn tile up on its own before the hand falls open. */
+  const winnerSettlement = settling
+    ? view.hand_settlement!.winners.find(
+        (winner) => winner.seat === player.seat,
+      )
+    : undefined;
+  /* 四川麻将的胡牌由每家单独记在 `winning_tile`；荣和那张不在摸牌位，得按 id 找。 */
+  const winningTileId =
+    view.variant_kind === "sichuan"
+      ? (player.winning_tile?.id ?? player.drawn_tile_id)
+      : player.drawn_tile_id;
   const winningIndex =
-    settling && faceUp ? winningTileIndex(tiles, player.drawn_tile_id) : -1;
+    (settling && faceUp) || (wonMidGame && wonIsTsumo)
+      ? winningTileIndex(tiles, winningTileId)
+      : -1;
   /*
    * 甩牌只属于自摸：牌是自己摸上来的，摔在桌上才有那股劲。荣和的和了牌是别人
    * 打出来的，流局摊的听牌更没什么可甩，这两种都只是把手牌摊开。
    */
   const tsumoWin =
     settling &&
-    view.hand_settlement!.reason === "tsumo" &&
-    view.hand_settlement!.winners.some(
-      (winner) => winner.seat === player.seat,
-    );
+    winnerSettlement != null &&
+    (winnerSettlement.is_tsumo ?? view.hand_settlement!.reason === "tsumo");
+  /*
+   * 四川麻将胡牌后盖牌：自摸只把胡的那张牌露出来摆在桌上（染浅红），其余盖住；
+   * 荣和的胡张在牌河里标红，手牌全部盖住。
+   */
+  const sichuanTsumoWinner =
+    view.variant_kind === "sichuan" &&
+    settling &&
+    winnerSettlement != null &&
+    winnerSettlement.is_tsumo;
   /* 整把牌一起倒，不做逐张的涟漪，砸下去更整齐利落。 */
   const fallStartedAt = performance.now();
 
   displayTiles.forEach((tile, index) => {
     if (tile === null) return; // 手切空隙——不渲染
     const isDrawn =
-      (isSelf && tile.id === player.drawn_tile_id) ||
+      (isSelf &&
+        (tile.id === player.drawn_tile_id ||
+          (wonMidGame && wonIsTsumo && tile.id === winningTileId))) ||
       (!isSelf && opponentLayout?.drawnSlot === index);
     const drawnGap = isDrawn ? 0.2 : 0;
     const isWinningTile = index === winningIndex;
@@ -174,7 +235,13 @@ export function addHand(
     /* The winning tile leads the reveal, the rest of the hand follows. */
     const tileRevealed =
       revealAll || (settling && (revealed || (winningTileShown && isWinningTile)));
-    const tileFaceUp = tileRevealed && faceUp;
+    /* 四川自摸胡：只有胡的那张牌翻面，其余全盖。对局中胡牌同理（自摸翻胡张，
+       荣和不翻任何一张）。 */
+    const tileFaceUp = wonMidGame
+      ? isWinningTile
+      : tileRevealed && (faceUp || (sichuanTsumoWinner && isWinningTile));
+    /* 胡牌盖倒和结算摊牌一样，整手要躺下去。 */
+    const tileSettling = tileRevealed || wonMidGame;
     const meshCode = selfTilesKnown || tileFaceUp ? tile.code : "back";
     const backMesh = meshCode === "back";
     const group = makeTile(runtime, meshCode, length);
@@ -184,6 +251,14 @@ export function addHand(
         isJokerTile(tile.code, view.joker_code))
     ) {
       markTileAsDora(runtime, group);
+    }
+    /* 四川麻将：胡的那张牌整张染浅红，翻上来就能和其余牌分开。 */
+    if (
+      view.variant_kind === "sichuan" &&
+      isWinningTile &&
+      tileFaceUp
+    ) {
+      markTileAsWinning(group);
     }
     const worldLength = length * runtime.tileScale;
     const standingPosition = handPosition(
@@ -196,6 +271,16 @@ export function addHand(
       runtime.tileWidthRatio,
       runtime.tileScale,
     );
+    /*
+     * 四川自摸胡：胡张留在原位（不前移），其余盖牌也留在原位——只有真正摊牌的手
+     * 才整体前倾。对局中胡牌盖倒同理：荣和整手都盖，自摸只翻胡张。
+     */
+    const actualFaceUp =
+      sichuanTsumoWinner || (wonMidGame && wonIsTsumo)
+        ? isWinningTile
+        : wonMidGame
+          ? false
+          : faceUp;
     const settledPosition = handPosition(
       relative,
       tiles.length,
@@ -205,9 +290,8 @@ export function addHand(
       true,
       runtime.tileWidthRatio,
       runtime.tileScale,
-      /* 自摸那张牌也用同一个位移：砸下来之后要和其余的牌摊在同一条线上。 */
       settlementHandShift(
-        faceUp,
+        actualFaceUp,
         worldLength,
         worldLength * TILE_DEPTH_RATIO,
       ),
@@ -216,16 +300,18 @@ export function addHand(
     const handBody = tileBody(group);
     const handPivot = group.userData.tilePivot as THREE.Group;
     const standingTilt = standingHandTilt(backMesh);
-    const settlementTilt = settlementHandTilt(faceUp, backMesh);
+    const settlementTilt = settlementHandTilt(actualFaceUp, backMesh);
     handBody.rotation.x = 0;
     const alreadyFallen =
       revealAll ||
       runtime.revealedSettlementSeats.has(player.seat) ||
-      (isWinningTile && runtime.revealedWinningTileSeats.has(player.seat));
-    if (tileRevealed && alreadyFallen) {
+      (isWinningTile && runtime.revealedWinningTileSeats.has(player.seat)) ||
+      /* 对局中盖倒的那一手，重建时别再演一遍倒牌。 */
+      (wonMidGame && runtime.coveredWonSeats.has(player.seat));
+    if (tileSettling && alreadyFallen) {
       group.position.copy(settledPosition);
       handPivot.rotation.x = settlementTilt;
-    } else if (tileRevealed) {
+    } else if (tileSettling) {
       group.position.copy(standingPosition);
       handPivot.rotation.x = standingTilt;
       runtime.tilts.push({
@@ -235,13 +321,18 @@ export function addHand(
         endX: settlementTilt,
         startPosition: standingPosition.clone(),
         endPosition: settledPosition.clone(),
-        startedAt: fallStartedAt,
+        /* 四川自摸先把单独的胡张亮出来，再盖下其余手牌。 */
+        startedAt:
+          fallStartedAt +
+          (wonMidGame && wonIsTsumo && !isWinningTile
+            ? SETTLEMENT_REVEAL_MS
+            : 0),
         duration: thrown
           ? TSUMO_THROW_MS
-          : faceUp
+          : tileFaceUp
             ? SETTLEMENT_REVEAL_MS
             : SETTLEMENT_COVER_MS,
-        covering: !faceUp,
+        covering: !tileFaceUp,
         arcHeight: thrown ? TSUMO_THROW_ARC : undefined,
         /* 摊平和位移跟着下落走，贴到桌面那一下正好到位。 */
         ease: thrown ? tsumoThrowEase : undefined,
@@ -406,7 +497,11 @@ export function syncHiddenOpponentHand(
     !previousPlayer ||
     openingPhase !== "play" ||
     view.hand_settlement != null ||
-    runtime.revealAllHands
+    runtime.revealAllHands ||
+    /* 这一家刚胡了牌：整手要当场盖倒（自摸还要翻出胡张），原地挪牌背办不到，
+       交回 addHand 整排重建。 */
+    player.won === true ||
+    previousPlayer.won === true
   ) {
     return false;
   }
@@ -425,6 +520,19 @@ export function syncHiddenOpponentHand(
     sampleWidth == null ||
     Math.abs(sample.scale.x - runtime.tileScale) > 1e-6 ||
     Math.abs(sampleWidth / sampleLength - runtime.tileWidthRatio) > 1e-6
+  ) {
+    return false;
+  }
+  /*
+   * 换牌演出曾经会把主视角的正面牌坯塞进暗手池。即使视图签名没有变化，也不能
+   * 让下一次摸牌沿用那张牌；交回 addHand 重新创建标准牌背，保证对家摸牌动画
+   * 的终点永远是正确的牌面朝向。
+   */
+  if (
+    pooled.some(
+      (group) =>
+        group.userData.tileCode != null && group.userData.tileCode !== "back",
+    )
   ) {
     return false;
   }

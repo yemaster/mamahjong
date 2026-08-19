@@ -66,6 +66,7 @@ vi.mock("./wall", async (importOriginal) => ({
 }));
 
 import { renderTable } from "./scene";
+import { addDiscardTile } from "./discards";
 import { addSelfDraw } from "./selfMotion";
 
 function renderingRuntime(): TableRuntime {
@@ -89,6 +90,8 @@ function renderingRuntime(): TableRuntime {
     settlementHandKey: null,
     revealedSettlementSeats: new Set(),
     revealedWinningTileSeats: new Set(),
+    coveredWonSeats: new Set(),
+    forceHandRebuildSeats: new Set(),
     handCutGaps: new Map(),
     highlightIndexDirty: false,
     dimTsumogiri: false,
@@ -147,6 +150,40 @@ function appendDiscard(
 }
 
 describe("牌桌局部渲染边界", () => {
+  it("四川荣和亮牌时重建放铳牌图层并把胡张标红", () => {
+    const runtime = renderingRuntime();
+    const view = cloneView();
+    view.variant_kind = "sichuan";
+    appendDiscard(view, 0, 9901, false);
+    const winner = view.players.find((player) => player.seat === 1)!;
+    const beforeWin = structuredClone(view);
+    beforeWin.phase = { kind: "awaiting_turn_action", seat: 1 };
+    winner.won = true;
+    winner.drawn_tile_id = null;
+    winner.winning_tile = { id: 9901, code: "6m" };
+
+    renderTable(runtime, beforeWin, "play", [2, 5], [], [], null, []);
+    const ordinaryLayer = layer(runtime, "discard:0:9901");
+
+    vi.mocked(addDiscardTile).mockClear();
+    view.phase = { kind: "awaiting_win_animation", seat: 1 };
+    renderTable(runtime, view, "play", [2, 5], [], [], null, [1]);
+
+    expect(layer(runtime, "discard:0:9901")).not.toBe(ordinaryLayer);
+    expect(vi.mocked(addDiscardTile)).toHaveBeenCalledWith(
+      runtime,
+      view,
+      expect.objectContaining({ seat: 0 }),
+      expect.anything(),
+      "play",
+      expect.objectContaining({ tile: expect.objectContaining({ id: 9901 }) }),
+      expect.any(Number),
+      expect.any(Boolean),
+      expect.any(Number),
+      [{ payerSeat: 0, tileId: 9901 }],
+    );
+  });
+
   it("换一家出牌时保留上一家整条牌河，只替换当前牌河和箭头", () => {
     const runtime = renderingRuntime();
     const before = cloneView();

@@ -5,8 +5,25 @@ import { PointChangeCard, cardBeats } from "./pointChangeCard";
 
 type HandSettlement = NonNullable<MatchView["hand_settlement"]>;
 
+function settlementPoints(
+  settlement: HandSettlement,
+  seat: number,
+  fallback: number,
+  pointDeltas?: readonly number[],
+): { before: number; after: number } {
+  const after = settlement.points_after[seat];
+  const delta = pointDeltas?.[seat] ?? settlement.point_deltas[seat] ?? 0;
+  if (after == null) return { before: fallback, after: fallback };
+  return { before: after - delta, after };
+}
+
 interface PointChangeOverlayProps {
   view: MatchView;
+  /**
+   * 可选的本阶段增减分。四川流局只播放查花猪/查大叫产生的变化；此前胡牌与杠分
+   * 已经即时播放过，不能在终局再滚一次。
+   */
+  pointDeltas?: readonly number[];
   /** Shows the confirm button once the point animation has finished. */
   confirmReady?: boolean;
   confirmed?: boolean;
@@ -27,6 +44,7 @@ function PointChangeBoard({
   confirmed = false,
   secondsRemaining,
   onConfirm,
+  pointDeltas,
 }: PointChangeOverlayProps & { settlement: HandSettlement }) {
   /*
    * 点数是整段结算的落锤：分数砸回原尺寸的同时整块面板被撞得一颤。四家只震这一下,
@@ -34,22 +52,30 @@ function PointChangeBoard({
    */
   const slamAt = useMemo(() => {
     const beats = view.players.flatMap((player, index) => {
-      const before = settlement.points_before[player.seat] ?? player.points;
-      const after = settlement.points_after[player.seat] ?? player.points;
+      const { before, after } = settlementPoints(
+        settlement,
+        player.seat,
+        player.points,
+        pointDeltas,
+      );
       return after === before ? [] : [cardBeats(index).countAt];
     });
     return beats.length > 0 ? Math.min(...beats) : null;
-  }, [settlement, view.players]);
+  }, [pointDeltas, settlement, view.players]);
 
   /* 变化点数开始往分数位置飞的那一刻起播计分音效，播 6 次，间隔 200ms。 */
   const revealAt = useMemo(() => {
     const beats = view.players.flatMap((player, index) => {
-      const before = settlement.points_before[player.seat] ?? player.points;
-      const after = settlement.points_after[player.seat] ?? player.points;
+      const { before, after } = settlementPoints(
+        settlement,
+        player.seat,
+        player.points,
+        pointDeltas,
+      );
       return after === before ? [] : [cardBeats(index).riseAt];
     });
     return beats.length > 0 ? Math.min(...beats) : null;
-  }, [settlement, view.players]);
+  }, [pointDeltas, settlement, view.players]);
 
   const [slammed, setSlammed] = useState(false);
 
@@ -90,10 +116,12 @@ function PointChangeBoard({
         className={`match-point-change__cards${slammed ? " is-slammed" : ""}`}
       >
         {view.players.map((player, index) => {
-          const before =
-            settlement.points_before[player.seat] ?? player.points;
-          const after =
-            settlement.points_after[player.seat] ?? player.points;
+          const { before, after } = settlementPoints(
+            settlement,
+            player.seat,
+            player.points,
+            pointDeltas,
+          );
 
           return (
             <PointChangeCard

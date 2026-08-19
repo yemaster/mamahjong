@@ -12,7 +12,7 @@ import { handPosition, handQuaternion, screenRectAnchor } from "./geometry";
 import { sortHandForDisplay } from "./handView";
 import { DRAW_MOVE_MS, standUpOnArrival } from "./hands";
 import { isDoraTile } from "../tileAssets";
-import { isJokerTile } from "./handView";
+import { isJokerTile, isSichuanOpeningDealerDraw } from "./handView";
 import { makeTile, markTileAsDora, rootTile, tileBody } from "./tileMesh";
 import type { TableRuntime } from "./types";
 import type { WallLayout } from "./wallLayout";
@@ -50,6 +50,7 @@ export function addSelfDraw(
   if (runtime.instantDraw) return;
   const drawnTileId = player.drawn_tile_id;
   if (drawnTileId == null) return;
+  if (isSichuanOpeningDealerDraw(view, player)) return;
   /*
    * 换局那一帧不飞。新一局的视图先到，`openingPhase` 要等外面那个 effect 跑完才
    * 退回 `dice`，中间夹着整整一帧：手上已经是新一局的牌，阶段却还停在上一局的
