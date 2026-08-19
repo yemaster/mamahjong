@@ -9,6 +9,7 @@ use crate::clock::SeatClock;
 use crate::game::{ObserverMatch, RiichiRuntime, SubmitGameCommand};
 use crate::impact_game::{ImpactRuntime, ObserverImpactMatch};
 use crate::room::GameRuleSnapshot;
+use crate::sichuan_game::{ObserverSichuanMatch, SichuanRuntime};
 use crate::stream::MatchEventPage;
 use crate::{ApplicationError, ErrorCode, Room};
 
@@ -17,6 +18,7 @@ use crate::{ApplicationError, ErrorCode, Room};
 pub enum MatchProjection {
     Riichi(Box<ObserverMatch>),
     Impact(Box<ObserverImpactMatch>),
+    Sichuan(Box<ObserverSichuanMatch>),
 }
 
 impl MatchProjection {
@@ -25,6 +27,7 @@ impl MatchProjection {
         match self {
             Self::Riichi(_) => "riichi",
             Self::Impact(_) => "impact",
+            Self::Sichuan(_) => "sichuan",
         }
     }
 
@@ -33,15 +36,17 @@ impl MatchProjection {
         match self {
             Self::Riichi(view) => view.version(),
             Self::Impact(view) => view.version,
+            Self::Sichuan(view) => view.version,
         }
     }
 
-    /// 事件游标。冲击麻将不生成事件流，这个数恒为 0。
+    /// 事件游标。冲击麻将与四川麻将不生成事件流，这个数恒为 0。
     #[must_use]
     pub fn event_sequence(&self) -> u64 {
         match self {
             Self::Riichi(view) => view.event_sequence(),
             Self::Impact(view) => view.event_sequence,
+            Self::Sichuan(view) => view.event_sequence,
         }
     }
 
@@ -51,6 +56,7 @@ impl MatchProjection {
         match self {
             Self::Riichi(view) => view.result().is_some(),
             Self::Impact(view) => view.result.is_some(),
+            Self::Sichuan(view) => view.result.is_some(),
         }
     }
 
@@ -59,6 +65,7 @@ impl MatchProjection {
         match self {
             Self::Riichi(view) => view.terminated_by_exit_vote(),
             Self::Impact(view) => view.terminated_by_exit_vote,
+            Self::Sichuan(view) => view.terminated_by_exit_vote,
         }
     }
 
@@ -68,6 +75,7 @@ impl MatchProjection {
         match self {
             Self::Riichi(view) => view.clocks(),
             Self::Impact(view) => &view.clocks,
+            Self::Sichuan(view) => &view.clocks,
         }
     }
 
@@ -85,6 +93,11 @@ impl MatchProjection {
                 .iter()
                 .map(|player| (player.player.seat(), player.player.user_id()))
                 .collect(),
+            Self::Sichuan(view) => view
+                .players
+                .iter()
+                .map(|player| (player.player.seat(), player.player.user_id()))
+                .collect(),
         }
     }
 
@@ -92,7 +105,7 @@ impl MatchProjection {
     pub fn as_riichi(&self) -> Option<&ObserverMatch> {
         match self {
             Self::Riichi(view) => Some(view),
-            Self::Impact(_) => None,
+            Self::Impact(_) | Self::Sichuan(_) => None,
         }
     }
 
@@ -100,11 +113,19 @@ impl MatchProjection {
     pub fn as_impact(&self) -> Option<&ObserverImpactMatch> {
         match self {
             Self::Impact(view) => Some(view),
-            Self::Riichi(_) => None,
+            Self::Riichi(_) | Self::Sichuan(_) => None,
         }
     }
 
-    /// 只认立直投影的旧调用方走这条；冲击麻将会拿到一个明确的错误而不是被误读。
+    #[must_use]
+    pub fn as_sichuan(&self) -> Option<&ObserverSichuanMatch> {
+        match self {
+            Self::Sichuan(view) => Some(view),
+            Self::Riichi(_) | Self::Impact(_) => None,
+        }
+    }
+
+    /// 只认立直投影的旧调用方走这条；冲击麻将与四川麻将会拿到一个明确的错误而不是被误读。
     ///
     /// # Errors
     ///
@@ -112,7 +133,7 @@ impl MatchProjection {
     pub fn into_riichi(self) -> Result<ObserverMatch, ApplicationError> {
         match self {
             Self::Riichi(view) => Ok(*view),
-            Self::Impact(_) => Err(not_riichi()),
+            Self::Impact(_) | Self::Sichuan(_) => Err(not_riichi()),
         }
     }
 }
@@ -166,6 +187,9 @@ impl GameRuntime {
             }),
             GameRuleSnapshot::Impact(_) => Ok(Self {
                 inner: Box::new(ImpactRuntime::start(room, id, now_ms)?),
+            }),
+            GameRuleSnapshot::Sichuan(_) => Ok(Self {
+                inner: Box::new(SichuanRuntime::start(room, id, now_ms)?),
             }),
         }
     }
@@ -349,6 +373,78 @@ impl RuleRuntime for ImpactRuntime {
 
     fn projection(&self, actor: &UserId) -> Result<MatchProjection, ApplicationError> {
         Ok(MatchProjection::Impact(Box::new(self.view(actor)?)))
+    }
+
+    fn events_after(
+        &self,
+        actor: &UserId,
+        _after_sequence: u64,
+    ) -> Result<MatchEventPage, ApplicationError> {
+        self.seat_for(actor)?;
+        Ok(MatchEventPage::new(
+            self.version,
+            self.event_sequence,
+            Box::new([]),
+        ))
+    }
+
+    fn execute(
+        &mut self,
+        actor: &UserId,
+        command: SubmitGameCommand,
+        now_ms: u64,
+    ) -> Result<(), ApplicationError> {
+        self.execute(actor, command, now_ms)
+    }
+
+    fn is_finished(&self) -> bool {
+        self.is_finished()
+    }
+
+    fn has_pending_settlement(&self) -> bool {
+        self.has_pending_settlement()
+    }
+
+    fn terminate_if_assets_stalled(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.terminate_if_assets_stalled(now_ms)
+    }
+
+    fn advance_settlement_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.advance_settlement_if_due(now_ms)
+    }
+
+    fn open_settlement_confirm_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.open_settlement_confirm_if_due(now_ms)
+    }
+
+    fn release_opening_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
+        self.release_opening_if_due(now_ms)
+    }
+
+    fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError> {
+        self.expire(now_ms)
+    }
+
+    fn set_dev_hand(&mut self, actor: &UserId, codes: &[String]) -> Result<(), ApplicationError> {
+        self.set_dev_hand(actor, codes)
+    }
+}
+
+impl RuleRuntime for SichuanRuntime {
+    fn version(&self) -> u64 {
+        self.version
+    }
+
+    fn event_sequence(&self) -> u64 {
+        self.event_sequence
+    }
+
+    fn any_player(&self) -> Option<UserId> {
+        self.players.first().map(|player| player.user_id().clone())
+    }
+
+    fn projection(&self, actor: &UserId) -> Result<MatchProjection, ApplicationError> {
+        Ok(MatchProjection::Sichuan(Box::new(self.view(actor)?)))
     }
 
     fn events_after(

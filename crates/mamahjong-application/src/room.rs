@@ -1,6 +1,7 @@
 use mahjong_core::{MatchId, RoomId, UserId};
 use mahjong_impact::ImpactRuleSnapshot;
 use mahjong_riichi::{RiichiRuleSnapshot, RiichiVariant};
+use mahjong_sichuan::SichuanRuleSnapshot;
 
 use crate::{ApplicationError, ErrorCode};
 
@@ -21,6 +22,7 @@ pub enum RoomLifecycle {
 pub enum GameRuleSnapshot {
     Riichi(RiichiRuleSnapshot),
     Impact(ImpactRuleSnapshot),
+    Sichuan(SichuanRuleSnapshot),
 }
 
 impl GameRuleSnapshot {
@@ -29,6 +31,7 @@ impl GameRuleSnapshot {
         match self {
             Self::Riichi(snapshot) => snapshot.rules().variant.seat_count().value(),
             Self::Impact(_) => mahjong_impact::SEAT_COUNT,
+            Self::Sichuan(_) => mahjong_sichuan::SEAT_COUNT,
         }
     }
 
@@ -36,7 +39,7 @@ impl GameRuleSnapshot {
     pub const fn riichi_variant(&self) -> Option<RiichiVariant> {
         match self {
             Self::Riichi(snapshot) => Some(snapshot.rules().variant),
-            Self::Impact(_) => None,
+            Self::Impact(_) | Self::Sichuan(_) => None,
         }
     }
 
@@ -44,7 +47,7 @@ impl GameRuleSnapshot {
     pub const fn as_riichi(&self) -> Option<&RiichiRuleSnapshot> {
         match self {
             Self::Riichi(snapshot) => Some(snapshot),
-            Self::Impact(_) => None,
+            Self::Impact(_) | Self::Sichuan(_) => None,
         }
     }
 
@@ -52,7 +55,15 @@ impl GameRuleSnapshot {
     pub const fn as_impact(&self) -> Option<&ImpactRuleSnapshot> {
         match self {
             Self::Impact(snapshot) => Some(snapshot),
-            Self::Riichi(_) => None,
+            Self::Riichi(_) | Self::Sichuan(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_sichuan(&self) -> Option<&SichuanRuleSnapshot> {
+        match self {
+            Self::Sichuan(snapshot) => Some(snapshot),
+            Self::Riichi(_) | Self::Impact(_) => None,
         }
     }
 
@@ -62,6 +73,7 @@ impl GameRuleSnapshot {
         match self {
             Self::Riichi(_) => "riichi",
             Self::Impact(_) => "impact",
+            Self::Sichuan(_) => "sichuan",
         }
     }
 }

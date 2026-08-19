@@ -128,6 +128,125 @@ impl SettlementFlow {
     }
 }
 
+/// 换三张阶段：每家选 3 张同花色牌，四家都提交后引擎立即交换，这里再等各家
+/// 播完交换动画才放行到定缺。动画门要独立于「提交」：引擎在第 4 家提交时就当场
+/// 换好了，视图得等动画播完才把新牌露给玩家。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ExchangeFlow {
+    submitted: Box<[bool]>,
+    submitted_tile_ids: Box<[Option<[u16; 3]>]>,
+    animation_played: Box<[bool]>,
+    animation_started_at_ms: Option<u64>,
+}
+
+impl ExchangeFlow {
+    #[must_use]
+    pub(crate) fn new(seat_count: usize) -> Self {
+        Self {
+            submitted: vec![false; seat_count].into_boxed_slice(),
+            submitted_tile_ids: vec![None; seat_count].into_boxed_slice(),
+            animation_played: vec![false; seat_count].into_boxed_slice(),
+            animation_started_at_ms: None,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn submitted_flags(&self) -> &[bool] {
+        &self.submitted
+    }
+
+    #[must_use]
+    pub(crate) fn animation_played_flags(&self) -> &[bool] {
+        &self.animation_played
+    }
+
+    pub(crate) fn report_submitted(
+        &mut self,
+        seat: usize,
+        tile_ids: [u16; 3],
+        now_ms: u64,
+    ) -> ReadyReport {
+        if self.submitted[seat] {
+            return ReadyReport::AlreadyReported;
+        }
+        self.submitted[seat] = true;
+        self.submitted_tile_ids[seat] = Some(tile_ids);
+        if self.submitted.iter().all(|submitted| *submitted) {
+            self.animation_started_at_ms.get_or_insert(now_ms);
+            ReadyReport::EveryoneReady
+        } else {
+            ReadyReport::Reported
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn submitted_tile_ids(&self, seat: usize) -> Option<[u16; 3]> {
+        self.submitted_tile_ids[seat]
+    }
+
+    pub(crate) fn report_animation_played(&mut self, seat: usize) -> ReadyReport {
+        if self.animation_played[seat] {
+            return ReadyReport::AlreadyReported;
+        }
+        self.animation_played[seat] = true;
+        if self.animation_played.iter().all(|played| *played) {
+            ReadyReport::EveryoneReady
+        } else {
+            ReadyReport::Reported
+        }
+    }
+
+    /// 换三张动画超时兜底：四家都提交后，等不到动画回执就强制放行。
+    #[must_use]
+    pub(crate) fn release_due(&self, now_ms: u64, fallback_ms: u64) -> bool {
+        self.animation_started_at_ms
+            .is_some_and(|started_ms| now_ms.saturating_sub(started_ms) >= fallback_ms)
+    }
+
+    /// 兜底到期还没收齐动画回执，就把动画门整体放行并返回 `true`。
+    pub(crate) fn release_if_due(&mut self, now_ms: u64, fallback_ms: u64) -> bool {
+        if self.animation_played.iter().all(|played| *played)
+            || !self.release_due(now_ms, fallback_ms)
+        {
+            return false;
+        }
+        self.animation_played.fill(true);
+        true
+    }
+}
+
+/// 定缺阶段：每家选一门要缺的花色，四家都提交后引擎立即开打。没有动画门。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DingQueFlow {
+    submitted: Box<[bool]>,
+}
+
+impl DingQueFlow {
+    #[must_use]
+    pub(crate) fn new(seat_count: usize) -> Self {
+        Self {
+            submitted: vec![false; seat_count].into_boxed_slice(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn submitted_flags(&self) -> &[bool] {
+        &self.submitted
+    }
+
+    pub(crate) fn report_submitted(&mut self, seat: usize) -> ReadyReport {
+        if self.submitted[seat] {
+            return ReadyReport::AlreadyReported;
+        }
+        self.submitted[seat] = true;
+        if self.submitted.iter().all(|submitted| *submitted) {
+            ReadyReport::EveryoneReady
+        } else {
+            ReadyReport::Reported
+        }
+    }
+}
+
 impl MatchOpening {
     #[must_use]
     pub(crate) fn new(seat_count: usize, now_ms: u64) -> Self {

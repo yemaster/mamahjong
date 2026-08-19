@@ -16,6 +16,7 @@ mod record;
 mod room;
 mod runtime;
 mod service;
+mod sichuan_game;
 mod store;
 mod stream;
 mod tablecloth;
@@ -44,7 +45,8 @@ pub use matchmaking::{MatchmakingStatus, MatchmakingTicket};
 pub use music::{MusicScene, MusicTrack, SaveMusicTrack, built_in_music_tracks};
 pub use naming::{
     end_reason_name, impact_all_in_name, impact_end_reason_name, impact_rule_display_name,
-    impact_yaku_name, limit_name, rule_display_name, wind_name, yaku_name,
+    impact_yaku_name, limit_name, rule_display_name, sichuan_end_reason_name,
+    sichuan_rule_display_name, sichuan_yaku_name, wind_name, yaku_name,
 };
 pub use presentation::{
     ACTION_SETTLE_PADDING_MS, ANIMATION_REPORT_GRACE_MS, CALL_BANNER_MS, DISCARD_FLIGHT_MS,
@@ -59,6 +61,12 @@ pub use runtime::MatchProjection;
 pub use service::{
     Application, CreateRoom, RegisterUser, RoomRuleSelection, UpdateMusic, UpdatePresentation,
     UpdateProfile, UpdateRoom, UpdateTablecloth,
+};
+pub use sichuan_game::{
+    ObserverSichuanExitVote, ObserverSichuanKanEvent, ObserverSichuanMatch, ObserverSichuanPlayer,
+    ObserverSichuanQue, ObserverSichuanResult, ObserverSichuanSettlement, ObserverSichuanWinEvent,
+    ObserverSichuanWinner, ObserverSichuanYaku, SichuanDiscardView, SichuanMeldView, SichuanPlayer,
+    SichuanReactionOptionsView, SichuanTileView, SichuanTurnActionsView,
 };
 pub use stream::{MATCH_EVENT_PAGE_LIMIT, MatchEvent, MatchEventPage};
 pub use tablecloth::{SaveTablecloth, Tablecloth, built_in_tablecloths};

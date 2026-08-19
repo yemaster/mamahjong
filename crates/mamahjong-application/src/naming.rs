@@ -12,6 +12,10 @@ use mahjong_impact::{
     Yaku as ImpactYaku,
 };
 use mahjong_riichi::{EndReason, Limit, RiichiPreset, RiichiRuleSnapshot, RiichiRules, Wind, Yaku};
+use mahjong_sichuan::{
+    EndReason as SichuanEndReason, SichuanPreset, SichuanRuleSnapshot, SichuanRules,
+    Yaku as SichuanYaku,
+};
 
 /// 场风：前端 `Wind` union 的取值。
 #[must_use]
@@ -200,6 +204,49 @@ pub fn impact_rule_display_name(snapshot: &ImpactRuleSnapshot) -> &'static str {
         Some(preset) if preset.rules() == *rules => preset.short_name(),
         Some(_) => "自定义规则",
         None if ImpactRules::standard() == *rules || ImpactRules::bright() == *rules => "标准规则",
+        None => "自定义规则",
+    }
+}
+
+/// 四川麻将役种的中文名。
+#[must_use]
+pub const fn sichuan_yaku_name(value: SichuanYaku) -> &'static str {
+    match value {
+        SichuanYaku::PingHu => "平胡",
+        SichuanYaku::DuiDuiHu => "对对胡",
+        SichuanYaku::QingYiSe => "清一色",
+        SichuanYaku::QiDui => "七对",
+        SichuanYaku::QingDui => "清对",
+        SichuanYaku::LongQiDui => "龙七对",
+        SichuanYaku::QingQiDui => "清七对",
+        SichuanYaku::TianHuDiHu => "天地胡",
+        SichuanYaku::ZiMo => "自摸",
+        SichuanYaku::Gen => "根",
+        SichuanYaku::GangShangHua => "杠上花",
+        SichuanYaku::GangShangPao => "杠上炮",
+        SichuanYaku::QiangGangHu => "抢杠胡",
+        SichuanYaku::JinGouDiao => "金钩钓",
+        SichuanYaku::HaiDi => "海底",
+    }
+}
+
+/// 四川麻将一局是怎么结束的：前端 union 的取值。
+#[must_use]
+pub const fn sichuan_end_reason_name(value: SichuanEndReason) -> &'static str {
+    value.as_str()
+}
+
+/// 四川麻将的规则名。默认血战到底叫标准规则，手调后才叫自定义。
+#[must_use]
+pub fn sichuan_rule_display_name(snapshot: &SichuanRuleSnapshot) -> &'static str {
+    let rules = snapshot.rules();
+    match snapshot
+        .preset()
+        .and_then(|preset| SichuanPreset::find(preset.id().as_str()))
+    {
+        Some(preset) if preset.rules() == *rules => preset.short_name(),
+        Some(_) => "自定义规则",
+        None if SichuanRules::standard() == *rules => "标准规则",
         None => "自定义规则",
     }
 }

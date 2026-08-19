@@ -122,7 +122,9 @@ pub const fn settlement_fallback_ms(yaku_count: usize) -> u64 {
 #[must_use]
 pub fn animation_grace_ms(command: &GameCommand) -> u64 {
     match command {
-        GameCommand::Discard { .. } | GameCommand::ImpactDiscard { .. } => discard_animation_ms(),
+        GameCommand::Discard { .. }
+        | GameCommand::ImpactDiscard { .. }
+        | GameCommand::SichuanDiscard { .. } => discard_animation_ms(),
         GameCommand::RiichiDiscard { .. } => riichi_discard_animation_ms(),
         GameCommand::Chi { .. }
         | GameCommand::Pon { .. }
@@ -133,10 +135,13 @@ pub fn animation_grace_ms(command: &GameCommand) -> u64 {
         | GameCommand::ImpactPon
         | GameCommand::ImpactOpenKan
         | GameCommand::ImpactConcealedKan { .. }
-        | GameCommand::ImpactIndicatorConcealedKan => meld_call_animation_ms(),
-        GameCommand::AddedKan { .. } | GameCommand::ImpactAddedKan { .. } => {
-            added_kan_animation_ms()
-        }
+        | GameCommand::ImpactIndicatorConcealedKan
+        | GameCommand::SichuanPon
+        | GameCommand::SichuanOpenKan
+        | GameCommand::SichuanConcealedKan { .. } => meld_call_animation_ms(),
+        GameCommand::AddedKan { .. }
+        | GameCommand::ImpactAddedKan { .. }
+        | GameCommand::SichuanAddedKan { .. } => added_kan_animation_ms(),
         GameCommand::Pass
         | GameCommand::Tsumo
         | GameCommand::Ron
@@ -145,6 +150,14 @@ pub fn animation_grace_ms(command: &GameCommand) -> u64 {
         | GameCommand::ImpactRon
         | GameCommand::ImpactPass
         | GameCommand::ImpactKanAnimationPlayed { .. }
+        | GameCommand::SichuanTsumo
+        | GameCommand::SichuanRon
+        | GameCommand::SichuanPass
+        | GameCommand::SichuanExchange { .. }
+        | GameCommand::SichuanDingQue { .. }
+        | GameCommand::SichuanExchangeAnimationPlayed
+        | GameCommand::SichuanWinAnimationPlayed { .. }
+        | GameCommand::SichuanKanAnimationPlayed { .. }
         | GameCommand::MatchAssetsReady
         | GameCommand::ReadyForHand { .. }
         | GameCommand::SettlementPlayed { .. }

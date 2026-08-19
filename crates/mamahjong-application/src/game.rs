@@ -71,6 +71,40 @@ pub enum GameCommand {
     ImpactKanAnimationPlayed {
         kan_id: u64,
     },
+    /// 四川麻将打牌。牌型判定全在引擎里，指令只带一张牌。
+    SichuanDiscard {
+        tile_id: u16,
+    },
+    SichuanTsumo,
+    SichuanRon,
+    SichuanPon,
+    SichuanOpenKan,
+    /// 四川麻将暗杠，带牌种（`1m` 这样的牌码），四张具体是哪四张由引擎决定。
+    SichuanConcealedKan {
+        tile_code: String,
+    },
+    SichuanAddedKan {
+        meld_id: u16,
+    },
+    SichuanPass,
+    /// 换三张：挑三张同花色牌交给配对家。
+    SichuanExchange {
+        tile_ids: [u16; 3],
+    },
+    /// 定缺一门花色（`man` / `pin` / `sou`）。
+    SichuanDingQue {
+        suit: String,
+    },
+    /// 前端报告换三张动画已播完；四家都报告后服务端才放行到定缺。
+    SichuanExchangeAnimationPlayed,
+    /// 前端报告四川胡牌点数/盖牌动画已播完；四家都报告后才继续血战或结算。
+    SichuanWinAnimationPlayed {
+        win_id: u64,
+    },
+    /// 前端报告杠点动画已播完；四家都报告后服务端才摸岭上牌。
+    SichuanKanAnimationPlayed {
+        kan_id: u64,
+    },
     MatchAssetsReady,
     ReadyForHand {
         hand_index: u32,
@@ -1323,7 +1357,20 @@ impl RiichiRuntime {
             | GameCommand::ImpactAddedKan { .. }
             | GameCommand::ImpactIndicatorConcealedKan
             | GameCommand::ImpactPass
-            | GameCommand::ImpactKanAnimationPlayed { .. } => {
+            | GameCommand::ImpactKanAnimationPlayed { .. }
+            | GameCommand::SichuanDiscard { .. }
+            | GameCommand::SichuanTsumo
+            | GameCommand::SichuanRon
+            | GameCommand::SichuanPon
+            | GameCommand::SichuanOpenKan
+            | GameCommand::SichuanConcealedKan { .. }
+            | GameCommand::SichuanAddedKan { .. }
+            | GameCommand::SichuanPass
+            | GameCommand::SichuanExchange { .. }
+            | GameCommand::SichuanDingQue { .. }
+            | GameCommand::SichuanExchangeAnimationPlayed
+            | GameCommand::SichuanWinAnimationPlayed { .. }
+            | GameCommand::SichuanKanAnimationPlayed { .. } => {
                 return Err(invalid_command(
                     "this command is not part of riichi mahjong",
                 ));

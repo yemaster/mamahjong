@@ -1018,7 +1018,11 @@ impl ImpactRuntime {
         let Some(pending) = self.pending_kan_animation.as_ref() else {
             return Ok(false);
         };
-        if now_ms < pending.started_at_ms.saturating_add(KAN_ANIMATION_FALLBACK_MS) {
+        if now_ms
+            < pending
+                .started_at_ms
+                .saturating_add(KAN_ANIMATION_FALLBACK_MS)
+        {
             return Ok(false);
         }
         self.advance_kan_animation()?;

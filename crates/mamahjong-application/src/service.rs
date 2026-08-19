@@ -5,6 +5,7 @@ use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt
 use mahjong_core::{MatchId, RoomId, TicketId, UserId};
 use mahjong_impact::ImpactRoomRuleRequest;
 use mahjong_riichi::{RiichiRuleSnapshot, RiichiRules, RiichiVariant, RoomRuleRequest};
+use mahjong_sichuan::SichuanRoomRuleRequest;
 
 use crate::identity_store::PostgresIdentityStore;
 use crate::runtime::{GameRuntime, MatchProjection, not_riichi};
@@ -60,6 +61,8 @@ pub enum RoomRuleSelection {
     },
     /// 冲击麻将固定四人，没有变体可选。
     Impact { request: ImpactRoomRuleRequest },
+    /// 四川麻将（血战到底）固定四人，没有变体可选。
+    Sichuan { request: SichuanRoomRuleRequest },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1416,6 +1419,12 @@ fn resolve_rules(selection: RoomRuleSelection) -> Result<GameRuleSnapshot, Appli
             .map_err(|error| {
                 ApplicationError::new(ErrorCode::InvalidRuleConfiguration, error.to_string())
             }),
+        RoomRuleSelection::Sichuan { request } => request
+            .resolve_snapshot()
+            .map(GameRuleSnapshot::Sichuan)
+            .map_err(|error| {
+                ApplicationError::new(ErrorCode::InvalidRuleConfiguration, error.to_string())
+            }),
     }
 }
 
@@ -2721,7 +2730,10 @@ mod tests {
             .expect("dealer view");
         let version = dealer_view.version();
         assert_eq!(
-            dealer_view.as_impact().expect("impact").completed_rinshan_draws,
+            dealer_view
+                .as_impact()
+                .expect("impact")
+                .completed_rinshan_draws,
             0,
             "杠之前还没有岭上补摸"
         );
@@ -2871,11 +2883,7 @@ mod tests {
         let expiries = application
             .expire_clocks(6_000)
             .expect("sweep past the kan animation fallback");
-        assert_eq!(
-            expiries.len(),
-            1,
-            "兜底超时也要广播一次，通知全体摸岭上牌"
-        );
+        assert_eq!(expiries.len(), 1, "兜底超时也要广播一次，通知全体摸岭上牌");
 
         let after_timeout = application
             .match_projection(players[0].id(), &match_id)
@@ -3351,11 +3359,9 @@ mod tests {
             .iter()
             .find(|player| player.id() == dealer_user_id)
             .expect("dealer seat belongs to a registered player");
-        let responder_seat = mahjong_riichi::Seat::new(
-            mahjong_riichi::RiichiVariant::Sanma,
-            (seat.index() + 1) % 3,
-        )
-        .expect("the next seat exists");
+        let responder_seat =
+            mahjong_riichi::Seat::new(mahjong_riichi::RiichiVariant::Sanma, (seat.index() + 1) % 3)
+                .expect("the next seat exists");
         let responder_user_id = view.players()[usize::from(responder_seat.index())]
             .player()
             .user_id();
