@@ -14,6 +14,7 @@ export type StreamEvent =
   | { kind: "events_arrived" }
   | { kind: "clock"; seats: WsSeatCountdown[]; version: number }
   | { kind: "presence"; seats: WsSeatPresence[] }
+  | { kind: "latency"; milliseconds: number }
   | {
       kind: "chat";
       seat: number;
@@ -54,6 +55,8 @@ export class MatchStream {
   private readonly stream: string;
   private readonly callbacks: Callbacks;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private latencyTimer: ReturnType<typeof setInterval> | null = null;
+  private pingSentAt: number | null = null;
   private backoff = 1;
 
   constructor(
@@ -81,6 +84,7 @@ export class MatchStream {
 
   disconnect(): void {
     this.clearReconnect();
+    this.stopLatencyProbe();
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -185,6 +189,7 @@ export class MatchStream {
             case "welcome": {
               this.backoff = 1;
               this.setState("connected");
+              this.startLatencyProbe();
               this.callbacks.onEvent({
                 kind: "reconnected",
                 afterSeq: this.afterSeq,
@@ -286,6 +291,15 @@ export class MatchStream {
               break;
             }
             case "pong":
+              if (this.pingSentAt != null) {
+                const milliseconds = Math.max(
+                  0,
+                  Math.round(performance.now() - this.pingSentAt),
+                );
+                this.pingSentAt = null;
+                this.callbacks.onEvent({ kind: "latency", milliseconds });
+              }
+              break;
             case "command_result":
               break;
           }
@@ -296,6 +310,7 @@ export class MatchStream {
 
       ws.onclose = () => {
         this.ws = null;
+        this.stopLatencyProbe();
         if (this.state !== "disconnected") {
           this.setState("disconnected");
           this.callbacks.onEvent({ kind: "disconnected" });
@@ -334,6 +349,32 @@ export class MatchStream {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+  }
+
+  private startLatencyProbe(): void {
+    this.stopLatencyProbe();
+    this.sendLatencyPing();
+    this.latencyTimer = setInterval(() => this.sendLatencyPing(), 5000);
+  }
+
+  private sendLatencyPing(): void {
+    if (
+      this.pingSentAt != null ||
+      !this.ws ||
+      this.ws.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+    this.pingSentAt = performance.now();
+    this.ws.send(JSON.stringify({ kind: "ping" }));
+  }
+
+  private stopLatencyProbe(): void {
+    if (this.latencyTimer !== null) {
+      clearInterval(this.latencyTimer);
+      this.latencyTimer = null;
+    }
+    this.pingSentAt = null;
   }
 
   private setState(state: WsConnState): void {

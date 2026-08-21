@@ -1647,6 +1647,61 @@ impl RiichiRuntime {
         Err(internal_error("seat has no legal discard"))
     }
 
+    /// 离线托管先补齐所有客户端演出回执；真正的牌局决策由调用方在状态稳定一秒后放行。
+    pub(crate) fn automate_player(
+        &mut self,
+        actor: &UserId,
+        now_ms: u64,
+        allow_action: bool,
+    ) -> Result<bool, ApplicationError> {
+        let seat = self.seat_for(actor)?;
+        let index = usize::from(seat.index());
+        let command = if !self.opening.assets_ready_flags()[index] {
+            Some(GameCommand::MatchAssetsReady)
+        } else if self.assets_loading() {
+            None
+        } else if self
+            .exit_vote
+            .as_ref()
+            .is_some_and(|vote| vote.votes[index].is_none())
+        {
+            Some(GameCommand::VoteExit { agree: true })
+        } else if !self.opening.opening_ready_flags()[index] {
+            Some(GameCommand::ReadyForHand {
+                hand_index: self.hand_index,
+            })
+        } else if let Some(pending) = self.pending_settlement.as_ref() {
+            if !pending.flow.played_flags()[index] {
+                Some(GameCommand::SettlementPlayed {
+                    hand_index: self.hand_index,
+                })
+            } else if pending.flow.confirmation_open() && !pending.flow.confirmed_flags()[index] {
+                Some(GameCommand::ConfirmSettlement {
+                    hand_index: self.hand_index,
+                })
+            } else {
+                None
+            }
+        } else if !self.is_finished() && self.is_waiting(seat)? {
+            let automatic = self.timeout_command(seat)?;
+            (allow_action || !matches!(automatic, GameCommand::Discard { .. })).then_some(automatic)
+        } else {
+            None
+        };
+        let Some(command) = command else {
+            return Ok(false);
+        };
+        self.execute(
+            actor,
+            SubmitGameCommand {
+                expected_version: self.version,
+                command,
+            },
+            now_ms,
+        )?;
+        Ok(true)
+    }
+
     /// Advances at most one expired seat; returns the seat it acted for.
     pub(crate) fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError> {
         if let Some(actor) = self.advance_exit_vote_if_due(now_ms)? {

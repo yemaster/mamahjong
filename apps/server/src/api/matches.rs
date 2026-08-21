@@ -369,13 +369,17 @@ pub(crate) async fn announce_advance(
                 ApiError::internal()
             })?;
     }
+    let stream = super::realtime::match_stream(match_id);
     state.realtime().publish(
-        &super::realtime::match_stream(match_id),
+        &stream,
         super::realtime::StreamNotice::Changed {
             version,
             latest_sequence,
         },
     );
+    if finished {
+        state.realtime().retire_stream(&stream);
+    }
     Ok(())
 }
 

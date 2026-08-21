@@ -58,7 +58,7 @@ pub(crate) fn match_stream(match_id: &MatchId) -> String {
     format!("{MATCH_STREAM_PREFIX}{match_id}")
 }
 
-fn parse_match_stream(stream: &str) -> Option<MatchId> {
+pub(crate) fn parse_match_stream(stream: &str) -> Option<MatchId> {
     MatchId::parse(stream.strip_prefix(MATCH_STREAM_PREFIX)?.to_owned()).ok()
 }
 

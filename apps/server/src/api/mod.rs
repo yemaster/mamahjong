@@ -17,7 +17,7 @@ use axum::Router;
 use crate::AppState;
 
 pub(crate) use matches::announce_advance;
-pub(crate) use realtime::{RealtimeHub, WsTickets};
+pub(crate) use realtime::{RealtimeHub, WsTickets, parse_match_stream};
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()

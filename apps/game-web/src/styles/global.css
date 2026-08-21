@@ -3456,6 +3456,10 @@ a { color: var(--pink-dark); text-decoration: none; }
   box-shadow: 0 0 0 2px rgba(255, 225, 138, 0.3);
 }
 
+.match-player-panel.is-offline .match-player-panel__avatar-wrap img {
+  filter: grayscale(1) brightness(0.46);
+}
+
 /* Riichi indicator — only on avatar */
 .match-player-panel.is-riichi .match-player-panel__avatar-wrap img {
   outline: 2px solid rgba(210, 50, 40, 0.8);
@@ -3501,6 +3505,50 @@ a { color: var(--pink-dark); text-decoration: none; }
   line-height: 1;
   letter-spacing: 0.06em;
   white-space: nowrap;
+}
+
+.match-player-panel__offline-badge {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  z-index: 4;
+  display: grid;
+  min-width: 34px;
+  height: 20px;
+  padding: 0 6px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 10px;
+  background: rgba(35, 39, 46, 0.94);
+  color: #e5e7eb;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.match-latency {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  font-family: var(--font-game-num);
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+.match-latency--good {
+  color: #5ee68a;
+}
+
+.match-latency--fair {
+  color: #ffd45c;
+}
+
+.match-latency--poor {
+  color: #ff6666;
 }
 
 /* 四川麻将定缺徽章：头像右下角的大字，只写一个「缺X」。 */

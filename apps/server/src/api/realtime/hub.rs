@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use mahjong_core::UserId;
 use tokio::sync::{Notify, broadcast};
@@ -28,6 +29,9 @@ type Streams = HashMap<String, broadcast::Sender<StreamNotice>>;
 type Presence = HashMap<String, HashMap<String, UserId>>;
 /// Connection identifier → (user_id, close signal).
 type UserConnections = HashMap<String, (UserId, Arc<Notify>)>;
+type OfflineSince = HashMap<(String, UserId), Instant>;
+type StreamChangedAt = HashMap<String, Instant>;
+type RetiredStreams = HashSet<String>;
 
 /// Fan-out of per-stream change signals to the connections watching them.
 #[derive(Clone)]
@@ -35,6 +39,9 @@ pub(crate) struct RealtimeHub {
     streams: Arc<Mutex<Streams>>,
     presence: Arc<Mutex<Presence>>,
     user_connections: Arc<Mutex<UserConnections>>,
+    offline_since: Arc<Mutex<OfflineSince>>,
+    stream_changed_at: Arc<Mutex<StreamChangedAt>>,
+    retired_streams: Arc<Mutex<RetiredStreams>>,
 }
 
 impl RealtimeHub {
@@ -44,6 +51,9 @@ impl RealtimeHub {
             streams: Arc::new(Mutex::new(HashMap::new())),
             presence: Arc::new(Mutex::new(HashMap::new())),
             user_connections: Arc::new(Mutex::new(HashMap::new())),
+            offline_since: Arc::new(Mutex::new(HashMap::new())),
+            stream_changed_at: Arc::new(Mutex::new(HashMap::new())),
+            retired_streams: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -59,6 +69,10 @@ impl RealtimeHub {
 
     /// Drops the stream once its last connection is gone.
     pub(crate) fn publish(&self, stream: &str, notice: StreamNotice) {
+        if matches!(notice, StreamNotice::Changed { version, .. } if version != 0) {
+            self.stream_changed_at_lock()
+                .insert(stream.to_owned(), Instant::now());
+        }
         let mut streams = self.lock();
         let Some(sender) = streams.get(stream) else {
             return;
@@ -89,6 +103,8 @@ impl RealtimeHub {
         connection_id: &str,
         user_id: &UserId,
     ) -> PresenceGuard {
+        self.offline_since_lock()
+            .remove(&(stream.to_owned(), user_id.clone()));
         self.presence_lock()
             .entry(stream.to_owned())
             .or_default()
@@ -107,6 +123,42 @@ impl RealtimeHub {
             .get(stream)
             .map(|connections| connections.values().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// 曾经订阅过对局、当前却没有任何连接的玩家。
+    #[must_use]
+    pub(crate) fn offline_users(&self) -> Vec<(String, UserId)> {
+        self.offline_since_lock().keys().cloned().collect()
+    }
+
+    /// 重新核对玩家仍然离线，并判断当前牌局状态是否已经稳定了指定时长。
+    #[must_use]
+    pub(crate) fn offline_action_ready(
+        &self,
+        stream: &str,
+        user_id: &UserId,
+        delay: Duration,
+    ) -> Option<bool> {
+        let offline_at = self
+            .offline_since_lock()
+            .get(&(stream.to_owned(), user_id.clone()))
+            .copied()?;
+        let changed_at = self
+            .stream_changed_at_lock()
+            .get(stream)
+            .copied()
+            .unwrap_or(offline_at);
+        Some(offline_at.max(changed_at).elapsed() >= delay)
+    }
+
+    /// 对局结束后停止追踪它的离线托管；仍在线的连接可以继续收完最后一帧。
+    pub(crate) fn retire_stream(&self, stream: &str) {
+        self.offline_since_lock()
+            .retain(|(held_stream, _), _| held_stream != stream);
+        self.stream_changed_at_lock().remove(stream);
+        if self.presence_lock().contains_key(stream) {
+            self.retired_streams_lock().insert(stream.to_owned());
+        }
     }
 
     /// Registers a connection so it can be force-closed when the user's
@@ -156,9 +208,23 @@ impl RealtimeHub {
         let Some(connections) = presence.get_mut(stream) else {
             return;
         };
-        connections.remove(connection_id);
-        if connections.is_empty() {
+        let Some(user_id) = connections.remove(connection_id) else {
+            return;
+        };
+        let user_still_online = connections.values().any(|held| held == &user_id);
+        let stream_empty = connections.is_empty();
+        if stream_empty {
             presence.remove(stream);
+        }
+        drop(presence);
+        let retired = self.retired_streams_lock().contains(stream);
+        if !user_still_online && !retired {
+            self.offline_since_lock()
+                .entry((stream.to_owned(), user_id))
+                .or_insert_with(Instant::now);
+        }
+        if stream_empty && retired {
+            self.retired_streams_lock().remove(stream);
         }
     }
 
@@ -169,6 +235,24 @@ impl RealtimeHub {
 
     fn presence_lock(&self) -> MutexGuard<'_, Presence> {
         self.presence.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn offline_since_lock(&self) -> MutexGuard<'_, OfflineSince> {
+        self.offline_since
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn stream_changed_at_lock(&self) -> MutexGuard<'_, StreamChangedAt> {
+        self.stream_changed_at
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn retired_streams_lock(&self) -> MutexGuard<'_, RetiredStreams> {
+        self.retired_streams
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -194,6 +278,8 @@ impl Default for RealtimeHub {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use mahjong_core::UserId;
 
     use super::{RealtimeHub, StreamNotice};
@@ -250,8 +336,46 @@ mod tests {
 
         drop(first);
         assert_eq!(hub.online_users("match_a"), [user.clone()].into());
+        assert!(hub.offline_users().is_empty());
         drop(second);
         assert!(hub.online_users("match_a").is_empty());
+        assert_eq!(hub.offline_users(), vec![("match_a".to_owned(), user)]);
+    }
+
+    #[tokio::test]
+    async fn reconnecting_cancels_offline_automation_immediately() {
+        let hub = RealtimeHub::new();
+        let user = UserId::new();
+        let connection = hub.join("match_a", "conn_1", &user);
+        drop(connection);
+
+        assert_eq!(
+            hub.offline_action_ready("match_a", &user, Duration::from_secs(1)),
+            Some(false)
+        );
+        assert_eq!(
+            hub.offline_action_ready("match_a", &user, Duration::ZERO),
+            Some(true)
+        );
+
+        let resumed = hub.join("match_a", "conn_2", &user);
+        assert_eq!(
+            hub.offline_action_ready("match_a", &user, Duration::ZERO),
+            None
+        );
+        drop(resumed);
+    }
+
+    #[tokio::test]
+    async fn finished_streams_do_not_leave_offline_automation_entries() {
+        let hub = RealtimeHub::new();
+        let user = UserId::new();
+        let connection = hub.join("match_a", "conn_1", &user);
+
+        hub.retire_stream("match_a");
+        drop(connection);
+
+        assert!(hub.offline_users().is_empty());
     }
 
     #[tokio::test]

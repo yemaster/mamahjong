@@ -99,7 +99,7 @@ export function automaticMatchCommand(
     return {
       name: discard,
       payload: { tile_id: drawnTileId },
-      delayMs: 460,
+      delayMs: 1000,
     };
   }
 

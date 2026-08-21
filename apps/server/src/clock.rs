@@ -13,6 +13,7 @@ use crate::AppState;
 /// in a process is bounded, and `expire_clocks` is a pure function of `now_ms`,
 /// so tests feed it time directly instead of waiting.
 pub(crate) const SWEEP_INTERVAL: Duration = Duration::from_millis(200);
+const OFFLINE_ACTION_DELAY: Duration = Duration::from_secs(1);
 
 /// The single source of time for every seat clock in this process.
 ///
@@ -98,6 +99,7 @@ impl SeatCountdown {
 /// Each expiry is finished exactly like a manual command, so clients cannot
 /// tell a timeout from a played tile.
 pub(crate) async fn sweep(state: &AppState) {
+    sweep_offline_players(state).await;
     let expiries = match state.application().expire_clocks(state.now_ms()) {
         Ok(expiries) => expiries,
         Err(error) => {
@@ -114,6 +116,50 @@ pub(crate) async fn sweep(state: &AppState) {
             expiry.version,
             expiry.latest_sequence,
             expiry.finished,
+        )
+        .await;
+    }
+}
+
+async fn sweep_offline_players(state: &AppState) {
+    for (stream, actor) in state.realtime().offline_users() {
+        let Some(match_id) = crate::api::parse_match_stream(&stream) else {
+            continue;
+        };
+        let Some(allow_action) =
+            state
+                .realtime()
+                .offline_action_ready(&stream, &actor, OFFLINE_ACTION_DELAY)
+        else {
+            continue;
+        };
+        let advance = match state.application().automate_player(
+            &actor,
+            &match_id,
+            state.now_ms(),
+            allow_action,
+        ) {
+            Ok(advance) => advance,
+            Err(error) => {
+                tracing::error!(
+                    code = ?error.code(),
+                    %match_id,
+                    actor = %actor,
+                    "离线托管推进失败"
+                );
+                continue;
+            }
+        };
+        let Some(advance) = advance else {
+            continue;
+        };
+        let _ = crate::api::announce_advance(
+            state,
+            &advance.actor,
+            &advance.match_id,
+            advance.version,
+            advance.latest_sequence,
+            advance.finished,
         )
         .await;
     }

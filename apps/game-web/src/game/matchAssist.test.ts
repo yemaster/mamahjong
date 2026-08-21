@@ -141,6 +141,29 @@ describe("牌局快捷操作", () => {
       payload: { tile_id: player.concealed_tiles?.at(-1)?.id },
     });
   });
+
+  it("立直后非胡牌在手中停留一秒再摸切", () => {
+    const view = {
+      ...tablePreviewView,
+      phase: {
+        kind: "awaiting_discard" as const,
+        seat: tablePreviewView.observer_seat,
+      },
+      players: tablePreviewView.players.map((player) =>
+        player.seat === tablePreviewView.observer_seat
+          ? {
+              ...player,
+              riichi_status: "established" as const,
+              drawn_tile_id: player.concealed_tiles?.at(-1)?.id ?? null,
+            }
+          : player,
+      ),
+    };
+
+    expect(
+      automaticMatchCommand(view, DEFAULT_MATCH_ASSIST_SETTINGS),
+    ).toMatchObject({ name: "riichi.discard", delayMs: 1000 });
+  });
 });
 
 function impactRules(mode: ImpactRuleConfig["mode"]): ImpactRuleConfig {

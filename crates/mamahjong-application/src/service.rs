@@ -1141,6 +1141,40 @@ impl Application {
         Ok(expiries)
     }
 
+    /// 代替离线玩家补演出回执，并在允许时执行一次保守的自动决策。
+    pub fn automate_player(
+        &self,
+        actor: &UserId,
+        match_id: &MatchId,
+        now_ms: u64,
+        allow_action: bool,
+    ) -> Result<Option<ClockExpiry>, ApplicationError> {
+        let mut store = self.write_store()?;
+        let game = store
+            .matches
+            .get_mut(match_id)
+            .ok_or_else(match_not_found)?;
+        if !game.automate_player(actor, now_ms, allow_action)? {
+            return Ok(None);
+        }
+        let expiry = ClockExpiry {
+            match_id: match_id.clone(),
+            actor: actor.clone(),
+            version: game.version(),
+            latest_sequence: game.event_sequence(),
+            finished: game.is_finished(),
+        };
+        if expiry.finished {
+            let room = store
+                .rooms
+                .values_mut()
+                .find(|room| room.active_match_id() == Some(match_id))
+                .ok_or_else(internal_error)?;
+            room.finish_match(match_id)?;
+        }
+        Ok(Some(expiry))
+    }
+
     pub fn enter_matchmaking(
         &self,
         actor: &UserId,
@@ -3294,6 +3328,67 @@ mod tests {
         assert_eq!(discard.tile().id(), drawn);
         assert!(discard.is_tsumogiri());
         assert_eq!(view.clocks()[usize::from(seat.index())].reserve_ms(), 0);
+    }
+
+    #[test]
+    fn offline_automation_waits_for_permission_then_tsumogiris() {
+        let application = Application::new();
+        let (players, match_id) = started_sanma_table(&application, "offline_tsumogiri");
+        let view = application
+            .match_view(players[0].id(), &match_id)
+            .expect("view");
+        let mahjong_riichi::HandPhase::AwaitingTurnAction { seat } = view.phase() else {
+            panic!("a fresh hand waits for the dealer");
+        };
+        let actor_id = view.players()[usize::from(seat.index())].player().user_id();
+        let actor = players
+            .iter()
+            .find(|player| player.id() == actor_id)
+            .expect("dealer");
+        let drawn = application
+            .match_view(actor.id(), &match_id)
+            .expect("actor view")
+            .players()[usize::from(seat.index())]
+        .drawn_tile_id()
+        .expect("drawn tile");
+
+        assert!(
+            application
+                .automate_player(actor.id(), &match_id, 500, false)
+                .expect("automation check")
+                .is_none()
+        );
+        let advance = application
+            .automate_player(actor.id(), &match_id, 1_000, true)
+            .expect("automation")
+            .expect("advance");
+        assert_eq!(advance.actor, actor.id().clone());
+
+        let view = application
+            .match_view(actor.id(), &match_id)
+            .expect("advanced view");
+        let discard = view.players()[usize::from(seat.index())]
+            .discards()
+            .last()
+            .expect("automatic discard");
+        assert_eq!(discard.tile().id(), drawn);
+        assert!(discard.is_tsumogiri());
+    }
+
+    #[test]
+    fn offline_automation_reports_frontend_handshakes_without_action_delay() {
+        let application = Application::new();
+        let (players, match_id) = started_sanma_table_unready(&application, "off_open");
+
+        let advance = application
+            .automate_player(players[0].id(), &match_id, 0, false)
+            .expect("automation")
+            .expect("opening report");
+        assert_eq!(advance.actor, players[0].id().clone());
+        let view = application
+            .match_view(players[0].id(), &match_id)
+            .expect("view");
+        assert_eq!(view.opening_ready_seats().count(), 1);
     }
 
     #[test]

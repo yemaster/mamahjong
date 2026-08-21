@@ -1713,6 +1713,75 @@ impl SichuanRuntime {
         most_frequent_suit(player, false).ok_or_else(|| internal_error("empty hand"))
     }
 
+    pub(crate) fn automate_player(
+        &mut self,
+        actor: &UserId,
+        now_ms: u64,
+        allow_action: bool,
+    ) -> Result<bool, ApplicationError> {
+        let seat = self.seat(actor)?;
+        let index = usize::from(seat);
+        let command = if !self.opening.assets_ready_flags()[index] {
+            Some(GameCommand::MatchAssetsReady)
+        } else if self.assets_loading() {
+            None
+        } else if self
+            .exit_vote
+            .as_ref()
+            .is_some_and(|vote| vote.votes[index].is_none())
+        {
+            Some(GameCommand::VoteExit { agree: true })
+        } else if !self.opening.opening_ready_flags()[index] {
+            Some(GameCommand::ReadyForHand {
+                hand_index: self.hand_index,
+            })
+        } else if let Some(pending) = self.pending.as_ref() {
+            if !pending.flow.played_flags()[index] {
+                Some(GameCommand::SettlementPlayed {
+                    hand_index: self.hand_index,
+                })
+            } else if pending.flow.confirmation_open() && !pending.flow.confirmed_flags()[index] {
+                Some(GameCommand::ConfirmSettlement {
+                    hand_index: self.hand_index,
+                })
+            } else {
+                None
+            }
+        } else if let Some(pending) = self.pending_win_animation.as_ref() {
+            (!pending.played[index]).then_some(GameCommand::SichuanWinAnimationPlayed {
+                win_id: pending.win_id,
+            })
+        } else if let Some(pending) = self.pending_kan_animation.as_ref() {
+            (!pending.played[index]).then_some(GameCommand::SichuanKanAnimationPlayed {
+                kan_id: pending.kan_id,
+            })
+        } else if matches!(
+            self.game.hand().map(SichuanHand::phase),
+            Some(HandPhase::AwaitingExchangeAnimation | HandPhase::AwaitingDingQue)
+        ) && !self.exchange.animation_played_flags()[index]
+        {
+            Some(GameCommand::SichuanExchangeAnimationPlayed)
+        } else if !self.is_finished() && self.is_waiting(seat_of(seat)?) {
+            let automatic = self.timeout_command(seat_of(seat)?)?;
+            (allow_action || !matches!(automatic, GameCommand::SichuanDiscard { .. }))
+                .then_some(automatic)
+        } else {
+            None
+        };
+        let Some(command) = command else {
+            return Ok(false);
+        };
+        self.execute(
+            actor,
+            SubmitGameCommand {
+                expected_version: self.version,
+                command,
+            },
+            now_ms,
+        )?;
+        Ok(true)
+    }
+
     fn expire_phase_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError> {
         let Some(deadline) = self.phase_deadline_ms else {
             return Ok(false);

@@ -193,6 +193,7 @@ export default function GameScene({ matchId }: GameSceneProps) {
   const setMatchView = useGameStore((state) => state.setMatchView);
   const updateClocks = useGameStore((state) => state.updateClocks);
   const updatePresence = useGameStore((state) => state.updatePresence);
+  const setLatency = useGameStore((state) => state.setLatency);
   const setWsState = useGameStore((state) => state.setWsState);
   const reset = useGameStore((state) => state.reset);
   const streamRef = useRef<MatchStream | null>(null);
@@ -465,12 +466,16 @@ export default function GameScene({ matchId }: GameSceneProps) {
               case "presence":
                 updatePresence(event.seats);
                 break;
+              case "latency":
+                setLatency(event.milliseconds);
+                break;
               case "chat":
                 useChatStore
                   .getState()
                   .receive(event.seat, event.messageType, event.content);
                 break;
               case "disconnected":
+                setLatency(null);
                 /* Polling fallback starts below. */
                 break;
               case "reconnected":

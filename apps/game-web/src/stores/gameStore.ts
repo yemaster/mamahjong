@@ -14,12 +14,14 @@ export interface GameState {
   clockUpdatedAt: number;
   /** Per-seat online status (from presence.v1 frames). */
   presence: Map<number, boolean>;
+  latencyMs: number | null;
   /** WebSocket connection state. */
   wsState: WsState;
 
   setMatchView: (view: MatchView) => void;
   updateClocks: (seats: SeatClockView[]) => void;
   updatePresence: (seats: WsSeatPresence[]) => void;
+  setLatency: (milliseconds: number | null) => void;
   setWsState: (state: WsState) => void;
   reset: () => void;
 }
@@ -30,6 +32,7 @@ export const useGameStore = create<GameState>((set) => ({
   clocks: new Map(),
   clockUpdatedAt: Date.now(),
   presence: new Map(),
+  latencyMs: null,
   wsState: "disconnected",
 
   setMatchView: (view: MatchView) => {
@@ -75,6 +78,10 @@ export const useGameStore = create<GameState>((set) => ({
     });
   },
 
+  setLatency: (latencyMs: number | null) => {
+    set({ latencyMs });
+  },
+
   setWsState: (wsState: WsState) => {
     set({ wsState });
   },
@@ -86,6 +93,7 @@ export const useGameStore = create<GameState>((set) => ({
       clocks: new Map(),
       clockUpdatedAt: Date.now(),
       presence: new Map(),
+      latencyMs: null,
       wsState: "disconnected",
     });
   },

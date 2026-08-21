@@ -169,6 +169,12 @@ trait RuleRuntime: std::fmt::Debug + Send + Sync {
     fn open_settlement_confirm_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError>;
     fn release_opening_if_due(&mut self, now_ms: u64) -> Result<bool, ApplicationError>;
     fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError>;
+    fn automate_player(
+        &mut self,
+        actor: &UserId,
+        now_ms: u64,
+        allow_action: bool,
+    ) -> Result<bool, ApplicationError>;
     fn set_dev_hand(&mut self, _actor: &UserId, _codes: &[String]) -> Result<(), ApplicationError> {
         Err(not_riichi())
     }
@@ -281,6 +287,15 @@ impl GameRuntime {
     pub(crate) fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError> {
         self.inner.expire(now_ms)
     }
+
+    pub(crate) fn automate_player(
+        &mut self,
+        actor: &UserId,
+        now_ms: u64,
+        allow_action: bool,
+    ) -> Result<bool, ApplicationError> {
+        self.inner.automate_player(actor, now_ms, allow_action)
+    }
 }
 
 impl RuleRuntime for RiichiRuntime {
@@ -351,6 +366,15 @@ impl RuleRuntime for RiichiRuntime {
 
     fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError> {
         self.expire(now_ms)
+    }
+
+    fn automate_player(
+        &mut self,
+        actor: &UserId,
+        now_ms: u64,
+        allow_action: bool,
+    ) -> Result<bool, ApplicationError> {
+        self.automate_player(actor, now_ms, allow_action)
     }
 
     fn set_dev_hand(&mut self, actor: &UserId, codes: &[String]) -> Result<(), ApplicationError> {
@@ -425,6 +449,15 @@ impl RuleRuntime for ImpactRuntime {
         self.expire(now_ms)
     }
 
+    fn automate_player(
+        &mut self,
+        actor: &UserId,
+        now_ms: u64,
+        allow_action: bool,
+    ) -> Result<bool, ApplicationError> {
+        self.automate_player(actor, now_ms, allow_action)
+    }
+
     fn set_dev_hand(&mut self, actor: &UserId, codes: &[String]) -> Result<(), ApplicationError> {
         self.set_dev_hand(actor, codes)
     }
@@ -495,6 +528,15 @@ impl RuleRuntime for SichuanRuntime {
 
     fn expire(&mut self, now_ms: u64) -> Result<Option<UserId>, ApplicationError> {
         self.expire(now_ms)
+    }
+
+    fn automate_player(
+        &mut self,
+        actor: &UserId,
+        now_ms: u64,
+        allow_action: bool,
+    ) -> Result<bool, ApplicationError> {
+        self.automate_player(actor, now_ms, allow_action)
     }
 
     fn set_dev_hand(&mut self, actor: &UserId, codes: &[String]) -> Result<(), ApplicationError> {

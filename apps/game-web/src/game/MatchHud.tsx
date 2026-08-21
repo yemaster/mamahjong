@@ -37,6 +37,8 @@ export function MatchHud({
   const impact = view.variant_kind === "impact";
   // 四川麻将连这些都没有：左上角什么都不摆。
   const sichuan = view.variant_kind === "sichuan";
+  const presence = useGameStore((state) => state.presence);
+  const latencyMs = useGameStore((state) => state.latencyMs);
   const ownIsWaiting =
     activeSeat === view.observer_seat ||
     (view.phase.kind === "awaiting_responses" &&
@@ -95,12 +97,13 @@ export function MatchHud({
         const active = player.seat === activeSeat;
         const riichi = player.riichi_status === "established";
         const waitHint = seatWaitHints?.get(player.seat);
+        const offline = presence.get(player.seat) === false;
         return (
           <section
             key={player.user_id}
             className={`match-player-panel match-player-panel--${relative}${
               active ? " is-active" : ""
-            }${riichi ? " is-riichi" : ""}`}
+            }${riichi ? " is-riichi" : ""}${offline ? " is-offline" : ""}`}
           >
             <span className="match-player-panel__avatar-wrap">
               <img
@@ -120,6 +123,9 @@ export function MatchHud({
                   缺{QUE_SUIT_LABELS[player.que_suit]}
                 </span>
               )}
+              {offline && (
+                <span className="match-player-panel__offline-badge">离线</span>
+              )}
             </span>
             <div className="match-player-panel__identity">
               <strong>{player.nickname}</strong>
@@ -135,6 +141,14 @@ export function MatchHud({
         );
       })}
       <SelfClock seat={view.observer_seat} active={ownIsWaiting} />
+      {latencyMs != null && (
+        <div
+          className={`match-latency match-latency--${latencyTone(latencyMs)}`}
+          aria-label={`实时延迟 ${latencyMs} 毫秒`}
+        >
+          ·{latencyMs}ms
+        </div>
+      )}
     </div>
   );
 }
@@ -245,4 +259,10 @@ function turnSeat(view: MatchView): number | null {
 
 function formatClock(milliseconds: number): string {
   return `${Math.ceil(milliseconds / 1000)}秒`;
+}
+
+function latencyTone(milliseconds: number): "good" | "fair" | "poor" {
+  if (milliseconds <= 100) return "good";
+  if (milliseconds <= 250) return "fair";
+  return "poor";
 }
