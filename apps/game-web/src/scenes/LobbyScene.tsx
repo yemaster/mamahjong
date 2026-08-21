@@ -25,6 +25,7 @@ import {
   useAuthStore,
 } from "../stores/authStore";
 import { CreateRoomPanel } from "./lobby/CreateRoomPanel";
+import { LobbyPanelBar } from "./lobby/LobbyPanelBar";
 import { RoomIdKeypad } from "./lobby/RoomIdKeypad";
 
 type Menu = "main" | "ranked" | "friends" | "join" | "create";
@@ -298,36 +299,46 @@ function LobbyMenu({
 
   if (menu === "ranked") {
     return (
-      <nav className="game-lobby__menu" aria-label="段位匹配">
-        <LobbyMenuButton
-          label="四人半庄"
-          mark="四"
-          onClick={() => onQuickMatch("yonma")}
-        />
-        <LobbyMenuButton
-          label="三人半庄"
-          mark="三"
-          onClick={() => onQuickMatch("sanma")}
-        />
-        <LobbyBackButton onClick={() => onMenuChange("main")} />
+      <nav
+        className="game-lobby__menu game-lobby__submenu"
+        aria-label="段位匹配"
+      >
+        <LobbyPanelBar title="段位匹配" onBack={() => onMenuChange("main")} />
+        <div className="game-lobby__submenu-list">
+          <LobbyMenuButton
+            label="四人半庄"
+            mark="四"
+            onClick={() => onQuickMatch("yonma")}
+          />
+          <LobbyMenuButton
+            label="三人半庄"
+            mark="三"
+            onClick={() => onQuickMatch("sanma")}
+          />
+        </div>
       </nav>
     );
   }
 
   if (menu === "friends") {
     return (
-      <nav className="game-lobby__menu" aria-label="好友对战">
-        <LobbyMenuButton
-          label="创建房间"
-          mark="创"
-          onClick={() => onMenuChange("create")}
-        />
-        <LobbyMenuButton
-          label="加入房间"
-          mark="入"
-          onClick={() => onMenuChange("join")}
-        />
-        <LobbyBackButton onClick={() => onMenuChange("main")} />
+      <nav
+        className="game-lobby__menu game-lobby__submenu"
+        aria-label="好友对战"
+      >
+        <LobbyPanelBar title="好友对战" onBack={() => onMenuChange("main")} />
+        <div className="game-lobby__submenu-list">
+          <LobbyMenuButton
+            label="创建房间"
+            mark="创"
+            onClick={() => onMenuChange("create")}
+          />
+          <LobbyMenuButton
+            label="加入房间"
+            mark="入"
+            onClick={() => onMenuChange("join")}
+          />
+        </div>
       </nav>
     );
   }

@@ -3,11 +3,15 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFailure, gameApi } from "../../api";
 import { resumeCurrentActivity } from "../../activity";
 import { navigateTo } from "../../routing";
+import { LobbyPanelBar } from "./LobbyPanelBar";
 /*
- * 两种麻将的设置项完全不同，下面按种类整片换：立直走原来那套，冲击麻将走
- * `ImpactRuleSettings`。种类名跟房间页、牌谱标题共用一份表。
+ * 三种麻将的设置项完全不同，下面按种类整片换。种类名跟房间页、牌谱标题共用一份表。
  */
-import { MAHJONG_FAMILY_LABELS, mahjongFamilyOf } from "../../ruleTitle";
+import {
+  MAHJONG_FAMILY_LABELS,
+  mahjongFamilyLabel,
+  mahjongFamilyOf,
+} from "../../ruleTitle";
 import type {
   ImpactAllInRules,
   ImpactKanRules,
@@ -26,6 +30,12 @@ interface Props {
 
 /** 自定义规则这一项不对应任何预设，只是标出「这桌的规则是手调的」。 */
 const CUSTOM_PRESET_ID = "custom";
+
+const MAHJONG_FAMILY_MARKS: Record<string, string> = {
+  riichi: "立",
+  impact: "冲",
+  sichuan: "川",
+};
 
 /** 配置是哪一家的，看有没有全交那一组就够了。 */
 function isImpactConfig(config: RuleConfig): config is ImpactRuleConfig {
@@ -76,8 +86,7 @@ export function CreateRoomPanel({ token, onBack }: Props) {
     queryKey: ["ruleSets"],
     queryFn: gameApi.ruleSets,
   });
-  const [name, setName] = useState("");
-  const [visibility, setVisibility] = useState<"public" | "private">("public");
+  const [selectedFamily, setSelectedFamily] = useState<string | null>(null);
   const [ruleSetId, setRuleSetId] = useState("riichi/yonma");
   const [presetId, setPresetId] = useState("");
   const [rules, setRules] = useState<RuleConfig | null>(null);
@@ -119,13 +128,14 @@ export function CreateRoomPanel({ token, onBack }: Props) {
     setError(null);
   };
 
-  /** 换麻将种类，底下整片设置项跟着换成那一种的默认规则。 */
-  const changeFamily = (nextFamily: string) => {
-    if (nextFamily === family) return;
+  /** 从种类列表进入对应麻将的建房设置，并从该类第一套规则开始。 */
+  const enterFamily = (nextFamily: string) => {
     const first = catalog.data?.rule_sets.find(
       (ruleSet) => mahjongFamilyOf(ruleSet.id) === nextFamily,
     );
-    if (first) changeRuleSet(first.id);
+    if (!first) return;
+    changeRuleSet(first.id);
+    setSelectedFamily(nextFamily);
   };
 
   const changePreset = (nextId: string) => {
@@ -252,8 +262,8 @@ export function CreateRoomPanel({ token, onBack }: Props) {
       );
       const room = await gameApi.createRoom(
         {
-          name: name.trim() || "好友房间",
-          visibility,
+          name: `${mahjongFamilyLabel(family)}好友房`,
+          visibility: "private",
           rules: {
             rule_set_id: ruleSetId,
             config: {
@@ -285,15 +295,51 @@ export function CreateRoomPanel({ token, onBack }: Props) {
     }
   };
 
+  if (!selectedFamily) {
+    return (
+      <nav
+        className="game-lobby__menu game-lobby__submenu lobby-create-family"
+        aria-label="选择麻将类型"
+      >
+        <LobbyPanelBar title="创建房间" onBack={onBack} />
+        <div className="game-lobby__submenu-list">
+          {catalog.isPending ? (
+            <div className="lobby-create-family__status">麻将类型加载中…</div>
+          ) : null}
+          {catalog.error ? (
+            <div className="lobby-create-family__status is-error">
+              麻将类型加载失败
+            </div>
+          ) : null}
+          {families.map((option) => (
+            <button
+              key={option}
+              type="button"
+              className="game-lobby__menu-button"
+              onClick={() => enterFamily(option)}
+            >
+              <span>
+                <b aria-hidden="true">
+                  {MAHJONG_FAMILY_MARKS[option] ?? "麻"}
+                </b>
+                <i>{MAHJONG_FAMILY_LABELS[option] ?? option}</i>
+              </span>
+            </button>
+          ))}
+        </div>
+      </nav>
+    );
+  }
+
   return (
     <form
       className="game-lobby__menu lobby-create"
-      aria-label="创建房间"
+      aria-label={`${mahjongFamilyLabel(family)}·创建`}
       onSubmit={submit}
     >
       <header className="lobby-create__header">
         <span aria-hidden="true">创</span>
-        <h2>创建房间</h2>
+        <h2>{mahjongFamilyLabel(family)}·创建</h2>
       </header>
 
       <div className="lobby-create__body">
@@ -301,34 +347,6 @@ export function CreateRoomPanel({ token, onBack }: Props) {
           <div className="lobby-create__error">规则加载失败</div>
         ) : null}
         {error ? <div className="lobby-create__error">{error}</div> : null}
-
-        <label className="lobby-create__field">
-          <span>房间名称</span>
-          <input
-            value={name}
-            maxLength={40}
-            placeholder="好友房间"
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-
-        <div className="lobby-create__field">
-          <span>麻将选项</span>
-          <div className="lobby-create__tabs" role="tablist">
-            {families.map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="tab"
-                aria-selected={option === family}
-                className={option === family ? "is-active" : ""}
-                onClick={() => changeFamily(option)}
-              >
-                {MAHJONG_FAMILY_LABELS[option] ?? option}
-              </button>
-            ))}
-          </div>
-        </div>
 
         {/*
           冲击麻将只有 `impact/yonma` 一套、也没有流派，这两个下拉框摆出来就是
@@ -370,17 +388,6 @@ export function CreateRoomPanel({ token, onBack }: Props) {
             </label>
           </div>
         )}
-
-        <SettingRow label="房间范围">
-          <Choice
-            value={visibility}
-            options={[
-              ["public", "公开"],
-              ["private", "私密"],
-            ]}
-            onChange={setVisibility}
-          />
-        </SettingRow>
 
         {riichiRules ? (
           <div className="lobby-create__basic-rules">
@@ -715,7 +722,13 @@ export function CreateRoomPanel({ token, onBack }: Props) {
       </div>
 
       <footer className="lobby-create__actions">
-        <button type="button" onClick={onBack}>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            setSelectedFamily(null);
+          }}
+        >
           返回
         </button>
         <button type="submit" disabled={!rules || loading}>

@@ -3,6 +3,14 @@
    二次元校园风格 · 樱花 · 暖色调
    ═══════════════════════════════════════════════════════════════ */
 
+@font-face {
+  font-family: "Ma Shan Zheng Lobby";
+  src: url("/assets/fonts/ma-shan-zheng-lobby.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
 :root {
   /* 所有 16:9 舞台之外只使用这一种纯黑，切页和加载时也不换色。 */
   --stage-letterbox: #000;
@@ -26,6 +34,8 @@
   /* 大号数字（点数、番数）用的重型窄体 */
   --font-game-num: "Impact", "Haettenschweiler", "Arial Black",
     "Franklin Gothic Heavy", var(--font-game);
+  --font-lobby-brush: "Ma Shan Zheng Lobby", "STKaiti", "KaiTi",
+    "Kaiti SC", serif;
   --radius:     6px;
 }
 
@@ -1754,6 +1764,189 @@ a { color: var(--pink-dark); text-decoration: none; }
 .game-lobby__menu-button:focus-visible {
   outline: 3px solid rgba(255, 248, 242, 0.96);
   outline-offset: 4px;
+}
+
+/* 大厅二级页面只保留一条轻量顶栏；长列表仅滚动顶栏下面的内容。 */
+.game-lobby__submenu {
+  width: 560px;
+  max-height: calc(100% - 216px);
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.game-lobby__panel-bar {
+  display: grid;
+  min-height: 56px;
+  flex: 0 0 auto;
+  grid-template-columns: 112px minmax(0, 1fr) 112px;
+  align-items: center;
+  border: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(74, 74, 74, 0.16) 0%,
+    rgba(74, 74, 74, 0.72) 35%,
+    rgba(74, 74, 74, 0.9) 50%,
+    rgba(74, 74, 74, 0.72) 65%,
+    rgba(74, 74, 74, 0.16) 100%
+  );
+  color: #fff;
+}
+
+.game-lobby__panel-bar button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 3px 8px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #fff;
+  font-family: var(--font-game);
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  transition:
+    color 150ms ease,
+    opacity 150ms ease;
+}
+
+.game-lobby__panel-bar button svg {
+  width: 21px;
+  height: 21px;
+  stroke-width: 2.7;
+}
+
+.game-lobby__panel-bar button:hover {
+  background: transparent;
+  box-shadow: none;
+  color: #f1d8df;
+  opacity: 0.9;
+}
+
+.game-lobby__panel-bar button:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 2px;
+}
+
+.game-lobby__panel-bar h2 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 27px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-align: center;
+  text-indent: 0.12em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.game-lobby__submenu-list {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+  padding: 18px 14px;
+  background: transparent;
+  scrollbar-color: rgba(74, 74, 74, 0.72) transparent;
+  scrollbar-width: thin;
+}
+
+.game-lobby__submenu-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.game-lobby__submenu-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.game-lobby__submenu-list::-webkit-scrollbar-thumb {
+  background: rgba(74, 74, 74, 0.72);
+}
+
+/* 二级选项直接使用生成的木牌图片；CSS 只负责文字排版与交互状态。 */
+.game-lobby__submenu-list .game-lobby__menu-button {
+  height: 112px;
+  overflow: visible;
+  padding: 14px 30px;
+  clip-path: none;
+  background: transparent url("/assets/ui/lobby-wood-plaque-pastel.png") center / 102%
+    198% no-repeat;
+  box-shadow: none;
+  filter: drop-shadow(0 5px 5px rgba(85, 59, 72, 0.16));
+  -webkit-mask: url("/assets/ui/lobby-wood-plaque.png") center / 100% 160%
+    no-repeat;
+  mask: url("/assets/ui/lobby-wood-plaque.png") center / 100% 160% no-repeat;
+}
+
+.game-lobby__submenu-list .game-lobby__menu-button::before,
+.game-lobby__submenu-list .game-lobby__menu-button::after {
+  content: none;
+}
+
+.game-lobby__submenu-list .game-lobby__menu-button span {
+  gap: 32px;
+}
+
+.game-lobby__submenu-list .game-lobby__menu-button b {
+  width: 64px;
+  height: 64px;
+  border: 2px solid rgba(80, 33, 39, 0.72);
+  background: #8d4658;
+  box-shadow: inset 0 0 0 2px rgba(226, 174, 169, 0.42);
+  color: #f3dfd2;
+  font-family: var(--font-lobby-brush);
+  font-size: 42px;
+  font-weight: 400;
+  transform: rotate(-2deg);
+}
+
+.game-lobby__submenu-list .game-lobby__menu-button i {
+  min-width: 6em;
+  color: #39251b;
+  font-family: var(--font-lobby-brush);
+  font-size: 52px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-shadow: 0 1px 0 rgba(255, 231, 207, 0.7);
+}
+
+.game-lobby__submenu-list .game-lobby__menu-button:hover {
+  box-shadow: none;
+  filter: brightness(1.035) drop-shadow(0 7px 6px rgba(85, 59, 72, 0.2));
+  transform: translate(-6px, -2px);
+}
+
+.game-lobby__submenu-list .game-lobby__menu-button:hover b {
+  background: #985064;
+  transform: rotate(0deg) scale(1.025);
+}
+
+.game-lobby__submenu-list .game-lobby__menu-button:active {
+  box-shadow: none;
+  filter: brightness(0.98) drop-shadow(0 2px 3px rgba(85, 59, 72, 0.16));
+  transform: translate(-2px, 1px) scale(0.992);
+}
+
+.lobby-create-family__status {
+  padding: 24px;
+  color: #49363c;
+  font-family: var(--font-game);
+  font-size: 24px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.lobby-create-family__status.is-error {
+  color: #8d3648;
 }
 
 /* 右下角功能区：按网格排，后面再加按钮不用动布局。 */
