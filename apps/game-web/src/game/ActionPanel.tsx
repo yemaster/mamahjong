@@ -6,6 +6,7 @@ import type {
   TurnActions,
 } from "../types";
 import { chiOptions } from "./chiOptions";
+import { kanCommand, observerKanOptions, type KanOption } from "./kanOptions";
 
 const emptyTurnActions: TurnActions = {
   can_tsumo: false,
@@ -26,6 +27,9 @@ interface ActionPanelProps {
   /** 正在挑吃哪一组：这一排按钮整个收起，屏幕交给方案框。 */
   chiSelecting?: boolean;
   onChiSelectingChange?: (selecting: boolean) => void;
+  /** 正在挑哪一组杠；与吃牌方案框共用同一块浮层位置。 */
+  kanSelecting?: boolean;
+  onKanSelectingChange?: (selecting: boolean) => void;
   skipCalls?: boolean;
   /** 有浮层正在播（例如冲击麻将的杠点），播完之前整排按钮先收起来。 */
   blocked?: boolean;
@@ -38,6 +42,8 @@ export function ActionPanel({
   onRiichiSelectingChange,
   chiSelecting = false,
   onChiSelectingChange,
+  kanSelecting = false,
+  onKanSelectingChange,
   skipCalls = false,
   blocked = false,
 }: ActionPanelProps) {
@@ -53,6 +59,7 @@ export function ActionPanel({
       ?.concealed_tiles ?? [];
   const chiChoices = chiOptions(reactions, observerHand);
   const actions = view.turn_actions ?? emptyTurnActions;
+  const kanChoices = observerKanOptions(view);
   const hasResponse = reactions.length > 0;
   /* 可执行动作完全由后端下发，前端只负责展示并提交。 */
   const impactConcealedKanCodes =
@@ -82,6 +89,7 @@ export function ActionPanel({
   if (
     view.phase.kind === "ended" ||
     chiSelecting ||
+    kanSelecting ||
     blocked ||
     (!hasResponse &&
       (!hasTurnAction || dismissedVersion === view.version))
@@ -100,26 +108,13 @@ export function ActionPanel({
               onClick={() => onCommand("impact.tsumo")}
             />
           )}
-          {impactConcealedKanCodes.map((code) => (
+          {kanChoices.length > 0 && (
             <ActionButton
-              key={code}
-              label="暗杠"
+              label="杠"
               tone="kan"
-              onClick={() =>
-                onCommand("impact.concealed_kan", { tile_code: code })
-              }
+              onClick={() => submitOrSelectKan(kanChoices)}
             />
-          ))}
-          {impactAddedKanMeldIds.map((meldId) => (
-            <ActionButton
-              key={meldId}
-              label="加杠"
-              tone="kan"
-              onClick={() =>
-                onCommand("impact.added_kan", { meld_id: meldId })
-              }
-            />
-          ))}
+          )}
           {/*
             指示牌暗杠只结算杠点，牌型仍算刻子、不摸岭上牌，所以按钮上写全名，
             免得和真暗杠混作一谈。
@@ -148,24 +143,13 @@ export function ActionPanel({
               onClick={() => onCommand("sichuan.tsumo")}
             />
           )}
-          {sichuanConcealedKanCodes.map((code) => (
+          {kanChoices.length > 0 && (
             <ActionButton
-              key={code}
-              label="暗杠"
+              label="杠"
               tone="kan"
-              onClick={() =>
-                onCommand("sichuan.concealed_kan", { tile_code: code })
-              }
+              onClick={() => submitOrSelectKan(kanChoices)}
             />
-          ))}
-          {sichuanAddedKanMeldIds.map((meldId) => (
-            <ActionButton
-              key={meldId}
-              label="加杠"
-              tone="kan"
-              onClick={() => onCommand("sichuan.added_kan", { meld_id: meldId })}
-            />
-          ))}
+          )}
           <ActionButton
             label="取消"
             tone="quiet"
@@ -191,30 +175,13 @@ export function ActionPanel({
                   onClick={() => onCommand("riichi.tsumo")}
                 />
               )}
-              {actions.concealed_kan_tile_ids.length > 0 && (
+              {kanChoices.length > 0 && (
                 <ActionButton
-                  label="暗杠"
+                  label="杠"
                   tone="kan"
-                  onClick={() =>
-                    onCommand("riichi.concealed_kan", {
-                      tile_ids: actions.concealed_kan_tile_ids[0],
-                    })
-                  }
+                  onClick={() => submitOrSelectKan(kanChoices)}
                 />
               )}
-              {actions.added_kan_options.map((option) => (
-                <ActionButton
-                  key={option.meld_id}
-                  label="加杠"
-                  tone="kan"
-                  onClick={() =>
-                    onCommand("riichi.added_kan", {
-                      meld_id: option.meld_id,
-                      tile_id: option.tile_id,
-                    })
-                  }
-                />
-              ))}
               {actions.nuki_tile_ids.length > 0 && (
                 <ActionButton
                   label="拔北"
@@ -399,6 +366,17 @@ export function ActionPanel({
       )}
     </div>
   );
+
+  function submitOrSelectKan(options: KanOption[]) {
+    if (options.length > 1) {
+      onKanSelectingChange?.(true);
+      return;
+    }
+    const option = options[0];
+    if (!option) return;
+    const command = kanCommand(view, option);
+    onCommand(command.name, command.payload);
+  }
 }
 
 /**

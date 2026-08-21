@@ -70,6 +70,8 @@ import { SettingsPanel } from "../game/SettingsPanel";
 import { ChatBox, ChatMessages } from "../game/ChatBox";
 import { ChiOptionPicker } from "../game/ChiOptionPicker";
 import { chiCommandName, observerChiOptions } from "../game/chiOptions";
+import { KanOptionPicker } from "../game/KanOptionPicker";
+import { kanCommand, observerKanOptions } from "../game/kanOptions";
 import { commandRejectionText } from "../game/commandErrors";
 import { ExitVotePanel } from "../game/ExitVotePanel";
 import { MatchHud } from "../game/MatchHud";
@@ -209,6 +211,9 @@ export default function GameScene({ matchId }: GameSceneProps) {
    * 再找地方把开关关回去——关漏一处，下一次能吃时框会自己弹出来。
    */
   const [chiSelectingVersion, setChiSelectingVersion] = useState<number | null>(
+    null,
+  );
+  const [kanSelectingVersion, setKanSelectingVersion] = useState<number | null>(
     null,
   );
   /*
@@ -1587,6 +1592,8 @@ export default function GameScene({ matchId }: GameSceneProps) {
       : openingDice(matchId, matchView.hand_index);
   const chiSelecting = chiSelectingVersion === matchView.version;
   const chiChoices = chiSelecting ? observerChiOptions(matchView) : [];
+  const kanSelecting = kanSelectingVersion === matchView.version;
+  const kanChoices = kanSelecting ? observerKanOptions(matchView) : [];
   /* 确认按钮只在服务端开了窗口之后出现，读的秒也是服务端下发的剩余时间。 */
   const pointsConfirmReady = settlementConfirmRemainingMs != null;
   const pointsSeconds = Math.ceil((settlementConfirmRemainingMs ?? 0) / 1000);
@@ -1701,6 +1708,10 @@ export default function GameScene({ matchId }: GameSceneProps) {
           onChiSelectingChange={(selecting) =>
             setChiSelectingVersion(selecting ? matchView.version : null)
           }
+          kanSelecting={kanSelecting}
+          onKanSelectingChange={(selecting) =>
+            setKanSelectingVersion(selecting ? matchView.version : null)
+          }
           skipCalls={assistSettings.skipCalls}
           blocked={playingKan != null || sichuanWin != null}
         />
@@ -1712,6 +1723,17 @@ export default function GameScene({ matchId }: GameSceneProps) {
               onCommand(chiCommandName(matchView), { tile_ids: tileIds });
             }}
             onCancel={() => setChiSelectingVersion(null)}
+          />
+        )}
+        {kanSelecting && (
+          <KanOptionPicker
+            options={kanChoices}
+            onSelect={(option) => {
+              setKanSelectingVersion(null);
+              const command = kanCommand(matchView, option);
+              onCommand(command.name, command.payload);
+            }}
+            onCancel={() => setKanSelectingVersion(null)}
           />
         )}
         {playingKan && (

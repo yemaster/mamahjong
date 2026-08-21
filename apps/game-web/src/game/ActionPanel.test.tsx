@@ -76,10 +76,60 @@ describe("ActionPanel 冲击麻将响应", () => {
     ]);
   });
 
+  it("暗杠和加杠候选超过一组时只打开杠牌选择器", () => {
+    const onCommand = vi.fn<(name: GameCommandName, payload?: unknown) => void>();
+    const onKanSelectingChange = vi.fn<(selecting: boolean) => void>();
+    const view: MatchView = {
+      ...tablePreviewView,
+      phase: { kind: "awaiting_discard", seat: 0 },
+      players: tablePreviewView.players.map((player) =>
+        player.seat === 0
+          ? {
+              ...player,
+              concealed_tiles: [
+                { id: 1, code: "4m" },
+                { id: 2, code: "4m" },
+                { id: 3, code: "4m" },
+                { id: 4, code: "4m" },
+                { id: 5, code: "5m" },
+              ],
+              melds: [
+                {
+                  id: 77,
+                  kind: "pon",
+                  tiles: [
+                    { id: 6, code: "5m" },
+                    { id: 7, code: "5m" },
+                    { id: 8, code: "5m" },
+                  ],
+                  called_from: 1,
+                  called_tile_id: 6,
+                },
+              ],
+            }
+          : player,
+      ),
+      turn_actions: {
+        ...tablePreviewView.turn_actions,
+        concealed_kan_tile_ids: [[1, 2, 3, 4]],
+        added_kan_options: [{ meld_id: 77, tile_id: 5 }],
+      },
+    };
+    renderPanel(view, onCommand, vi.fn(), onKanSelectingChange);
+
+    clickButton("杠");
+
+    expect(onKanSelectingChange).toHaveBeenCalledWith(true);
+    expect(onCommand).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("暗杠");
+    expect(container.textContent).not.toContain("加杠");
+  });
+
   function renderPanel(
     view: MatchView,
     onCommand: (name: GameCommandName, payload?: unknown) => void,
     onChiSelectingChange = vi.fn(),
+    onKanSelectingChange = vi.fn(),
   ) {
     act(() =>
       root.render(
@@ -89,6 +139,7 @@ describe("ActionPanel 冲击麻将响应", () => {
           riichiSelecting={false}
           onRiichiSelectingChange={() => {}}
           onChiSelectingChange={onChiSelectingChange}
+          onKanSelectingChange={onKanSelectingChange}
         />,
       ),
     );

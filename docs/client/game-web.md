@@ -273,7 +273,7 @@ body { min-width: 1024px; min-height: 768px; overflow: hidden; }
 
 | 阶段 | 可用按钮 |
 |---|---|
-| `AwaitingTurnAction` | 打牌(选中牌后)、立直(`riichi_discard_tile_ids`)、暗杠、加杠、自摸、流局(九种九牌，按钮上只写「流局」) |
+| `AwaitingTurnAction` | 打牌(选中牌后)、立直(`riichi_discard_tile_ids`)、杠（暗杠/加杠共用按钮，多种方案弹选择框）、自摸、流局(九种九牌，按钮上只写「流局」) |
 | `AwaitingDiscard` | 打牌（仅选中摸到的牌或手中牌） |
 | `AwaitingResponses` | 荣和、碰、吃、明杠、过 |
 | `Ended` | (无操作, 1s 后跳转 ResultScene) |
