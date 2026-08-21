@@ -27,6 +27,11 @@ export const projectAboutTemplate = {
   ] satisfies readonly ProjectAboutSection[],
   changelog: [
     {
+      version: "v0.3.2",
+      date: "2026-08-19",
+      changes: ["新增四川麻将模式", "优化了部分 UI", "修复了部分 bug"],
+    },
+    {
       version: "v0.2.6",
       date: "2026-08-14",
       changes: ["修复了音量调整失效的问题", "优化了部分 UI", "修复了部分 bug"],
