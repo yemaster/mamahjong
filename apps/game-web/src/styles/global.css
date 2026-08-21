@@ -8752,7 +8752,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   flex: 1;
   flex-direction: column;
   justify-content: center;
-  gap: 14px;
+  gap: 18px;
 }
 
 /* ── 名次条 ── */
@@ -8760,9 +8760,9 @@ a { color: var(--pink-dark); text-decoration: none; }
   position: relative;
   display: flex;
   align-items: center;
-  height: 74px;
-  padding: 0 32px 0 86px;
-  gap: 22px;
+  height: 96px;
+  padding: 0 36px 0 106px;
+  gap: 26px;
   border: 1px solid rgba(198, 214, 244, 0.42);
   border-radius: 10px;
   background: rgba(11, 18, 42, 0.74);
@@ -8772,7 +8772,7 @@ a { color: var(--pink-dark); text-decoration: none; }
 
 /* 自家单独一套配色：金边、更亮的底、略高一截。谁是一位菱形牌上写着了。 */
 .result-rank-row.is-self {
-  height: 88px;
+  height: 116px;
   border: 2px solid var(--result-gold);
   background: rgba(28, 24, 20, 0.80);
   box-shadow: inset 0 0 0 1px rgba(240, 200, 106, 0.30);
@@ -8803,8 +8803,8 @@ a { color: var(--pink-dark); text-decoration: none; }
   top: 50%;
   left: 0;
   display: grid;
-  width: 68px;
-  height: 68px;
+  width: 88px;
+  height: 88px;
   place-items: center;
   border: 1px solid rgba(206, 220, 246, 0.60);
   background: rgba(9, 15, 36, 0.94);
@@ -8819,7 +8819,7 @@ a { color: var(--pink-dark); text-decoration: none; }
 .result-rank-row__badge b {
   color: #e8effc;
   font-family: var(--result-serif);
-  font-size: 25px;
+  font-size: 32px;
   font-weight: 900;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -8831,8 +8831,8 @@ a { color: var(--pink-dark); text-decoration: none; }
 }
 
 .result-rank-row__avatar {
-  width: 62px;
-  height: 62px;
+  width: 80px;
+  height: 80px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: rgba(6, 12, 30, 0.7);
@@ -8846,7 +8846,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   min-width: 0;
   color: #f2f5fd;
   font-family: var(--result-serif);
-  font-size: 31px;
+  font-size: 40px;
   font-weight: 700;
   letter-spacing: 0.03em;
   text-overflow: ellipsis;
@@ -8856,10 +8856,10 @@ a { color: var(--pink-dark); text-decoration: none; }
 /* 点数和末列各占一列固定宽度，四条才对得齐。 */
 .result-rank-row__points {
   flex: 0 0 auto;
-  min-width: 192px;
+  min-width: 220px;
   color: #f4f7ff;
   font-family: var(--result-serif);
-  font-size: 44px;
+  font-size: 56px;
   font-weight: 900;
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -8871,18 +8871,18 @@ a { color: var(--pink-dark); text-decoration: none; }
 }
 
 /*
- * 底下压了一行增减的时候点数收一号：名次条最矮只有 60px，44px 的点数再叠一行
+ * 底下压了一行增减的时候点数收一号：名次条高 96px，56px 的点数再叠一行
  * 就顶出条外了。
  */
 .result-rank-row__points.is-stacked {
-  font-size: 34px;
+  font-size: 44px;
 }
 
 /* 点数底下那行增减，比点数小一号，冷暖自己一套颜色，别被金色一并染了。 */
 .result-rank-row__delta {
   display: block;
-  margin-top: 5px;
-  font-size: 20px;
+  margin-top: 6px;
+  font-size: 26px;
   font-style: normal;
   font-weight: 800;
   letter-spacing: 0.02em;
@@ -8894,9 +8894,9 @@ a { color: var(--pink-dark); text-decoration: none; }
 
 .result-rank-row__score {
   flex: 0 0 auto;
-  min-width: 112px;
+  min-width: 132px;
   font-family: var(--result-serif);
-  font-size: 28px;
+  font-size: 36px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   line-height: 1;
@@ -8908,7 +8908,7 @@ a { color: var(--pink-dark); text-decoration: none; }
   display: block;
   margin-bottom: 4px;
   color: rgba(185, 198, 222, 0.72);
-  font-size: 14px;
+  font-size: 18px;
   font-style: normal;
   font-weight: 700;
   letter-spacing: 0.14em;
